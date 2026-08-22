@@ -16,9 +16,10 @@
   --act-w:132px;  /* 手札の右に並ぶ操作ボタン（チェンジ／ターン終了）の幅 */
   --act-h:118px;  /* 同・高さ */
 
-  /* カードを置いたのが誰か。場のどちら側に居るかとは別 */
-  --own-c:#31d6f5;   /* 自分が置いたカード */
-  --foe-c:#ffa23a;   /* 相手が置いたカード */
+  /* カードの持ち主。場のどちら側に居るか（＝いま操作している人）とは別 */
+  --own-c:#31d6f5;   /* 自分のカード */
+  --foe-c:#ffa23a;   /* 相手のカード */
+  --pup-c:#c084fc;   /* 傀儡・憑依：持ち主と操作している人がズレている */
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -146,8 +147,9 @@ input{-webkit-user-select:text;user-select:text}
   position:absolute;left:0;right:0;bottom:0;padding:5px 8px;
   background:linear-gradient(#0000,#000c);text-align:right;
 }
-.card .botline .ad{font-size:17px;font-weight:800;color:#fff;text-shadow:0 1px 3px #000;
-  white-space:nowrap;letter-spacing:-.01em}
+/* Ａ／Ｄはカードの幅に収まる大きさにする（カードは正方形なので --chh がそのまま幅） */
+.card .botline .ad{font-size:calc((var(--chh) - 24px) / 6.6);font-weight:800;color:#fff;
+  text-shadow:0 1px 3px #000;white-space:nowrap;letter-spacing:-.01em}
 
 /* 場のユニットは常にいちばん手前・いちばん下 */
 .card.unit{position:absolute;left:0;bottom:0;z-index:100}
@@ -178,18 +180,36 @@ input{-webkit-user-select:text;user-select:text}
 }
 .card.ch .strip .nm.hid{color:#e8eefc;font-size:20px;letter-spacing:.1em}
 
-/* ---- カードを置いたのは誰か ----
- * 左端の色帯＋「自／敵」の印。場のどちら側に居るかとは無関係。 */
-.card.ch::before{content:'';position:absolute;left:0;top:0;bottom:0;width:8px;z-index:3}
-.card.ch.own::before{background:var(--own-c)}
-.card.ch.foe::before{background:var(--foe-c)}
-.card.ch .strip{padding-left:15px}
-.card.ch .strip .ow{
+/* ---- そのカードの持ち主は誰か ----
+ * 左端の色帯＋「自／敵」の印。場のどちら側に居るか（＝操作している人）とは別の情報。
+ * チャネリングカードにも、レーンに立っているユニットにも同じ印を付ける。 */
+.card.ch::before,.card.unit::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:8px;z-index:3;
+}
+.card.own::before{background:var(--own-c)}
+.card.foe::before{background:var(--foe-c)}
+.card.ch .strip,.card.unit .topline{padding-left:15px}
+.ow{
   flex:0 0 auto;width:21px;height:21px;line-height:19px;text-align:center;
   font-size:12px;font-weight:800;border-radius:5px;background:#000a;border:1px solid;
 }
-.card.ch.own .strip .ow{color:var(--own-c);border-color:var(--own-c)}
-.card.ch.foe .strip .ow{color:var(--foe-c);border-color:var(--foe-c)}
+.card.own .ow{color:var(--own-c);border-color:var(--own-c)}
+.card.foe .ow{color:var(--foe-c);border-color:var(--foe-c)}
+/* 憑依（特殊な表表示） */
+.ow.ps,.card.own .ow.ps,.card.foe .ow.ps{color:var(--pup-c);border-color:var(--pup-c)}
+.card.ch.possess{border-color:var(--pup-c)}
+
+/* 場に立てるのはモンスターだけなので、ユニットの「Ｕ」印は出さず、
+   その場所に持ち主の「自／敵」を出す。Ａ／Ｄの数字は今までどおりの大きさを保てる。 */
+
+/* ---- 傀儡・憑依：持ち主と操作している人がズレているユニット ---- */
+.card.unit.pup{box-shadow:0 0 0 3px var(--pup-c),0 3px 8px rgba(0,0,0,.6)}
+.pup-tag{
+  position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:4;
+  background:#5b21b6e6;border-top:1px solid var(--pup-c);border-bottom:1px solid var(--pup-c);
+  color:#f3e8ff;font-size:15px;font-weight:800;letter-spacing:.3em;
+  text-align:center;padding:3px 0 3px .3em;
+}
 
 /* ---- 手札 ---- */
 .hand-wrap{
@@ -256,6 +276,8 @@ input{-webkit-user-select:text;user-select:text}
 .i-own.own{color:var(--own-c);border-color:var(--own-c)}
 .i-own.foe{color:var(--foe-c);border-color:var(--foe-c)}
 .i-t.dim{margin-top:8px;font-size:14px;color:var(--dim)}
+.i-t.pup{margin-top:10px;padding:9px 11px;border-radius:9px;font-size:15px;line-height:1.45;
+  background:#2b1b4d;border:1px solid var(--pup-c);color:#eddcff}
 .i-art.downed{filter:saturate(.35) brightness(.72)}
 #info-fix h3{font-size:23px;margin:6px 0 8px}
 .i-kv{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}

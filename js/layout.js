@@ -33,19 +33,25 @@ document.querySelectorAll('.tab').forEach((b) => {
 const G = {
   turn: 4,
   enemyHand: 5,
-  /* chs の own … true＝自分が置いたカード / false＝相手が置いたカード
-   * レーンに立っているユニットは必ずその持ち主の場に居るので、ユニット自身に own は要らない */
+  /* own … true＝自分のカード / false＝相手のカード。
+   * ユニットの own は「持ち主」、居る場（左＝相手／右＝自分）は「いま操作している人」。
+   * 傀儡・憑依でこの2つがズレることがあるので、ユニットにも own を持たせる。
+   * chs の st:'possess' は憑依（特殊な表表示）。 */
   enemy: [
-    { cid: 10, chs: [{ cid: 153, up: true, own: false }, { cid: 117, up: false, own: true },
-                     { cid: 101, up: false, own: false }] },
-    null,
-    { cid: 30, chs: [{ cid: 168, up: true, own: true }] }
+    { cid: 10, own: false,
+      chs: [{ cid: 153, up: true, own: false }, { cid: 117, up: false, own: true },
+            { cid: 101, up: false, own: false }] },
+    /* 自分のスピアバードが、相手の『傀儡』で奪われて相手の場に居る */
+    { cid: 40, own: true, chs: [{ cid: 169, up: true, own: false }] },
+    { cid: 30, own: false, chs: [{ cid: 168, up: true, own: true }] }
   ],
   mine: [
-    { cid: 1, chs: [{ cid: 153, up: true, own: true }, { cid: 193, up: true, own: false },
-                    { cid: 135, up: false, own: false }] },
-    { cid: 40, chs: [] },
-    null
+    { cid: 1, own: true,
+      chs: [{ cid: 153, up: true, own: true }, { cid: 193, up: true, own: false },
+            { cid: 135, up: false, own: false }] },
+    { cid: 46, own: true, chs: [] },
+    /* 相手のイビルアイに自分のヘッドレスが憑依（傀儡化）して、自分の場に来ている */
+    { cid: 30, own: false, chs: [{ cid: 66, up: true, own: true, st: 'possess' }] }
   ],
   hand: [5, 108, 165, 22, 135, 57, 183, 12],
   hasChange: true,          /* ［Ｉ］チェンジを所持しているか */
@@ -54,33 +60,40 @@ const G = {
 /* 引き直し後のサンプル手札（モックアップ用） */
 const REDRAW = [30, 143, 101, 8, 46, 188, 117, 2];
 
-/* --- 場のユニット（アイコンのみ。名前とＡ／Ｄは絵の上） --- */
-function unitHTML(card) {
-  return `<div class="card unit ${card.t}" data-card="${card.id}">
+/* --- 場のユニット（アイコンのみ。名前とＡ／Ｄは絵の上）
+ * own …… 持ち主が自分か  /  pup …… 持ち主と操作している人がズレている（傀儡・憑依） */
+function unitHTML(card, own, pup) {
+  return `<div class="card unit ${card.t} ${own ? 'own' : 'foe'} ${pup ? 'pup' : ''}"
+      data-card="${card.id}" data-own="${own ? 1 : 0}" data-pup="${pup ? 1 : 0}">
     <div class="art">${artInner(card)}</div>
+    ${pup ? '<div class="pup-tag">傀儡</div>' : ''}
     <div class="topline"><span class="nm">${card.n}</span>
-      <span class="tm">${TYPE_MARK[card.t]}</span></div>
+      <span class="ow">${own ? '自' : '敵'}</span></div>
     <div class="botline"><span class="ad">Ａ${card.a} Ｄ${card.d}</span></div>
   </div>`;
 }
 
-/* そのチャネリングカードを置いたのが自分か（own 未設定なら、その場の持ち主が置いたとみなす） */
-function isOwn(ch, side) { return ch.own === undefined ? side === 'm' : !!ch.own; }
-/* 中身が分かるか。自分が置いたカードは裏でも分かる。相手が置いた裏は分からない */
+/* そのカードの持ち主が自分か（own 未設定なら、その場の持ち主のものとみなす） */
+function isOwn(o, side) { return o.own === undefined ? side === 'm' : !!o.own; }
+/* 中身が分かるか。自分のカードは裏でも分かる。相手が置いた裏は分からない */
 function isKnown(ch, side) { return ch.up || isOwn(ch, side); }
+/* 持ち主と、いま操作している人（＝居る場）がズレているか */
+function isPuppet(o, side) { return isOwn(o, side) !== (side === 'm'); }
 
 /* --- チャネリングカード。ユニットの「下」に重なるので、上端の帯だけが見える --- */
-function chHTML(card, back, k, own) {
+function chHTML(card, back, k, own, st) {
   const bottom = `style="bottom:calc(${k} * var(--vstep));z-index:${100 - k}"`;
   const oc = own ? 'own' : 'foe';
-  const badge = `<span class="ow">${own ? '自' : '敵'}</span>`;
+  const pos = st === 'possess';
+  const badge = `${pos ? '<span class="ow ps">憑</span>' : ''}<span class="ow">${own ? '自' : '敵'}</span>`;
+  const attr = `data-card="${card.id}" data-own="${own ? 1 : 0}" data-st="${st || ''}"`;
   if (back) {
-    /* 裏向き。自分が置いたものだけ、名前が読める */
+    /* 裏向き。自分のカードだけ、名前が読める */
     const nm = own ? `<span class="nm">${card.n}</span>` : `<span class="nm hid">？</span>`;
-    return `<div class="card ch back ${oc}" data-card="${card.id}" data-own="${own ? 1 : 0}" ${bottom}>
+    return `<div class="card ch back ${oc}" ${attr} ${bottom}>
       <div class="strip">${nm}${badge}</div></div>`;
   }
-  return `<div class="card ch ${card.t} ${oc}" data-card="${card.id}" data-own="${own ? 1 : 0}" ${bottom}>
+  return `<div class="card ch ${card.t} ${oc} ${pos ? 'possess' : ''}" ${attr} ${bottom}>
     <div class="strip"><span class="nm">${card.n}</span>${badge}</div>
     <div class="art">${artInner(card)}</div></div>`;
 }
@@ -94,9 +107,9 @@ function laneHTML(slot, side, i) {
     const max = c.ch || LAYERS;
     cap = `<div class="cap-box" style="height:calc(var(--chh) + ${max} * var(--vstep) + 8px)"></div>`;
     slot.chs.slice(0, max).forEach((ch, idx) => {
-      inner += chHTML(CARD_BY_ID[ch.cid], !ch.up, idx + 1, isOwn(ch, side));
+      inner += chHTML(CARD_BY_ID[ch.cid], !ch.up, idx + 1, isOwn(ch, side), ch.st);
     });
-    inner += unitHTML(c);
+    inner += unitHTML(c, isOwn(slot, side), isPuppet(slot, side));
   } else {
     inner = `<div class="card empty-unit">空き</div>`;
   }
@@ -190,40 +203,58 @@ renderBoard(); renderHand(); renderEnemyHand(); renderTurn();
 /* ================= 右の情報パネル ================= */
 let pending = null;      /* 確認待ちの操作 */
 
-function ownTagHTML(own) {
-  return `<span class="i-own ${own ? 'own' : 'foe'}">${own ? '自分が置いたカード' : '相手が置いたカード'}</span>`;
+function ownTagHTML(own, unit) {
+  const t = unit
+    ? (own ? '自分のモンスター' : '相手のモンスター')
+    : (own ? '自分が置いたカード' : '相手が置いたカード');
+  return `<span class="i-own ${own ? 'own' : 'foe'}">${t}</span>`;
 }
 
-function infoCardHTML(card, back, own) {
+function infoCardHTML(card, o) {
+  const { back, own, unit, pup, st } = o;
   /* 相手が置いた裏向きのカードだけは、中身が分からない */
   if (back && !own) {
     return `<div class="i-art back">？</div>
       ${ownTagHTML(false)}
       <h3>裏向きのカード</h3>
       <p class="i-t">相手が置いた裏向きのカードです。開くまで内容は分かりません。<br>
-      開くこと自体は、チャネル先のユニットの持ち主であるあなたができます。</p>`;
+      開くこと自体は、チャネル先のユニットの持ち主ができます。</p>`;
   }
   const kv = card.t === 'U'
     ? `<span>攻撃力 ${card.a}</span><span>防御力 ${card.d}</span>
        <span>ＣＨ ${card.ch}</span><span>召還Ｌｖ ${card.lv}</span>`
     : `<span>${TYPE_NAME[card.t]}</span>`;
-  const hidden = back
-    ? `<p class="i-t dim">※ いまは裏向きです。自分が置いたカードなので内容が分かります（相手には見えません）。</p>`
-    : '';
+  let foot = '';
+  if (back) {
+    foot = `<p class="i-t dim">※ いまは裏向きです。自分のカードなので内容が分かります（相手には見えません）。</p>`;
+  } else if (st === 'possess') {
+    foot = `<p class="i-t pup">憑依：通常攻撃で倒されたこのユニットが、相手のユニットにチャネルされて能力を出しています。</p>`;
+  }
+  if (pup) {
+    foot += own
+      ? `<p class="i-t pup">傀儡：自分のモンスターですが、いまは<b>相手が操作しています</b>。相手の場に移されています。</p>`
+      : `<p class="i-t pup">傀儡：相手のモンスターですが、いまは<b>自分が操作できます</b>。自分の場に移されています。</p>`;
+  }
   return `<div class="i-art ${card.t} ${back ? 'downed' : ''}">${artInner(card)}</div>
-    <div class="i-tag">${TYPE_NAME[card.t]}</div>${own === undefined ? '' : ownTagHTML(own)}
+    <div class="i-tag">${TYPE_NAME[card.t]}</div>${own === undefined ? '' : ownTagHTML(own, unit)}
     <h3>${card.n}</h3>
     <div class="i-kv">${kv}</div>
-    <p class="i-t">${card.e || '（特殊能力なし）'}</p>${hidden}`;
+    <p class="i-t">${card.e || '（特殊能力なし）'}</p>${foot}`;
 }
 
 function showCardInfo(el) {
   pending = null;
-  const card = CARD_BY_ID[+el.dataset.card];
-  const back = el.classList.contains('back');
-  const own = el.dataset.own === undefined ? undefined : el.dataset.own === '1';
+  const d = el.dataset || {};
+  const card = CARD_BY_ID[+d.card];
+  const cl = el.classList;
   document.getElementById('info-fix').innerHTML =
-    `<div class="i-body">${infoCardHTML(card, back, own)}</div>
+    `<div class="i-body">${infoCardHTML(card, {
+      back: cl.contains('back'),
+      own: d.own === undefined ? undefined : d.own === '1',
+      unit: cl.contains('unit'),
+      pup: d.pup === '1',
+      st: d.st || ''
+    })}</div>
      <div class="i-foot"><p class="i-hint">手札のカードを場までドラッグすると出せます</p></div>`;
 }
 
@@ -238,7 +269,12 @@ function miniCardHTML(card) {
 }
 
 const laneList = (side) => (side === 'e' ? G.enemy : G.mine);
-const sideName = (side) => (side === 'e' ? '相手' : '自分');
+const sideName = (side) => (side === 'e' ? '相手の場' : '自分の場');
+/* そのユニットが誰のものかを一言で */
+const hostWho = (slot, side) =>
+  isPuppet(slot, side) ? (isOwn(slot, side) ? '自分のモンスター（傀儡で相手が操作中）'
+                                            : '相手のモンスター（傀儡で自分が操作中）')
+                       : (isOwn(slot, side) ? '自分のモンスター' : '相手のモンスター');
 
 /* 押し込み先の階層を選ぶ。番号を横に並べ、選んだ階層の中身を下に1行で出す */
 function layerName(slot, k, side) {
@@ -263,7 +299,7 @@ function showConfirm(handIdx, side, lane) {
   const slot = laneList(side)[lane];
   let ng = '';
   if (!slot) {
-    if (side === 'e') ng = '相手の空き枠にはカードを置けません。';
+    if (side === 'e') ng = 'モンスターを相手の場に直接召還することはできません。相手の場に関われるのは、相手のユニットへのチャネルだけです。';
     else if (card.t === 'U') {
       pending = { kind: 'play', mode: 'place', handIdx, side, lane };
       return paintConfirm(card, `<b>${lane + 1}番目の枠</b> に召還します`, false);
@@ -280,18 +316,20 @@ function showConfirm(handIdx, side, lane) {
     ? '<span class="i-note">※ 表になると空きレーンへ召還（空き無しなら破壊）</span>'
     : '';
 
+  const where = `${sideName(side)}の <b>${host.n}</b>`;
+  const who = `<span class="i-note">（${hostWho(slot, side)}）</span>`;
+
   if (slot.chs.length < max) {
     const k = slot.chs.length + 1;
     pending = { kind: 'play', mode: 'ch', handIdx, side, lane, layer: k };
     return paintConfirm(card,
-      `${sideName(side)}の <b>${host.n}</b> の ${k} 階層目にチャネルします${note ? '<br>' + note : ''}`,
-      false);
+      `${where} の ${k} 階層目にチャネルします${who}${note}`, false);
   }
 
   /* 満杯：どの階層に押し込むかを選んでもらう（1階層目でなくてよい） */
   pending = { kind: 'play', mode: 'push', handIdx, side, lane, layer: 1, slot };
   paintConfirm(card,
-    `${sideName(side)}の <b>${host.n}</b> は一杯です。`,
+    `${where} は一杯です。${who}`,
     true, layerPickHTML(slot, max, 1, side) + note);
 }
 
@@ -379,7 +417,7 @@ function doPending() {
     const cid = G.hand[handIdx];
     const list = laneList(side);
     if (mode === 'place') {
-      list[lane] = { cid, chs: [] };
+      list[lane] = { cid, own: true, chs: [] };
       done = '場に召還しました';
     } else if (mode === 'push') {
       const old = list[lane].chs[layer - 1];
@@ -407,7 +445,7 @@ function flash(msg) {
 
 /* 最初の表示 */
 document.getElementById('info-fix').innerHTML =
-  `<div class="i-body">${infoCardHTML(CARD_BY_ID[10], false)}</div>
+  `<div class="i-body">${infoCardHTML(CARD_BY_ID[10], {})}</div>
    <div class="i-foot"><p class="i-hint">カードを押すと、その内容がここに出ます</p></div>`;
 
 /* ================= 操作：タップで情報／ドラッグで場に出す ================= */

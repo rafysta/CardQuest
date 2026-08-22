@@ -14,7 +14,7 @@ SOUL GATE ver1.16（2003年・RPGツクール2000製フリーゲーム）の**�
 
 ## 遊び方（タブレット）
 
-1. ブラウザで `https://rafysta.github.io/cardquest/` を開く
+1. ブラウザで `https://rafysta.github.io/CardQuest/` を開く
 2. Chrome のメニュー →「ホーム画面に追加」
 3. 以後はホーム画面のアイコンから起動（全画面・横向き固定）
 
