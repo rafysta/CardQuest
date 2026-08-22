@@ -8,14 +8,15 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.2.0">
+<link rel="stylesheet" href="css/style.css?v=0.3.0">
 </head>
 <body>
 
 <div id="app">
   <div class="topbar">
-    <div class="logo">CardQuest<small>レイアウト案 v0.2.0</small></div>
+    <div class="logo">CardQuest<small>レイアウト案 v0.3.0</small></div>
     <div class="tabs">
+      <button class="minibtn" id="mode-toggle">情報：長押し</button>
       <button class="tab on" data-screen="screen-battle">バトル画面</button>
       <button class="tab" data-screen="screen-deck">デッキ編集</button>
       <button class="tab" data-screen="screen-notes">この案について</button>
@@ -32,17 +33,19 @@
       </div>
       <div class="turn">ターン 4 ／ あなたの番</div>
       <div class="half mine">
-        <span class="meta">手札 <b>10</b>　デッキ <b>34</b></span>
+        <span class="meta">カードを長押しすると詳細</span>
+        <span class="meta">手札 <b>8</b>　デッキ <b>34</b></span>
         <span class="lp">♥♥♥♥♡</span>
         <span class="who">あなた</span>
       </div>
     </div>
 
-    <div class="board" id="board"></div>
-
-    <div class="hand-wrap">
-      <div class="hand" id="hand"></div>
+    <div style="flex:1;min-height:0;display:flex;gap:10px;padding-right:10px">
+      <div class="board" id="board"></div>
+      <div id="info-fix"></div>
     </div>
+
+    <div class="hand-wrap" id="hand"></div>
   </section>
 
   <!-- ===== デッキ編集画面 ===== -->
@@ -56,7 +59,9 @@
           <div class="deck-count" id="deck-count"></div>
         </div>
         <div class="colbar" id="colbar"></div>
-        <div class="tbl-scroll"><table id="tbl"></table></div>
+        <div class="tbl-scroll">
+          <table><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+        </div>
       </div>
       <div class="detail" id="detail"></div>
     </div>
@@ -64,44 +69,37 @@
 
   <!-- ===== 説明 ===== -->
   <section class="screen notes" id="screen-notes">
-    <h2>v0.2 で変えたこと</h2>
+    <h2>v0.3 で変えたこと</h2>
     <ul>
-      <li><b>場と手札を大きくしました。</b>カードは「アイコン」にして、細かい説明はタップで出すようにしています。</li>
-      <li><b>左が相手・右が自分</b>の配置にしました（縦向きにすると自動で上下に切り替わります）。</li>
-      <li>チャネリングしたカードは<b>カードを重ねて</b>並べます。手前が新しいカードです。</li>
-      <li>そのユニットが<b>チャネリングできる数だけ枠を描く</b>ので、いま何個ついているかの数字は出していません。</li>
-      <li>裏向きのカードは、自分のものでも相手のものでも<b>同じ模様</b>で表示します。</li>
-      <li>デッキ編集は<b>表示する列を選べる</b>ようにしました。ＣＨ数・召還Ｌｖ・価格は最初は非表示です。</li>
+      <li><b>ユニットを横に並べ、チャネリングを上に積む</b>形にしました。相手も自分も同じ向き（下がユニット・上に積む）で、<b>左が相手・右が自分</b>です。</li>
+      <li>カードは<b>アイコンだけ</b>。モンスターは名前とＡ／Ｄを、魔法と技能は名前を、<b>絵の上に重ねて</b>書いています。</li>
+      <li>チャネリングしたカードにも<b>小さなアイコン</b>を付けました。重なっていても、下端の帯にアイコンと名前が出ます。</li>
+      <li>場と手札が重ならないよう、高さを固定しました。</li>
+      <li><b>長押ししている間だけ</b>カードの詳細が出ます。指を離すと消えます。自分の場を押すと相手側に、相手の場を押すと自分側に出るので、指で隠れません。</li>
+      <li>デッキ編集の絞り込みで、日本語入力が壊れる不具合を直しました。</li>
     </ul>
 
-    <h3>カードのアイコンについて</h3>
+    <h3>情報の出し方は2つ用意しました</h3>
     <div class="box">
-      <p>いまは絵が無いので、<b>カード名の先頭2〜3文字</b>を大きく出しています（ヨルムンガンド→「ヨル」）。</p>
-      <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、その部分が絵に置き換わります。名前・攻撃力・防御力は絵の下に残るので、絵があってもなくても情報量は同じです。</p>
+      <p>画面右上の「情報：長押し」を押すと、<b>右端に常時表示</b>するモードに切り替わります。両方試して決めてください。</p>
+      <ul>
+        <li><b>長押し（おすすめ）</b>…場所を取らないので、カードを大きくできます（186×130）。ただし押している間しか見えません。</li>
+        <li><b>右端に常時表示</b>…いつでも見えますが、268pxを常に使うのでカードが小さくなります（146×118）。</li>
+      </ul>
     </div>
 
-    <h3>タップの動き</h3>
-    <ul>
-      <li>手札のカードを押す → 選択。もう一度押すと解除。</li>
-      <li>場のカードを押す → そのカードの詳しい内容が出ます（裏向きのカードは「分かりません」と出ます）。</li>
-    </ul>
-
-    <h3>画面の大きさ</h3>
-    <ul>
-      <li><b>横向き 1280×800（おすすめ）</b>：場のカード 132×154、手札 118×138、手札は10枚見えます。</li>
-      <li>縦向き 800×1280：上が相手・下が自分の6段になります。場のカード 108×124、手札は6枚。<b>縦のほうがカードは小さくなります</b>（段が6つ必要なため）。</li>
-    </ul>
+    <h3>カードの絵</h3>
+    <div class="box">
+      <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、そのカードの絵になります。名前とＡ／Ｄは絵の上に重なるので、絵を入れても情報は消えません。</p>
+    </div>
 
     <p style="margin-top:18px;color:#96a7c6">※ まだ対戦はできません。配置が決まってからゲーム部分を組み込みます。</p>
   </section>
 </div>
 
-<div class="pop-back" id="pop-back"></div>
-<div class="pop" id="pop"></div>
-
-<script src="js/data.js?v=0.2.0"></script>
-<script src="js/version.js?v=0.2.0"></script>
-<script src="js/layout.js?v=0.2.0"></script>
-<script src="js/update.js?v=0.2.0"></script>
+<script src="js/data.js?v=0.3.0"></script>
+<script src="js/version.js?v=0.3.0"></script>
+<script src="js/layout.js?v=0.3.0"></script>
+<script src="js/update.js?v=0.3.0"></script>
 </body>
 </html>
