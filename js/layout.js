@@ -1,29 +1,25 @@
-/* CardQuest v0.1 — レイアウト確認用のモックアップ
- * ここではゲームロジックは動かさず、画面の見た目・大きさ・情報量だけを確認します。
+/* CardQuest v0.2 — レイアウト確認用のモックアップ
+ * ゲームロジックはまだ動きません。画面の配置・大きさ・情報量だけを確認します。
  */
 'use strict';
 
-/* ---------- カードの絵 ----------
- * assets/cards/<id>.png（または .webp）を置くと、その絵が使われます。
- * 画像が無いカードは、種別ごとの記号で表示されます。
- */
 const ART_DIR = 'assets/cards/';
-const TYPE_GLYPH = { U: '⚔', M: '✦', S: '✚' };
-const TYPE_MARK  = { U: 'Ｕ', M: 'Ｍ', S: 'Ｓ' };
+const TYPE_MARK = { U: 'Ｕ', M: 'Ｍ', S: 'Ｓ' };
 const TYPE_NAME = { U: 'モンスター', M: '魔法', S: '技能' };
 
-function artHTML(card, cls) {
-  const g = TYPE_GLYPH[card.t];
-  return `<div class="art ${cls || ''}">
-    <img src="${ART_DIR}${card.id}.png" alt=""
-         onerror="this.replaceWith(document.createTextNode('${g}'))">
-  </div>`;
+/* カード名の短縮（絵が用意できるまでの仮アイコン用）
+ * ヨルムンガンド → ヨル / 赤の聖霊陣 → 赤の聖 のように先頭3文字。
+ * 「の」「・」など切りの悪い文字で終わるときは1文字減らす。 */
+function abbrev(name, n) {
+  const base = name.replace(/[『』「」\sの・]/g, '');
+  let s = base.slice(0, n || 3);
+  if (/[ッャュョゥィぁぃぅぇぉっゃゅょー]$/.test(s) && s.length > 1) s = base.slice(0, s.length + 1);
+  return s;
 }
 
-/* 効果文を場に置ける長さへ短くする */
-function shortEffect(card) {
-  const s = card.e || '';
-  return s.length > 22 ? s.slice(0, 21) + '…' : s;
+function artInner(card) {
+  return `<img src="${ART_DIR}${card.id}.png" alt=""
+     onerror="this.replaceWith(document.createTextNode('${abbrev(card.n)}'))">`;
 }
 
 /* ---------- 画面切り替え ---------- */
@@ -36,131 +32,180 @@ document.querySelectorAll('.tab').forEach((b) => {
   });
 });
 
-/* ================= バトル画面のサンプル配置 ================= */
+/* ================= バトル画面 ================= */
 const SAMPLE = {
   enemy: [
-    { cid: 10, chs: [{ cid: 153, own: 'e', up: true }, { cid: 117, own: 'e', up: false },
-                     { cid: 101, own: 'm', up: false }] },
+    { cid: 10, chs: [{ cid: 153, up: true }, { cid: 117, up: false }, { cid: 101, up: false }] },
     null,
-    { cid: 30, chs: [{ cid: 168, own: 'e', up: true }] }
+    { cid: 30, chs: [{ cid: 168, up: true }] }
   ],
   mine: [
-    { cid: 1, chs: [{ cid: 153, own: 'm', up: true }, { cid: 193, own: 'm', up: true }] },
+    { cid: 1, chs: [{ cid: 153, up: true }, { cid: 193, up: true }, { cid: 135, up: false }] },
     { cid: 40, chs: [] },
     null
   ]
 };
+const HAND = [5, 108, 165, 22, 135, 57, 183, 12, 30, 143];
 
-function chRow(ch, i) {
-  const c = CARD_BY_ID[ch.cid];
-  const cls = c.t.toLowerCase();
-  if (!ch.up && ch.own === 'e') {
-    return `<div class="ch ${cls} face-down">
-      <span class="idx">${i + 1}</span><span class="nm">？？？</span>
-      <span class="ef">まだ開いていない</span><span class="st">裏</span></div>`;
-  }
-  return `<div class="ch ${cls}">
-    <span class="idx">${i + 1}</span>
-    <span class="nm">${c.n}</span>
-    <span class="ef">${shortEffect(c)}</span>
-    <span class="st">${ch.up ? '開' : '裏'}</span>
-  </div>`;
+/* カードアイコン1枚（場のユニット・手札用） */
+function pcHTML(card, opt) {
+  const o = opt || {};
+  const sub = card.t === 'U'
+    ? `<span class="pcstat">Ａ${card.a}　Ｄ${card.d}</span>`
+    : `<span class="pcsub">${card.e || ''}</span>`;
+  return `<button class="pc ${card.t} ${o.sel ? 'sel' : ''}" data-card="${card.id}"
+      style="z-index:${o.z || 1}">
+    <span class="mark">${TYPE_MARK[card.t]}</span>
+    <span class="pcart">${artInner(card)}</span>
+    <span class="pcname">${card.n}</span>
+    ${sub}
+  </button>`;
 }
 
-function cellHTML(slot, laneNo, side) {
+/* 重ねて置くチャネリングカード（見えている端に略称） */
+function chCardHTML(card, o) {
+  const side = o.side === 'e' ? 'right' : 'left';
+  if (o.back) {
+    return `<button class="pc stk back ${side}" data-card="${card.id}" style="z-index:${o.z}">
+      <span class="edge"><span class="ab"><i>？</i></span></span>
+      <span class="body"><span class="bn2">？？？</span>
+        <span class="be2">まだ開かれていません</span></span></button>`;
+  }
+  return `<button class="pc stk ${card.t} ${side}" data-card="${card.id}" style="z-index:${o.z}">
+    <span class="edge"><span class="ab">${abbrev(card.n, 2).split('').map((ch) => `<i>${ch}</i>`).join('')}</span></span>
+    <span class="body"><span class="bn2">${card.n}</span>
+      <span class="be2">${card.e || ''}</span></span></button>`;
+}
+
+/* 1レーン分 */
+function laneHTML(slot, side, i) {
+  const cls = side === 'e' ? 'enemy' : 'mine';
+  const tag = `<span class="lane-tag">${side === 'e' ? '相手' : '自分'} ${'１２３'[i]}</span>`;
   if (!slot) {
-    return `<div class="cell empty">
-      <span class="lane-no">${laneNo}</span>
-      <span class="empty-label">空き</span></div>`;
+    return `<div class="lane ${cls}">${tag}<div class="emptyslot big">ユニットなし</div></div>`;
   }
   const c = CARD_BY_ID[slot.cid];
   const max = c.ch || 6;
-  let rows = slot.chs.map((x, i) => chRow(x, i)).join('');
-  for (let i = slot.chs.length; i < 6; i++) {
-    rows += `<div class="ch slot">${i < max ? '空きＣＨ' : '－'}</div>`;
+  let stack = '';
+  slot.chs.slice(0, max).forEach((ch, i) => {
+    stack += chCardHTML(CARD_BY_ID[ch.cid], { z: i + 1, back: !ch.up, side: side });
+  });
+  for (let i = slot.chs.length; i < max; i++) {
+    stack += `<div class="emptyslot" style="z-index:${i + 1}">空</div>`;
   }
-  return `<div class="cell">
-    <span class="lane-no">${laneNo}</span>
-    <div class="chs">${rows}</div>
-    <div class="unit ${side === 'm' && laneNo === '２' ? 'sel' : ''}">
-      ${artHTML(c)}
-      <div class="info">
-        <div class="uname">${c.n}</div>
-        <div class="uskill">${c.e || '（特殊能力なし）'}</div>
-        <div class="ustat">
-          <span>Ａ ${c.a}</span><span>Ｄ ${c.d}</span>
-          <span>ＣＨ ${slot.chs.length}／${max}</span>
-        </div>
-      </div>
-    </div>
-  </div>`;
+  const unit = pcHTML(c, { z: 40, sel: side === 'm' && slot.cid === 40 });
+  const st = `<div class="chstack ${side === 'e' ? 'rev' : ''}">${stack}</div>`;
+  return `<div class="lane ${cls}">${tag}${side === 'e' ? st + unit : unit + st}</div>`;
 }
 
-const LANE_LABEL = ['１', '２', '３'];
-document.getElementById('field-enemy').innerHTML =
-  SAMPLE.enemy.map((s, i) => cellHTML(s, LANE_LABEL[i], 'e')).join('');
-document.getElementById('field-mine').innerHTML =
-  SAMPLE.mine.map((s, i) => cellHTML(s, LANE_LABEL[i], 'm')).join('');
+function renderBoard() {
+  /* 並び順は 相手1,2,3 → 行番号1,2,3 → 自分1,2,3。
+     配置はCSS側で指定するので、横向き・縦向きのどちらでもこの順で構いません。 */
+  let h = '';
+  for (let i = 0; i < 3; i++) h += laneHTML(SAMPLE.enemy[i], 'e', i);
+  for (let i = 0; i < 3; i++) h += `<div class="lane-no"><span>${'１２３'[i]}</span></div>`;
+  for (let i = 0; i < 3; i++) h += laneHTML(SAMPLE.mine[i], 'm', i);
+  document.getElementById('board').innerHTML = h;
+}
+renderBoard();
 
-/* 手札 */
-const HAND = [5, 108, 165, 22, 135, 57, 183, 12];
-document.getElementById('hand').innerHTML = HAND.map((id, i) => {
-  const c = CARD_BY_ID[id];
-  const stat = c.t === 'U' ? `Ａ${c.a}　Ｄ${c.d}　ＣＨ${c.ch}` : `${TYPE_GLYPH[c.t]} ${TYPE_NAME[c.t]}`;
-  return `<button class="hcard ${c.t} ${i === 0 ? 'sel' : ''}" data-i="${i}">
-    <span class="ht">${TYPE_MARK[c.t]}</span>
-    <span class="hn">${c.n}</span>
-    <span class="he">${c.e || ''}</span>
-    <span class="hs">${stat}</span>
-  </button>`;
-}).join('');
+document.getElementById('hand').innerHTML =
+  HAND.map((id, i) => pcHTML(CARD_BY_ID[id], { sel: i === 0, z: 1 })).join('');
 
-/* 選択中のカードをもう一度押したら選択解除 */
+/* 手札：選択中をもう一度押したら解除。それ以外はカード詳細を出す */
 document.getElementById('hand').addEventListener('click', (ev) => {
-  const b = ev.target.closest('.hcard');
+  const b = ev.target.closest('.pc');
   if (!b) return;
-  const wasSelected = b.classList.contains('sel');
-  document.querySelectorAll('.hcard.sel').forEach((x) => x.classList.remove('sel'));
-  if (!wasSelected) b.classList.add('sel');
+  const was = b.classList.contains('sel');
+  document.querySelectorAll('.hand .pc.sel').forEach((x) => x.classList.remove('sel'));
+  if (!was) b.classList.add('sel');
 });
 
+/* 場のカードを押したら詳細を出す */
+document.getElementById('board').addEventListener('click', (ev) => {
+  const b = ev.target.closest('.pc');
+  if (!b) return;
+  if (b.classList.contains('back')) return showPop(null);
+  showPop(CARD_BY_ID[+b.dataset.card]);
+});
+
+function showPop(card) {
+  const pop = document.getElementById('pop');
+  const back = document.getElementById('pop-back');
+  if (!card) {
+    pop.innerHTML = `<div class="row">
+      <div class="bigart" style="background:repeating-linear-gradient(135deg,#1a2540 0 9px,#141d33 9px 18px)">？</div>
+      <div><h3>裏向きのカード</h3>
+      <div class="txt">まだ開かれていないので、何のカードかは分かりません。</div></div></div>
+      <button class="close" onclick="hidePop()">閉じる</button>`;
+  } else {
+    const kv = card.t === 'U'
+      ? `<span>攻撃力 ${card.a}</span><span>防御力 ${card.d}</span>
+         <span>ＣＨ ${card.ch}</span><span>召還Ｌｖ ${card.lv}</span>`
+      : `<span>${TYPE_NAME[card.t]}</span>`;
+    pop.innerHTML = `<div class="row">
+        <div class="bigart ${card.t}">${artInner(card)}
+          <span class="hint">assets/cards/${card.id}.png</span></div>
+        <div style="min-width:0">
+          <h3>${card.n}</h3>
+          <div class="kv">${kv}</div>
+          <div class="txt">${card.e || ''}</div>
+        </div>
+      </div>
+      <button class="close" onclick="hidePop()">閉じる</button>`;
+  }
+  pop.classList.add('on'); back.classList.add('on');
+}
+function hidePop() {
+  document.getElementById('pop').classList.remove('on');
+  document.getElementById('pop-back').classList.remove('on');
+}
+document.getElementById('pop-back').addEventListener('click', hidePop);
+
 /* ================= デッキ編集画面 ================= */
-const COLS = {
+const ALL_COLS = {
   U: [
-    { k: 'n',    label: 'カード名',  w: 200, type: 'text' },
-    { k: 'a',    label: '攻撃力',    w: 84,  type: 'range' },
-    { k: 'd',    label: '防御力',    w: 84,  type: 'range' },
-    { k: 'ch',   label: 'ＣＨ数',    w: 74,  type: 'range' },
-    { k: 'lv',   label: '召還Ｌｖ',  w: 80,  type: 'range' },
-    { k: 'e',    label: '特殊能力',  w: 0,   type: 'text' },
-    { k: 'p',    label: '価格',      w: 88,  type: 'range' },
-    { k: 'cnt',  label: '採用',      w: 122, type: 'count' }
+    { k: 'n',   label: 'カード名',  w: 210, type: 'text',  fixed: true,  def: true },
+    { k: 'a',   label: '攻撃力',    w: 90,  type: 'range', def: true },
+    { k: 'd',   label: '防御力',    w: 90,  type: 'range', def: true },
+    { k: 'ch',  label: 'ＣＨ数',    w: 84,  type: 'range', def: false },
+    { k: 'lv',  label: '召還Ｌｖ',  w: 90,  type: 'range', def: false },
+    { k: 'e',   label: '特殊能力',  w: 0,   type: 'text',  def: true },
+    { k: 'p',   label: '価格',      w: 92,  type: 'range', def: false },
+    { k: 'cnt', label: '採用',      w: 122, type: 'count', fixed: true,  def: true }
   ],
   MS: [
-    { k: 'n',    label: 'カード名',  w: 210, type: 'text' },
-    { k: 'e',    label: '効果',      w: 0,   type: 'text' },
-    { k: 'p',    label: '価格',      w: 96,  type: 'range' },
-    { k: 'cnt',  label: '採用',      w: 122, type: 'count' }
+    { k: 'n',   label: 'カード名',  w: 220, type: 'text',  fixed: true, def: true },
+    { k: 'e',   label: '効果',      w: 0,   type: 'text',  def: true },
+    { k: 'p',   label: '価格',      w: 100, type: 'range', def: false },
+    { k: 'cnt', label: '採用',      w: 122, type: 'count', fixed: true, def: true }
   ]
 };
+const shown = { U: {}, MS: {} };
+Object.keys(ALL_COLS).forEach((g) => ALL_COLS[g].forEach((c) => { shown[g][c.k] = c.def; }));
 
-const deck = {};           // id -> 枚数
+const deck = {};
 [1, 1, 8, 40, 101, 108, 153, 193].forEach((id) => { deck[id] = (deck[id] || 0) + 1; });
 
-let dType = 'U';
-let sortKey = 'id';
-let sortAsc = true;
-let filters = {};
-let selectedId = 1;
+let dType = 'U', sortKey = 'id', sortAsc = true, filters = {}, selectedId = 1;
+const grp = () => (dType === 'U' ? 'U' : 'MS');
+const cols = () => ALL_COLS[grp()].filter((c) => shown[grp()][c.k]);
 
-function cols() { return dType === 'U' ? COLS.U : COLS.MS; }
+function renderColbar() {
+  const g = grp();
+  document.getElementById('colbar').innerHTML =
+    '<span class="cap">表示する列</span>' +
+    ALL_COLS[g].map((c) =>
+      `<button class="colchip ${shown[g][c.k] ? 'on' : ''} ${c.fixed ? 'fixed' : ''}"
+        data-col="${c.k}" ${c.fixed ? 'disabled' : ''}>${c.label}</button>`).join('');
+}
 
 function renderTable() {
   const cs = cols();
   const head = cs.map((c) => {
     const arrow = sortKey === c.k ? `<span class="arrow">${sortAsc ? '▲' : '▼'}</span>` : '';
     const w = c.w ? ` style="width:${c.w}px"` : '';
-    const sortable = (c.type !== 'art' && c.type !== 'count');
+    const sortable = c.type !== 'count';
     return `<th${w} data-sort="${sortable ? c.k : ''}">${c.label}${arrow}</th>`;
   }).join('');
 
@@ -174,15 +219,12 @@ function renderTable() {
         <input data-f="${c.k}_max" placeholder="≦" value="${filters[c.k + '_max'] || ''}">
       </div></th>`;
     }
-    if (c.type === 'count') {
-      return `<th><button class="only-btn ${filters.only ? 'on' : ''}" id="only-btn">採用中のみ</button></th>`;
-    }
-    return '<th></th>';
+    return `<th><button class="only-btn ${filters.only ? 'on' : ''}" id="only-btn">採用中のみ</button></th>`;
   }).join('');
 
-  let rows = CARDS.filter((c) => (dType === 'U' ? c.t === 'U' : c.t === dType));
+  let rows = CARDS.filter((c) => c.t === dType);
   rows = rows.filter((c) => {
-    for (const col of cs) {
+    for (const col of ALL_COLS[grp()]) {
       if (col.type === 'text' && filters[col.k]) {
         if (!String(c[col.k] || '').includes(filters[col.k])) return false;
       }
@@ -210,8 +252,7 @@ function renderTable() {
         return `<td><div class="cnt">
           <button data-minus="${c.id}" ${n === 0 ? 'disabled' : ''}>−</button>
           <span class="v">${n}</span>
-          <button data-plus="${c.id}" ${n >= 3 ? 'disabled' : ''}>＋</button>
-        </div></td>`;
+          <button data-plus="${c.id}" ${n >= 3 ? 'disabled' : ''}>＋</button></div></td>`;
       }
       if (col.k === 'n') return `<td class="nm"><span class="chip ${c.t}">${TYPE_MARK[c.t]}</span>${c.n}</td>`;
       if (col.k === 'e') return `<td class="ef-cell">${c.e || ''}</td>`;
@@ -224,12 +265,11 @@ function renderTable() {
   document.getElementById('tbl').innerHTML =
     `<thead><tr>${head}</tr><tr class="filters">${filterRow}</tr></thead><tbody>${body}</tbody>`;
 
-  const u = Object.entries(deck).reduce((s, [id, n]) => s + (CARD_BY_ID[id].t === 'U' ? n : 0), 0);
-  const m = Object.entries(deck).reduce((s, [id, n]) => s + (CARD_BY_ID[id].t === 'M' ? n : 0), 0);
-  const k = Object.entries(deck).reduce((s, [id, n]) => s + (CARD_BY_ID[id].t === 'S' ? n : 0), 0);
+  const sum = (t) => Object.entries(deck).reduce((s, [id, n]) => s + (CARD_BY_ID[id].t === t ? n : 0), 0);
+  const u = sum('U'), m = sum('M'), k = sum('S');
   document.getElementById('deck-count').innerHTML =
-    `<span>モンスター <b>${u}</b></span><span>魔法 <b>${m}</b></span>` +
-    `<span>技能 <b>${k}</b></span><span>合計 <b>${u + m + k}</b> ／ 50</span>`;
+    `<span>${rows.length} 種を表示</span><span>モンスター <b>${u}</b></span>` +
+    `<span>魔法 <b>${m}</b></span><span>技能 <b>${k}</b></span><span>合計 <b>${u + m + k}</b>／50</span>`;
 }
 
 function renderDetail() {
@@ -240,17 +280,22 @@ function renderDetail() {
     : `<span>${TYPE_NAME[c.t]}</span><span>${c.p} G</span>`;
   document.getElementById('detail').innerHTML = `
     <div class="big ${c.t}">
-      <div class="bigart">${TYPE_GLYPH[c.t]}<span class="hint">assets/cards/${c.id}.png</span></div>
-      <div class="tag">${TYPE_NAME[c.t]}</div>
+      <div class="bigart">${artInner(c)}<span class="hint">assets/cards/${c.id}.png</span></div>
       <div class="bn">${c.n}</div>
       <div class="bstat">${stat}</div>
       <div class="btext">${c.e || ''}</div>
     </div>
-    <div class="scroll">
-      <h4>入手方法</h4>
-      <div class="obtain">${(c.g || '').replace(/</g, '&lt;')}</div>
-    </div>`;
+    <div class="obt"><h4>入手方法</h4>
+      <div class="obtain">${(c.g || '').replace(/</g, '&lt;')}</div></div>`;
 }
+
+document.getElementById('colbar').addEventListener('click', (ev) => {
+  const b = ev.target.closest('.colchip');
+  if (!b || b.disabled) return;
+  const g = grp();
+  shown[g][b.dataset.col] = !shown[g][b.dataset.col];
+  renderColbar(); renderTable();
+});
 
 document.getElementById('tbl').addEventListener('click', (ev) => {
   const th = ev.target.closest('th[data-sort]');
@@ -289,9 +334,10 @@ document.querySelectorAll('.dtab').forEach((b) => {
     dType = b.dataset.t;
     filters = {}; sortKey = 'id'; sortAsc = true;
     selectedId = CARDS.find((c) => c.t === dType).id;
-    renderTable(); renderDetail();
+    renderColbar(); renderTable(); renderDetail();
   });
 });
 
+renderColbar();
 renderTable();
 renderDetail();

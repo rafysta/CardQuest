@@ -8,13 +8,13 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.1.0">
+<link rel="stylesheet" href="css/style.css?v=0.2.0">
 </head>
 <body>
 
 <div id="app">
   <div class="topbar">
-    <div class="logo">CardQuest<small>レイアウト案 v0.1.0</small></div>
+    <div class="logo">CardQuest<small>レイアウト案 v0.2.0</small></div>
     <div class="tabs">
       <button class="tab on" data-screen="screen-battle">バトル画面</button>
       <button class="tab" data-screen="screen-deck">デッキ編集</button>
@@ -24,33 +24,25 @@
 
   <!-- ===== バトル画面 ===== -->
   <section class="screen on" id="screen-battle">
-    <div class="sidebar-row enemy">
-      <span class="who">『放火魔』マグドラ</span>
-      <span class="lp">♥♥♥♡♡</span>
-      <span class="meta">手札 <b>5</b>　デッキ <b>38</b></span>
-      <span class="spacer"></span>
-      <span class="meta">ターン <b>4</b>　いまは <b>あなたの番</b></span>
+    <div class="statusbar">
+      <div class="half enemy">
+        <span class="who">『放火魔』マグドラ</span>
+        <span class="lp">♥♥♥♡♡</span>
+        <span class="meta">手札 <b>5</b>　デッキ <b>38</b></span>
+      </div>
+      <div class="turn">ターン 4 ／ あなたの番</div>
+      <div class="half mine">
+        <span class="meta">手札 <b>10</b>　デッキ <b>34</b></span>
+        <span class="lp">♥♥♥♥♡</span>
+        <span class="who">あなた</span>
+      </div>
     </div>
 
-    <div class="field" id="field-enemy"></div>
+    <div class="board" id="board"></div>
 
-    <div class="lane-bar">
-      <div class="n">１ 行目</div>
-      <div class="n">２ 行目</div>
-      <div class="n">３ 行目</div>
+    <div class="hand-wrap">
+      <div class="hand" id="hand"></div>
     </div>
-
-    <div class="field" id="field-mine"></div>
-
-    <div class="sidebar-row mine">
-      <span class="who">あなた</span>
-      <span class="lp">♥♥♥♥♡</span>
-      <span class="meta">デッキ <b>34</b></span>
-      <span class="spacer"></span>
-      <span class="meta">手札のカードを押す → 場の枠を押す</span>
-    </div>
-
-    <div class="hand" id="hand"></div>
   </section>
 
   <!-- ===== デッキ編集画面 ===== -->
@@ -63,6 +55,7 @@
           <button class="dtab S" data-t="S">✚ 技能</button>
           <div class="deck-count" id="deck-count"></div>
         </div>
+        <div class="colbar" id="colbar"></div>
         <div class="tbl-scroll"><table id="tbl"></table></div>
       </div>
       <div class="detail" id="detail"></div>
@@ -71,59 +64,44 @@
 
   <!-- ===== 説明 ===== -->
   <section class="screen notes" id="screen-notes">
-    <h2>このレイアウト案について</h2>
-    <p>Galaxy Tab S11（11.0インチ・2560×1600・16:10）を横向きで使う前提です。ブラウザから見える大きさは <code>1280×800</code> なので、この寸法でスクロールなしに収まるよう組んでいます。</p>
-
-    <h3>文字の大きさ</h3>
+    <h2>v0.2 で変えたこと</h2>
     <ul>
-      <li>基本 18px、カード名 21px、見出し 26px。表の中も 17px 以上にしています。</li>
-      <li>指で押す場所（ボタン・タブ・手札）は高さ 40〜60px を確保しています。</li>
+      <li><b>場と手札を大きくしました。</b>カードは「アイコン」にして、細かい説明はタップで出すようにしています。</li>
+      <li><b>左が相手・右が自分</b>の配置にしました（縦向きにすると自動で上下に切り替わります）。</li>
+      <li>チャネリングしたカードは<b>カードを重ねて</b>並べます。手前が新しいカードです。</li>
+      <li>そのユニットが<b>チャネリングできる数だけ枠を描く</b>ので、いま何個ついているかの数字は出していません。</li>
+      <li>裏向きのカードは、自分のものでも相手のものでも<b>同じ模様</b>で表示します。</li>
+      <li>デッキ編集は<b>表示する列を選べる</b>ようにしました。ＣＨ数・召還Ｌｖ・価格は最初は非表示です。</li>
     </ul>
 
-    <h3>場（バトル）のつくり</h3>
-    <ul>
-      <li>横に <b>１・２・３</b> の枠、上が相手・下が自分の <b>3×2 のグリッド</b>です。枠線と行番号の帯で、どの枠かひと目で分かります。</li>
-      <li>チャネリングしたカードは <b>ユニットの上に積み上がります</b>（いちばん下がＣＨ１）。</li>
-      <li>ユニットが居なくても、また 1 枚もチャネリングされていなくても、<b>6 枚ぶんの高さを常に確保</b>しています。カードを置いても場のレイアウトはずれません。</li>
-      <li>チャネリングされたカードは 1 行の帯で、<b>名前と効果の要約</b>を出します。相手の裏向きは「？？？」。</li>
-      <li>同時に出せるモンスターは <b>自分 3 体・相手 3 体</b>です。</li>
-    </ul>
-
-    <h3>カードの種類の見分け</h3>
-    <ul>
-      <li>⚔ モンスター = 赤、✦ 魔法 = 青、✚ 技能 = 緑。カードの地色・枠線・チャネリング帯の左端の色が種類ごとに変わります。</li>
-      <li>色が分かりにくい場面のために、記号（⚔ ✦ ✚）も必ず添えています。</li>
-    </ul>
-
-    <h3>絵をあとから足せるようにする</h3>
+    <h3>カードのアイコンについて</h3>
     <div class="box">
-      <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、そのカードの絵として自動的に使われます。<br>
-      例：ミルファイター（ID 1）なら <code>assets/cards/1.png</code>。</p>
-      <p>絵が無いカードは、いまと同じように記号だけで表示されます。<b>1 枚ずつ、描けたぶんから足していけます。</b>差し替えのためにプログラムを直す必要はありません。</p>
-      <p>推奨サイズ：正方形 256×256 以上（場では 82×82、詳細では 380×150 で表示）。</p>
+      <p>いまは絵が無いので、<b>カード名の先頭2〜3文字</b>を大きく出しています（ヨルムンガンド→「ヨル」）。</p>
+      <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、その部分が絵に置き換わります。名前・攻撃力・防御力は絵の下に残るので、絵があってもなくても情報量は同じです。</p>
     </div>
 
-    <h3>デッキ編集</h3>
+    <h3>タップの動き</h3>
     <ul>
-      <li>モンスター／魔法／技能をタブで切り替えます。</li>
-      <li>モンスターは <b>カード名・攻撃力・防御力・ＣＨ数・召還Ｌｖ・特殊能力・価格</b>が別の列。魔法と技能は <b>カード名・効果・価格</b>が別の列です。</li>
-      <li>見出しを押すと並べ替え（もう一度押すと逆順）。その下の入力欄でしぼり込みができます。数値の列は「以上／以下」で範囲指定です。</li>
-      <li>行を押すと右側に大きなカードと、そのカードの入手方法が出ます。</li>
-      <li>採用枚数は ＋ − で増減。同じログは 3 枚までという原作のルールに合わせています。</li>
+      <li>手札のカードを押す → 選択。もう一度押すと解除。</li>
+      <li>場のカードを押す → そのカードの詳しい内容が出ます（裏向きのカードは「分かりません」と出ます）。</li>
     </ul>
 
-    <h3>選択の解除</h3>
+    <h3>画面の大きさ</h3>
     <ul>
-      <li>手札で選んだカードを <b>もう一度押すと選択が解除</b>されます（この画面でも試せます）。</li>
+      <li><b>横向き 1280×800（おすすめ）</b>：場のカード 132×154、手札 118×138、手札は10枚見えます。</li>
+      <li>縦向き 800×1280：上が相手・下が自分の6段になります。場のカード 108×124、手札は6枚。<b>縦のほうがカードは小さくなります</b>（段が6つ必要なため）。</li>
     </ul>
 
-    <p style="margin-top:20px;color:#96a7c6">※ この v0.1 は見た目の確認用です。まだ対戦はできません。配置・文字サイズ・色を決めてから、ゲーム部分を組み込みます。</p>
+    <p style="margin-top:18px;color:#96a7c6">※ まだ対戦はできません。配置が決まってからゲーム部分を組み込みます。</p>
   </section>
 </div>
 
-<script src="js/data.js?v=0.1.0"></script>
-<script src="js/version.js?v=0.1.0"></script>
-<script src="js/layout.js?v=0.1.0"></script>
-<script src="js/update.js?v=0.1.0"></script>
+<div class="pop-back" id="pop-back"></div>
+<div class="pop" id="pop"></div>
+
+<script src="js/data.js?v=0.2.0"></script>
+<script src="js/version.js?v=0.2.0"></script>
+<script src="js/layout.js?v=0.2.0"></script>
+<script src="js/update.js?v=0.2.0"></script>
 </body>
 </html>
