@@ -8,13 +8,13 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.6.0">
+<link rel="stylesheet" href="css/style.css?v=0.7.0">
 </head>
 <body>
 
 <div id="app">
   <div class="topbar">
-    <div class="logo">CardQuest<small>レイアウト案 v0.6.0</small></div>
+    <div class="logo">CardQuest<small>レイアウト案 v0.7.0</small></div>
     <div class="tabs">
       <button class="tab on" data-screen="screen-battle">バトル画面</button>
       <button class="tab" data-screen="screen-deck">デッキ編集</button>
@@ -72,6 +72,25 @@
 
   <!-- ===== 説明 ===== -->
   <section class="screen notes" id="screen-notes">
+    <h2>v0.7 で変えたこと</h2>
+    <ul>
+      <li>チャネリングカードに<b>「置いたのは誰か」の印</b>を付けました。左端の色帯と「自／敵」の印で、<b>水色＝自分が置いたカード</b>、<b>橙色＝相手が置いたカード</b>です。場のどちら側に居るかとは別の情報です。</li>
+      <li>自分が置いたカードは、相手の場に置いたものでも<b>裏向きのまま名前が読めます</b>。押せば効果まで全部出ます。</li>
+      <li>相手が置いた裏向きのカードは「？」だけで、内容は分かりません（開くことはできます）。</li>
+      <li>押し込む階層の一覧にも、自分のカードか相手のカードかを出すようにしました。</li>
+    </ul>
+
+    <h3>「誰のカードか」の見分け方</h3>
+    <div class="box">
+      <p><b>チャネリングカードの左端の色帯</b>を見てください。</p>
+      <ul>
+        <li><b>水色＋「自」</b>＝自分が置いたカード。相手のユニットに付けたものも水色です。中身はいつでも分かります。</li>
+        <li><b>橙色＋「敵」</b>＝相手が置いたカード。自分のユニットに付いていても橙色です。裏向きのあいだ中身は分かりません。</li>
+      </ul>
+      <p>レーンに立っている<b>ユニット</b>には印を付けていません。ユニットは必ず持ち主の場に立つので、左が相手・右が自分という配置がそのまま持ち主だからです。</p>
+      <p><b>開閉できるのは、チャネル先のユニットの持ち主</b>です。自分の場のユニットに付いているカードは、橙色（相手が置いたもの）でも自分が開閉できます。逆に、相手の場に置いた自分の水色のカードは、相手しか開閉できません。</p>
+    </div>
+
     <h2>v0.6 で変えたこと</h2>
     <ul>
       <li>場の高さを画面から自動で計算するようにしました。<b>6階層目が上の情報パネルに掛からなくなります</b>。</li>
@@ -124,9 +143,9 @@
 
 <div id="flash"></div>
 
-<script src="js/data.js?v=0.6.0"></script>
-<script src="js/version.js?v=0.6.0"></script>
-<script src="js/layout.js?v=0.6.0"></script>
-<script src="js/update.js?v=0.6.0"></script>
+<script src="js/data.js?v=0.7.0"></script>
+<script src="js/version.js?v=0.7.0"></script>
+<script src="js/layout.js?v=0.7.0"></script>
+<script src="js/update.js?v=0.7.0"></script>
 </body>
 </html>
