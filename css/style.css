@@ -8,10 +8,13 @@
   --s-1:#0f3d24; --s-2:#1d9a52; --s-edge:#8ff0b5;
 
   --fs-base:18px;
-  --cw:126px;     /* 場のカードの幅（正方形） */
-  --chh:126px;    /* 場のカードの高さ（正方形） */
-  --vstep:63px;   /* チャネリング1階層ぶんの見える高さ（カードの50%） */
+  --cw:126px;     /* 場のカードの幅（正方形）／画面高さに合わせてJSが調整する */
+  --chh:126px;    /* 場のカードの高さ（正方形）／同上 */
+  --vstep:56px;   /* チャネリング1階層ぶんの見える高さ／同上 */
   --hstep:96px;   /* 手札を重ねるときの1枚ぶんの見える幅 */
+
+  --act-w:132px;  /* 手札の右に並ぶ操作ボタン（チェンジ／ターン終了）の幅 */
+  --act-h:118px;  /* 同・高さ */
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -99,9 +102,6 @@ input{-webkit-user-select:text;user-select:text}
 .gband{height:var(--vstep);border-top:1px dashed #33496f;position:relative}
 .gband:nth-child(odd){background:#ffffff06}
 .gband:last-child{border-bottom:1px dashed #33496f}
-.gband span{
-  position:absolute;left:4px;top:calc(50% - 8px);font-size:11px;color:#41598a;
-}
 /* 最大チャネル数の範囲を、ユニットも含めてはっきり囲む */
 .cap-box{
   position:absolute;left:-4px;right:-4px;bottom:-4px;z-index:2;
@@ -156,7 +156,12 @@ input{-webkit-user-select:text;user-select:text}
 
 /* チャネリングカード：ユニットの「下」に潜り込み、上端の帯だけが見える */
 .card.ch{position:absolute;left:0}
-.card.ch.back{border-color:#4b5262;background:#3a4150;box-shadow:0 2px 5px rgba(0,0,0,.5)}
+/* 裏向き：場の暗い背景から必ず浮くよう、明るい灰色にする */
+.card.ch.back{
+  border-color:#cfd8e8;
+  background:repeating-linear-gradient(135deg,#8b96ae 0 11px,#79849c 11px 22px);
+  box-shadow:0 2px 6px rgba(0,0,0,.55);
+}
 .card.ch .strip{
   position:absolute;left:0;right:0;top:0;height:var(--vstep);z-index:2;
   display:flex;align-items:flex-start;padding:6px 8px 0;
@@ -177,9 +182,9 @@ input{-webkit-user-select:text;user-select:text}
 .hand-card{--cw:126px;--chh:126px;flex:0 0 var(--cw);transition:transform .08s;
   touch-action:none}
 .hand-card .art{font-size:30px}
-/* チェンジカード（アイテム）：常に手札の右端 */
+/* チェンジカード（アイテム）：使えるときだけ手札の右端に出る。ターン終了ボタンと同じ大きさ */
 .change-card{
-  --cw:132px;--chh:126px;flex:0 0 var(--cw);margin-left:auto;
+  --cw:var(--act-w);--chh:var(--act-h);flex:0 0 var(--act-w);margin-left:auto;
   border-color:#e8b33c;background:linear-gradient(150deg,#4a3a08,#8a6a14);
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
 }
@@ -197,7 +202,7 @@ input{-webkit-user-select:text;user-select:text}
 .hand-card + .change-card .topline{padding-left:0}
 .hand-card.dragging{opacity:.35}
 #btn-skip{
-  flex:0 0 128px;width:128px;height:110px;border-radius:12px;
+  flex:0 0 var(--act-w);width:var(--act-w);height:var(--act-h);border-radius:11px;
   background:var(--panel2);border:2px solid var(--line);color:var(--txt);
   font-size:17px;font-weight:800;line-height:1.35;
 }
@@ -224,7 +229,8 @@ input{-webkit-user-select:text;user-select:text}
 .i-art.U{background:linear-gradient(150deg,var(--u-1),var(--u-2))}
 .i-art.M{background:linear-gradient(150deg,var(--m-1),var(--m-2))}
 .i-art.S{background:linear-gradient(150deg,var(--s-1),var(--s-2))}
-.i-art.back{background:repeating-linear-gradient(135deg,#1a2540 0 9px,#141d33 9px 18px)}
+.i-art.back{background:repeating-linear-gradient(135deg,#8b96ae 0 11px,#79849c 11px 22px);
+  border-color:#cfd8e8;color:#ffffff99}
 .i-tag{display:inline-block;font-size:13px;font-weight:800;letter-spacing:.1em;
   padding:2px 10px;border-radius:6px;background:#0a1120;border:1px solid var(--line)}
 #info-fix h3{font-size:23px;margin:6px 0 8px}
@@ -232,13 +238,26 @@ input{-webkit-user-select:text;user-select:text}
 .i-kv span{background:#0a1120;border:1px solid var(--line);
   padding:2px 10px;border-radius:8px;font-size:15px;font-weight:800}
 .i-t{font-size:17px;line-height:1.5}
-.i-ask{margin-top:14px;padding:12px;border-radius:10px;
+.i-ask{margin-top:12px;padding:11px 12px;border-radius:10px;
   background:#3a2f05;border:2px solid var(--accent);font-size:16px;line-height:1.5}
 .i-ask .q{display:block;font-size:18px;font-weight:800;color:var(--accent);margin-bottom:4px}
 .i-ask.ng{background:#3d1414;border-color:#f87171}
 .i-ask.ng .q{color:#ffb0b0}
 .i-ask.warn{background:#3d2a05;border-color:#f5a623}
 .i-ask.warn .q{color:#ffd27a}
+
+.i-note{display:block;margin-top:7px;font-size:13px;line-height:1.4;color:#e6dcc0}
+
+/* 押し込む階層を選ぶ（番号の並び＋選んだ階層の中身を1行で） */
+.lay-row{display:flex;gap:5px;margin-top:10px}
+.lay-chip{
+  flex:1;height:42px;border-radius:8px;font-size:18px;font-weight:800;
+  background:#0a1120;border:2px solid var(--line);color:var(--txt);
+}
+.lay-chip.on{background:var(--accent);border-color:var(--accent);color:#241c00}
+.lay-now{margin-top:9px;font-size:15px;line-height:1.45}
+.lay-now .lc{font-weight:800}
+.lay-now .lc.back{color:#cfd8e8}
 
 /* 確認・エラー用のコンパクトなカード表示 */
 .c-head{display:flex;gap:10px;align-items:flex-start;margin-bottom:10px}
@@ -264,6 +283,20 @@ input{-webkit-user-select:text;user-select:text}
 .btn{flex:1;height:60px;border-radius:11px;font-size:19px;font-weight:800}
 .btn.ok{background:var(--accent);color:#241c00}
 .btn.ng{background:var(--panel2);border:2px solid var(--line);color:var(--txt)}
+
+/* 画面の高さが足りない端末では、右パネルを一回り小さくして
+   確認の内容がスクロールせずに収まるようにする */
+@media (max-height:700px){
+  .c-art{width:48px;height:48px;flex:0 0 48px;font-size:16px}
+  .c-nm{font-size:18px}
+  .c-ef{font-size:14px;-webkit-line-clamp:2}
+  .i-ask{font-size:15px;padding:9px 10px;margin-top:9px}
+  .i-ask .q{font-size:17px}
+  .lay-chip{height:38px;font-size:17px}
+  .lay-now{margin-top:7px;font-size:14px}
+  .btn{height:52px;font-size:18px}
+  #info-fix{padding:11px}
+}
 
 #flash{
   position:fixed;left:50%;bottom:170px;transform:translateX(-50%);z-index:500;

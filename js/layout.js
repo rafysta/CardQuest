@@ -93,13 +93,40 @@ function renderBoard() {
   const e = G.enemy.map((s, i) => laneHTML(s, 'e', i)).join('');
   const m = G.mine.map((s, i) => laneHTML(s, 'm', i)).join('');
   let grid = '';
-  for (let k = LAYERS; k >= 1; k--) grid += `<div class="gband"><span>${k}</span></div>`;
+  for (let k = LAYERS; k >= 1; k--) grid += `<div class="gband"></div>`;
   document.getElementById('board').innerHTML =
     `<div class="bhalf enemy" id="half-e"><div class="layer-grid">${grid}</div>
        <div class="lanes">${e}</div></div>
      <div class="bhalf mine" id="half-m"><div class="layer-grid">${grid}</div>
        <div class="lanes">${m}</div></div>`;
+  fitBoard();
 }
+
+/* --- 場の高さを画面に合わせる ---
+ * ユニット1枚＋6階層ぶんが、上の情報パネルに掛からずに必ず収まるよう、
+ * カードの大きさとチャネリング1階層ぶんの見える高さを実測から決める。 */
+function fitBoard() {
+  const half = document.querySelector('.bhalf');
+  if (!half) return;
+  const cs = getComputedStyle(half);
+  const avail = half.clientHeight
+    - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+    - 8;                                   /* .lanes の下余白＋枠のはみ出しぶん */
+  if (!(avail > 0)) return;
+
+  let chh = 126;                           /* 場のカードは正方形 */
+  let vstep = Math.floor((avail - chh) / LAYERS);
+  if (vstep > 63) vstep = 63;              /* カードの50%を超えては広げない */
+  if (vstep < 34) {                        /* それでも入らないならカードを小さくする */
+    vstep = 34;
+    chh = Math.max(84, avail - LAYERS * vstep);
+  }
+  const root = document.documentElement.style;
+  root.setProperty('--chh', chh + 'px');
+  root.setProperty('--cw', chh + 'px');
+  root.setProperty('--vstep', vstep + 'px');
+}
+window.addEventListener('resize', () => { fitBoard(); renderHand(); });
 
 /* --- 手札：左のカードが手前。右へ少しずつずらして重ねる --- */
 function handHTML(card, i, sel) {
@@ -113,17 +140,21 @@ function handHTML(card, i, sel) {
     ${bot}
   </div>`;
 }
+/* チェンジが今このターンに使えるか。使えないときはボタンごと出さない */
+function canChange() {
+  return G.hasChange && !G.acted && G.hand.length > 0;
+}
 function renderHand() {
   const el = document.getElementById('hand');
   let h = G.hand.map((id, i) => handHTML(CARD_BY_ID[id], i, false)).join('');
-  if (G.hasChange) {
-    h += `<div class="card change-card ${G.acted ? 'used' : ''}" id="change-card">
+  if (canChange()) {
+    h += `<div class="card change-card" id="change-card">
       <div class="cc-i">🔁</div><div class="cc-n">チェンジ</div>
       <div class="cc-t">手札を引き直す</div></div>`;
   }
   el.innerHTML = h;
   /* 枚数が増えたら重なりを深くして、はみ出さないようにする */
-  const CW = 126, RESERVE = G.hasChange ? 150 : 0;
+  const CW = 126, RESERVE = canChange() ? 150 : 0;
   const W = (el.clientWidth || 900) - RESERVE, n = G.hand.length;
   const step = n > 1 ? Math.min(96, Math.floor((W - CW) / (n - 1))) : CW;
   el.style.setProperty('--hstep', Math.max(40, step) + 'px');
@@ -181,48 +212,96 @@ function miniCardHTML(card) {
     </div></div>`;
 }
 
+const laneList = (side) => (side === 'e' ? G.enemy : G.mine);
+const sideName = (side) => (side === 'e' ? '相手' : '自分');
+
+/* 押し込み先の階層を選ぶ。番号を横に並べ、選んだ階層の中身を下に1行で出す */
+function layerName(slot, k) {
+  const ch = slot.chs[k - 1];
+  const back = !ch.up;
+  return `<span class="lc ${back ? 'back' : ''}">${back ? '裏向きのカード' : `『${CARD_BY_ID[ch.cid].n}』`}</span>`;
+}
+function layerNowHTML(slot, k) {
+  return `<b>${k}</b> 階層目の ${layerName(slot, k)} を捨てて入れ替えます`;
+}
+function layerPickHTML(slot, max, sel) {
+  let h = '<div class="lay-row">';
+  for (let k = 1; k <= max; k++) {
+    h += `<button class="lay-chip ${k === sel ? 'on' : ''}" data-layer="${k}">${k}</button>`;
+  }
+  return h + `</div><div class="lay-now" id="lay-now">${layerNowHTML(slot, sel)}</div>`;
+}
+
 function showConfirm(handIdx, side, lane) {
   const card = CARD_BY_ID[G.hand[handIdx]];
-  const slot = G.mine[lane];
+  const slot = laneList(side)[lane];
   let ng = '';
-  let what = '';
-  let mode = 'place';
   if (!slot) {
-    if (card.t === 'U') what = `<b>${lane + 1}番目の枠</b> に出します`;
-    else ng = 'ここは空き枠です。魔法と技能はユニットの上にしか置けません。';
-  } else {
-    const host = CARD_BY_ID[slot.cid];
-    if (card.t === 'U') ng = 'ここにはすでにユニットが居ます。';
-    else if (slot.chs.length >= (host.ch || LAYERS)) {
-      /* 満杯なら押し込み：1階層目を捨てて置き換える */
-      mode = 'push';
-      const oldCard = CARD_BY_ID[slot.chs[0].cid];
-      const oldName = slot.chs[0].up ? `『${oldCard.n}』` : '裏向きのカード';
-      what = `<b>${host.n}</b> のチャネルは一杯です。<br>
-        1階層目の ${oldName} を捨てて押し込みます`;
-    } else {
-      what = `<b>${host.n}</b> の ${slot.chs.length + 1} 階層目にチャネリングします`;
-    }
+    if (side === 'e') ng = '相手の空き枠にはカードを置けません。';
+    else if (card.t === 'U') {
+      pending = { kind: 'play', mode: 'place', handIdx, side, lane };
+      return paintConfirm(card, `<b>${lane + 1}番目の枠</b> に召還します`, false);
+    } else ng = 'ここは空き枠です。魔法と技能はユニットの上にしか置けません。';
   }
-  const info = document.getElementById('info-fix');
   if (ng) {
     pending = null;
-    info.innerHTML =
-      `<div class="i-body">${miniCardHTML(card)}
-        <div class="i-ask ng"><span class="q">この場所には置けません</span>${ng}</div></div>
-       <div class="i-foot btns"><button class="btn ng" id="btn-ng">閉じる</button></div>`;
-  } else {
-    pending = { kind: 'play', mode, handIdx, lane };
-    info.innerHTML =
-      `<div class="i-body">${miniCardHTML(card)}
-        <div class="i-ask ${mode === 'push' ? 'warn' : ''}">
-          <span class="q">この操作でよろしいですか？</span>${what}</div></div>
-       <div class="i-foot btns">
-         <button class="btn ok" id="btn-ok">ＯＫ</button>
-         <button class="btn ng" id="btn-ng">キャンセル</button>
-       </div>`;
-    document.getElementById('btn-ok').onclick = doPending;
+    return paintNG(card, ng);
   }
+
+  const host = CARD_BY_ID[slot.cid];
+  const max = host.ch || LAYERS;
+  const note = card.t === 'U'
+    ? '<span class="i-note">※ 表になると空きレーンへ召還（空き無しなら破壊）</span>'
+    : '';
+
+  if (slot.chs.length < max) {
+    const k = slot.chs.length + 1;
+    pending = { kind: 'play', mode: 'ch', handIdx, side, lane, layer: k };
+    return paintConfirm(card,
+      `${sideName(side)}の <b>${host.n}</b> の ${k} 階層目にチャネルします${note ? '<br>' + note : ''}`,
+      false);
+  }
+
+  /* 満杯：どの階層に押し込むかを選んでもらう（1階層目でなくてよい） */
+  pending = { kind: 'play', mode: 'push', handIdx, side, lane, layer: 1, slot };
+  paintConfirm(card,
+    `${sideName(side)}の <b>${host.n}</b> は一杯です。`,
+    true, layerPickHTML(slot, max, 1) + note);
+}
+
+function paintNG(card, ng) {
+  const info = document.getElementById('info-fix');
+  info.innerHTML =
+    `<div class="i-body">${miniCardHTML(card)}
+      <div class="i-ask ng"><span class="q">この場所には置けません</span>${ng}</div></div>
+     <div class="i-foot btns"><button class="btn ng" id="btn-ng">閉じる</button></div>`;
+  bindCancel(card);
+}
+
+function paintConfirm(card, what, warn, extra) {
+  const info = document.getElementById('info-fix');
+  info.innerHTML =
+    `<div class="i-body">${miniCardHTML(card)}
+      <div class="i-ask ${warn ? 'warn' : ''}">
+        <span class="q">この操作でよろしいですか？</span>${what}${extra || ''}</div></div>
+     <div class="i-foot btns">
+       <button class="btn ok" id="btn-ok">ＯＫ</button>
+       <button class="btn ng" id="btn-ng">キャンセル</button>
+     </div>`;
+  document.getElementById('btn-ok').onclick = doPending;
+  info.querySelectorAll('.lay-chip').forEach((b) => {
+    b.onclick = () => {
+      if (!pending) return;
+      pending.layer = +b.dataset.layer;
+      info.querySelectorAll('.lay-chip').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on');
+      document.getElementById('lay-now').innerHTML = layerNowHTML(pending.slot, pending.layer);
+    };
+  });
+  bindCancel(card);
+}
+
+function bindCancel(card) {
   document.getElementById('btn-ng').onclick = () => {
     pending = null;
     showCardInfo({ dataset: { card: card.id }, classList: { contains: () => false } });
@@ -269,15 +348,20 @@ function doPending() {
     G.hand = REDRAW.slice(0, G.hand.length);
     done = '手札を引き直しました';
   } else {
-    const { mode, handIdx, lane } = pending;
+    const { mode, handIdx, side, lane, layer } = pending;
     const cid = G.hand[handIdx];
-    if (!G.mine[lane]) G.mine[lane] = { cid, chs: [] };
-    else if (mode === 'push') {
-      G.mine[lane].chs.shift();               /* 1階層目を捨てる */
-      G.mine[lane].chs.push({ cid, up: false });
-      done = '押し込みました（1階層目は捨て札になりました）';
+    const list = laneList(side);
+    if (mode === 'place') {
+      list[lane] = { cid, chs: [] };
+      done = '場に召還しました';
+    } else if (mode === 'push') {
+      const old = list[lane].chs[layer - 1];
+      const oldName = old.up ? `『${CARD_BY_ID[old.cid].n}』` : '裏向きのカード';
+      list[lane].chs[layer - 1] = { cid, up: false };
+      done = `${layer} 階層目に押し込みました（${oldName} は捨て札）`;
     } else {
-      G.mine[lane].chs.push({ cid, up: false });
+      list[lane].chs.push({ cid, up: false });
+      done = `${layer} 階層目にチャネルしました`;
     }
     G.hand.splice(handIdx, 1);
   }
@@ -329,7 +413,12 @@ document.addEventListener('pointermove', (ev) => {
     document.body.appendChild(g);
     drag.ghost = g;
     drag.el.classList.add('dragging');
-    document.querySelectorAll('#half-m .lane').forEach((l) => l.classList.add('droppable'));
+    /* 置ける場所だけを光らせる。チャネル先は相手のユニットも対象 */
+    document.querySelectorAll('.lane').forEach((l) => {
+      const slot = laneList(l.dataset.side)[+l.dataset.i];
+      const ok = slot ? true : (l.dataset.side === 'm' && c.t === 'U');
+      if (ok) l.classList.add('droppable');
+    });
   }
   drag.ghost.style.left = ev.clientX + 'px';
   drag.ghost.style.top = ev.clientY + 'px';
@@ -342,7 +431,7 @@ function laneUnder(x, y) {
   const els = document.elementsFromPoint(x, y);
   for (const e of els) {
     const l = e.closest && e.closest('.lane');
-    if (l && l.dataset.side === 'm') return l;
+    if (l) return l;
   }
   return null;
 }
@@ -356,7 +445,7 @@ document.addEventListener('pointerup', (ev) => {
   d.el.classList.remove('dragging');
   if (!d.moved) { showCardInfo(d.el); return; }
   const lane = laneUnder(ev.clientX, ev.clientY);
-  if (lane) showConfirm(d.idx, 'm', +lane.dataset.i);
+  if (lane) showConfirm(d.idx, lane.dataset.side, +lane.dataset.i);
 });
 
 document.getElementById('btn-skip').addEventListener('click', () => {

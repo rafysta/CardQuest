@@ -8,13 +8,13 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.5.0">
+<link rel="stylesheet" href="css/style.css?v=0.6.0">
 </head>
 <body>
 
 <div id="app">
   <div class="topbar">
-    <div class="logo">CardQuest<small>レイアウト案 v0.5.0</small></div>
+    <div class="logo">CardQuest<small>レイアウト案 v0.6.0</small></div>
     <div class="tabs">
       <button class="tab on" data-screen="screen-battle">バトル画面</button>
       <button class="tab" data-screen="screen-deck">デッキ編集</button>
@@ -72,6 +72,17 @@
 
   <!-- ===== 説明 ===== -->
   <section class="screen notes" id="screen-notes">
+    <h2>v0.6 で変えたこと</h2>
+    <ul>
+      <li>場の高さを画面から自動で計算するようにしました。<b>6階層目が上の情報パネルに掛からなくなります</b>。</li>
+      <li>裏向きのカードを明るい灰色にして、暗い背景と見分けやすくしました。</li>
+      <li>階層の数字（1〜6）をやめました。点線だけを残しています。</li>
+      <li>「チェンジ」と「ターンを終了する」を<b>同じ大きさ</b>に揃えました。</li>
+      <li>チェンジが使えないターンは、<b>ボタンごと出さない</b>ようにしました。</li>
+      <li>チャネルが一杯のユニットには、<b>入れ替える階層を選んで</b>押し込みます（1階層目に固定ではありません）。</li>
+      <li>チャネル先は<b>相手のユニットも対象</b>です。相手が付けているカードを自分のカードに置き換えられます。</li>
+      <li>ユニットカードもチャネルできます。表になったときにチャネルが解けて空きレーンに召還されます（空きが無ければ破壊）。</li>
+    </ul>
     <h2>v0.5 で変えたこと</h2>
     <ul>
       <li>確認のボタンとメッセージが重ならないようにしました。確認のときはカードを小さな要約に切り替え、ボタンは常にパネル下端です。</li>
@@ -98,7 +109,7 @@
 
     <h3>この画面で試せること</h3>
     <div class="box">
-      <p>手札のカードを、右側（自分の場）のレーンまでドラッグして離してみてください。確認が出て、ＯＫを押すと実際に場に出ます。モンスターは空き枠に、魔法と技能はユニットの上に置けます。</p>
+      <p>手札のカードを、場のレーンまでドラッグして離してみてください。確認が出て、ＯＫを押すと実際に場に出ます。モンスターは自分の空き枠に召還でき、どのカードも<b>自分・相手どちらのユニット</b>にもチャネルできます。チャネルが一杯のときは、入れ替える階層を選べます。</p>
       <p>場のカード・手札のカードを押すと、右のパネルの内容が切り替わります。</p>
     </div>
 
@@ -113,9 +124,9 @@
 
 <div id="flash"></div>
 
-<script src="js/data.js?v=0.5.0"></script>
-<script src="js/version.js?v=0.5.0"></script>
-<script src="js/layout.js?v=0.5.0"></script>
-<script src="js/update.js?v=0.5.0"></script>
+<script src="js/data.js?v=0.6.0"></script>
+<script src="js/version.js?v=0.6.0"></script>
+<script src="js/layout.js?v=0.6.0"></script>
+<script src="js/update.js?v=0.6.0"></script>
 </body>
 </html>
