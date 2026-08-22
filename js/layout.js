@@ -43,8 +43,12 @@ const G = {
     { cid: 40, chs: [] },
     null
   ],
-  hand: [5, 108, 165, 22, 135, 57, 183, 12]
+  hand: [5, 108, 165, 22, 135, 57, 183, 12],
+  hasChange: true,          /* ［Ｉ］チェンジを所持しているか */
+  acted: false              /* このターン、既に何か操作したか */
 };
+/* 引き直し後のサンプル手札（モックアップ用） */
+const REDRAW = [30, 143, 101, 8, 46, 188, 117, 2];
 
 /* --- 場のユニット（アイコンのみ。名前とＡ／Ｄは絵の上） --- */
 function unitHTML(card) {
@@ -60,13 +64,10 @@ function unitHTML(card) {
 function chHTML(card, back, k) {
   const bottom = `style="bottom:calc(${k} * var(--vstep));z-index:${100 - k}"`;
   if (back) {
-    return `<div class="card ch back" data-card="${card.id}" ${bottom}>
-      <div class="strip"><span class="ico back">？</span><span class="nm">裏向き</span></div>
-      <div class="art">？</div></div>`;
+    return `<div class="card ch back" data-card="${card.id}" ${bottom}></div>`;
   }
   return `<div class="card ch ${card.t}" data-card="${card.id}" ${bottom}>
-    <div class="strip"><span class="ico ${card.t}">${abbrev(card.n, 2)}</span>
-      <span class="nm">${card.n}</span></div>
+    <div class="strip"><span class="nm">${card.n}</span></div>
     <div class="art">${artInner(card)}</div></div>`;
 }
 
@@ -77,7 +78,7 @@ function laneHTML(slot, side, i) {
   if (slot) {
     const c = CARD_BY_ID[slot.cid];
     const max = c.ch || LAYERS;
-    cap = `<div class="cap-box" style="height:calc(${max} * var(--vstep))"></div>`;
+    cap = `<div class="cap-box" style="height:calc(var(--chh) + ${max} * var(--vstep) + 8px)"></div>`;
     slot.chs.slice(0, max).forEach((ch, idx) => {
       inner += chHTML(CARD_BY_ID[ch.cid], !ch.up, idx + 1);
     });
@@ -114,11 +115,18 @@ function handHTML(card, i, sel) {
 }
 function renderHand() {
   const el = document.getElementById('hand');
-  el.innerHTML = G.hand.map((id, i) => handHTML(CARD_BY_ID[id], i, false)).join('');
+  let h = G.hand.map((id, i) => handHTML(CARD_BY_ID[id], i, false)).join('');
+  if (G.hasChange) {
+    h += `<div class="card change-card ${G.acted ? 'used' : ''}" id="change-card">
+      <div class="cc-i">🔁</div><div class="cc-n">チェンジ</div>
+      <div class="cc-t">手札を引き直す</div></div>`;
+  }
+  el.innerHTML = h;
   /* 枚数が増えたら重なりを深くして、はみ出さないようにする */
-  const CW = 168, W = el.clientWidth || 900, n = G.hand.length;
-  const step = n > 1 ? Math.min(128, Math.floor((W - CW) / (n - 1))) : CW;
-  el.style.setProperty('--hstep', Math.max(46, step) + 'px');
+  const CW = 126, RESERVE = G.hasChange ? 150 : 0;
+  const W = (el.clientWidth || 900) - RESERVE, n = G.hand.length;
+  const step = n > 1 ? Math.min(96, Math.floor((W - CW) / (n - 1))) : CW;
+  el.style.setProperty('--hstep', Math.max(40, step) + 'px');
 }
 
 /* --- 相手の手札の枚数を、裏カードを並べて見せる --- */
@@ -163,32 +171,83 @@ function showCardInfo(el) {
      <div class="i-foot"><p class="i-hint">手札のカードを場までドラッグすると出せます</p></div>`;
 }
 
+/* 確認・エラー用のコンパクトなカード表示（本文が必ず収まる） */
+function miniCardHTML(card) {
+  return `<div class="c-head">
+    <div class="c-art ${card.t}">${artInner(card, 2)}</div>
+    <div class="c-tx">
+      <div class="c-nm">${card.n}</div>
+      <div class="c-ef">${card.e || TYPE_NAME[card.t]}</div>
+    </div></div>`;
+}
+
 function showConfirm(handIdx, side, lane) {
   const card = CARD_BY_ID[G.hand[handIdx]];
   const slot = G.mine[lane];
   let ng = '';
   let what = '';
+  let mode = 'place';
   if (!slot) {
     if (card.t === 'U') what = `<b>${lane + 1}番目の枠</b> に出します`;
     else ng = 'ここは空き枠です。魔法と技能はユニットの上にしか置けません。';
   } else {
     const host = CARD_BY_ID[slot.cid];
-    if (slot.chs.length >= (host.ch || LAYERS)) ng = `${host.n} のチャネルはもう空いていません。`;
-    else if (card.t === 'U') ng = 'ここにはすでにユニットが居ます。';
-    else what = `<b>${host.n}</b> の ${slot.chs.length + 1} 階層目にチャネリングします`;
+    if (card.t === 'U') ng = 'ここにはすでにユニットが居ます。';
+    else if (slot.chs.length >= (host.ch || LAYERS)) {
+      /* 満杯なら押し込み：1階層目を捨てて置き換える */
+      mode = 'push';
+      const oldCard = CARD_BY_ID[slot.chs[0].cid];
+      const oldName = slot.chs[0].up ? `『${oldCard.n}』` : '裏向きのカード';
+      what = `<b>${host.n}</b> のチャネルは一杯です。<br>
+        1階層目の ${oldName} を捨てて押し込みます`;
+    } else {
+      what = `<b>${host.n}</b> の ${slot.chs.length + 1} 階層目にチャネリングします`;
+    }
   }
   const info = document.getElementById('info-fix');
   if (ng) {
     pending = null;
     info.innerHTML =
-      `<div class="i-body">${infoCardHTML(card, false)}
+      `<div class="i-body">${miniCardHTML(card)}
         <div class="i-ask ng"><span class="q">この場所には置けません</span>${ng}</div></div>
        <div class="i-foot btns"><button class="btn ng" id="btn-ng">閉じる</button></div>`;
   } else {
-    pending = { handIdx, lane };
+    pending = { kind: 'play', mode, handIdx, lane };
     info.innerHTML =
-      `<div class="i-body">${infoCardHTML(card, false)}
-        <div class="i-ask"><span class="q">この操作でよろしいですか？</span>${what}</div></div>
+      `<div class="i-body">${miniCardHTML(card)}
+        <div class="i-ask ${mode === 'push' ? 'warn' : ''}">
+          <span class="q">この操作でよろしいですか？</span>${what}</div></div>
+       <div class="i-foot btns">
+         <button class="btn ok" id="btn-ok">ＯＫ</button>
+         <button class="btn ng" id="btn-ng">キャンセル</button>
+       </div>`;
+    document.getElementById('btn-ok').onclick = doPending;
+  }
+  document.getElementById('btn-ng').onclick = () => {
+    pending = null;
+    showCardInfo({ dataset: { card: card.id }, classList: { contains: () => false } });
+  };
+}
+
+function showChangeConfirm() {
+  const info = document.getElementById('info-fix');
+  if (G.acted) {
+    pending = null;
+    info.innerHTML =
+      `<div class="i-body"><div class="c-head"><div class="c-art CHG">🔁</div>
+        <div class="c-tx"><div class="c-nm">チェンジ</div>
+        <div class="c-ef">手札をすべて捨てて、同じ枚数を引き直す</div></div></div>
+        <div class="i-ask ng"><span class="q">今は使えません</span>
+        チェンジは、このターンにまだ何も操作していないときだけ使えます。</div></div>
+       <div class="i-foot btns"><button class="btn ng" id="btn-ng">閉じる</button></div>`;
+  } else {
+    pending = { kind: 'change' };
+    info.innerHTML =
+      `<div class="i-body"><div class="c-head"><div class="c-art CHG">🔁</div>
+        <div class="c-tx"><div class="c-nm">チェンジ</div>
+        <div class="c-ef">手札をすべて捨てて、同じ枚数を引き直す</div></div></div>
+        <div class="i-ask warn"><span class="q">この操作でよろしいですか？</span>
+        いまの手札 <b>${G.hand.length} 枚</b> をすべて捨てて引き直します。<br>元には戻せません。</div></div>
        <div class="i-foot btns">
          <button class="btn ok" id="btn-ok">ＯＫ</button>
          <button class="btn ng" id="btn-ng">キャンセル</button>
@@ -198,23 +257,35 @@ function showConfirm(handIdx, side, lane) {
   document.getElementById('btn-ng').onclick = () => {
     pending = null;
     document.getElementById('info-fix').innerHTML =
-      `<div class="i-body">${infoCardHTML(card, false)}</div>
-       <div class="i-foot"><p class="i-hint">手札のカードを場までドラッグすると出せます</p></div>`;
+      `<div class="i-body"></div>
+       <div class="i-foot"><p class="i-hint">カードを押すと、その内容がここに出ます</p></div>`;
   };
 }
 
 function doPending() {
   if (!pending) return;
-  const { handIdx, lane } = pending;
-  const cid = G.hand[handIdx];
-  const card = CARD_BY_ID[cid];
-  if (!G.mine[lane]) G.mine[lane] = { cid, chs: [] };
-  else G.mine[lane].chs.push({ cid, up: false });
-  G.hand.splice(handIdx, 1);
+  let done = '場に出しました';
+  if (pending.kind === 'change') {
+    G.hand = REDRAW.slice(0, G.hand.length);
+    done = '手札を引き直しました';
+  } else {
+    const { mode, handIdx, lane } = pending;
+    const cid = G.hand[handIdx];
+    if (!G.mine[lane]) G.mine[lane] = { cid, chs: [] };
+    else if (mode === 'push') {
+      G.mine[lane].chs.shift();               /* 1階層目を捨てる */
+      G.mine[lane].chs.push({ cid, up: false });
+      done = '押し込みました（1階層目は捨て札になりました）';
+    } else {
+      G.mine[lane].chs.push({ cid, up: false });
+    }
+    G.hand.splice(handIdx, 1);
+  }
+  G.acted = true;
   pending = null;
   renderBoard(); renderHand();
   document.getElementById('info-fix').innerHTML =
-    `<div class="i-body"><div class="i-done">場に出しました</div></div>
+    `<div class="i-body"><div class="i-done">${done}</div></div>
      <div class="i-foot"><p class="i-hint">カードを押すと、その内容がここに出ます</p></div>`;
 }
 function flash(msg) {
@@ -234,6 +305,7 @@ let drag = null;
 document.getElementById('screen-battle').addEventListener('pointerdown', (ev) => {
   const el = ev.target.closest('.card');
   if (!el || el.classList.contains('empty-unit')) return;
+  if (el.id === 'change-card') { showChangeConfirm(); return; }
   if (el.classList.contains('hand-card')) {
     drag = { el, id: +el.dataset.card, idx: +el.dataset.hand,
              x0: ev.clientX, y0: ev.clientY, moved: false, ghost: null };
@@ -288,7 +360,8 @@ document.addEventListener('pointerup', (ev) => {
 });
 
 document.getElementById('btn-skip').addEventListener('click', () => {
-  G.turn += 1; renderTurn(); flash('ターンを終了しました');
+  G.turn += 1; G.acted = false; renderTurn(); renderHand();
+  flash('ターンを終了しました');
 });
 
 /* ================= デッキ編集画面（v0.3から変更なし） ================= */

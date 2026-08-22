@@ -8,10 +8,10 @@
   --s-1:#0f3d24; --s-2:#1d9a52; --s-edge:#8ff0b5;
 
   --fs-base:18px;
-  --cw:140px;     /* 場のカードの幅 */
-  --chh:160px;    /* 場のカードの高さ */
-  --vstep:60px;   /* チャネリング1階層ぶんの見える高さ */
-  --hstep:128px;  /* 手札を重ねるときの1枚ぶんの見える幅 */
+  --cw:126px;     /* 場のカードの幅（正方形） */
+  --chh:126px;    /* 場のカードの高さ（正方形） */
+  --vstep:63px;   /* チャネリング1階層ぶんの見える高さ（カードの50%） */
+  --hstep:96px;   /* 手札を重ねるときの1枚ぶんの見える幅 */
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -89,24 +89,23 @@ input{-webkit-user-select:text;user-select:text}
   position:relative;z-index:3;width:var(--cw);
   height:calc(var(--chh) + 6 * var(--vstep));flex:0 0 var(--cw);
 }
-/* 階層の目安。左右の場で高さがそろうので、同じ階層が一直線に並ぶ */
+/* 場の下端に少し余白（枠が切れないように） */
+.lanes{padding:0 4px 4px}
+/* 階層の目安。レーンの下端（=bhalfのpadding 6px + .lanes padding 4px）に合わせる */
 .layer-grid{
-  position:absolute;left:6px;right:6px;bottom:calc(6px + var(--chh));
+  position:absolute;left:6px;right:6px;bottom:calc(10px + var(--chh));
   height:calc(6 * var(--vstep));z-index:1;pointer-events:none;
 }
-.gband{
-  height:var(--vstep);border-top:1px dashed #33496f;position:relative;
-}
-.gband{border-top:1px dashed #33496f}
+.gband{height:var(--vstep);border-top:1px dashed #33496f;position:relative}
 .gband:nth-child(odd){background:#ffffff06}
 .gband:last-child{border-bottom:1px dashed #33496f}
 .gband span{
-  position:absolute;left:2px;top:2px;font-size:11px;color:#41598a;letter-spacing:.1em;
+  position:absolute;left:4px;top:calc(50% - 8px);font-size:11px;color:#41598a;
 }
-/* 最大チャネル数の範囲をはっきり囲む */
+/* 最大チャネル数の範囲を、ユニットも含めてはっきり囲む */
 .cap-box{
-  position:absolute;left:-3px;right:-3px;bottom:var(--chh);z-index:2;
-  border:2px solid #5c7ba8;border-radius:8px;pointer-events:none;
+  position:absolute;left:-4px;right:-4px;bottom:-4px;z-index:2;
+  border:2px solid #5c7ba8;border-radius:10px;pointer-events:none;
 }
 .bhalf.mine .cap-box{border-color:#4f93a8}
 .bhalf.enemy .cap-box{border-color:#a8687a}
@@ -157,28 +156,16 @@ input{-webkit-user-select:text;user-select:text}
 
 /* チャネリングカード：ユニットの「下」に潜り込み、上端の帯だけが見える */
 .card.ch{position:absolute;left:0}
-.card.ch.back{
-  border-color:#3a4a6b;
-  background:repeating-linear-gradient(135deg,#1a2540 0 9px,#141d33 9px 18px);
-}
+.card.ch.back{border-color:#4b5262;background:#3a4150;box-shadow:0 2px 5px rgba(0,0,0,.5)}
 .card.ch .strip{
   position:absolute;left:0;right:0;top:0;height:var(--vstep);z-index:2;
-  display:flex;align-items:center;gap:7px;padding:0 7px;
-  background:linear-gradient(#000d,#000a 70%,#0000);
+  display:flex;align-items:flex-start;padding:6px 8px 0;
+  background:linear-gradient(#000c,#0007 75%,#0000);
 }
-.card.ch .strip .ico{
-  flex:0 0 36px;width:36px;height:36px;border-radius:7px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:15px;font-weight:800;color:#fff;border:1px solid #ffffff55;
-  line-height:1;letter-spacing:-.02em;
-}
-.card.ch .strip .ico.U{background:linear-gradient(140deg,var(--u-1),var(--u-2))}
-.card.ch .strip .ico.M{background:linear-gradient(140deg,var(--m-1),var(--m-2))}
-.card.ch .strip .ico.S{background:linear-gradient(140deg,var(--s-1),var(--s-2))}
-.card.ch .strip .ico.back{background:#22304d;color:#7f95bd}
 .card.ch .strip .nm{
-  flex:1;min-width:0;font-size:16px;font-weight:800;color:#fff;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px #000;
+  flex:1;min-width:0;font-size:16px;font-weight:800;color:#fff;line-height:1.25;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  text-shadow:0 1px 3px #000;
 }
 
 /* ---- 手札 ---- */
@@ -187,13 +174,27 @@ input{-webkit-user-select:text;user-select:text}
   padding:8px 12px;background:var(--panel);border-top:2px solid var(--line);
 }
 .hand{flex:1;min-width:0;display:flex;align-items:center;overflow:hidden}
-.hand-card{--cw:168px;--chh:126px;flex:0 0 var(--cw);transition:transform .08s;
+.hand-card{--cw:126px;--chh:126px;flex:0 0 var(--cw);transition:transform .08s;
   touch-action:none}
-.hand-card .art{font-size:32px}
+.hand-card .art{font-size:30px}
+/* チェンジカード（アイテム）：常に手札の右端 */
+.change-card{
+  --cw:132px;--chh:126px;flex:0 0 var(--cw);margin-left:auto;
+  border-color:#e8b33c;background:linear-gradient(150deg,#4a3a08,#8a6a14);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+}
+.change-card .cc-i{font-size:34px;line-height:1}
+.change-card .cc-n{font-size:17px;font-weight:800}
+.change-card .cc-t{font-size:12px;color:#ffe9b3}
+.change-card.used{filter:grayscale(.7) brightness(.6)}
 .hand-card + .hand-card{margin-left:calc(var(--hstep) - var(--cw))}
 /* 重なって隠れる幅ぶん、文字を右にずらして必ず見えるようにする */
 .hand-card + .hand-card .topline,
-.hand-card + .hand-card .botline{padding-left:calc(var(--cw) - var(--hstep) + 7px)}
+.hand-card + .hand-card .botline{padding-left:calc(var(--cw) - var(--hstep) + 6px)}
+.hand-card + .hand-card .topline .nm{font-size:14px}
+.hand-card + .hand-card .botline .ad{font-size:13px}
+.change-card + .change-card{margin-left:auto}
+.hand-card + .change-card .topline{padding-left:0}
 .hand-card.dragging{opacity:.35}
 #btn-skip{
   flex:0 0 128px;width:128px;height:110px;border-radius:12px;
@@ -205,7 +206,7 @@ input{-webkit-user-select:text;user-select:text}
 /* ドラッグ中の分身 */
 .ghost{
   position:fixed;z-index:999;pointer-events:none;transform:translate(-50%,-50%);
-  --cw:150px;--chh:112px;opacity:.92;
+  --cw:112px;--chh:112px;opacity:.92;
 }
 
 /* ---- 右の情報パネル（常時表示） ---- */
@@ -213,7 +214,7 @@ input{-webkit-user-select:text;user-select:text}
   flex:0 0 300px;width:300px;display:flex;flex-direction:column;
   background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:14px;
 }
-.i-body{flex:1;min-height:0;overflow:hidden}
+.i-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
 .i-art{
   width:100%;height:150px;border-radius:10px;overflow:hidden;margin-bottom:10px;
   display:flex;align-items:center;justify-content:center;
@@ -236,6 +237,25 @@ input{-webkit-user-select:text;user-select:text}
 .i-ask .q{display:block;font-size:18px;font-weight:800;color:var(--accent);margin-bottom:4px}
 .i-ask.ng{background:#3d1414;border-color:#f87171}
 .i-ask.ng .q{color:#ffb0b0}
+.i-ask.warn{background:#3d2a05;border-color:#f5a623}
+.i-ask.warn .q{color:#ffd27a}
+
+/* 確認・エラー用のコンパクトなカード表示 */
+.c-head{display:flex;gap:10px;align-items:flex-start;margin-bottom:10px}
+.c-art{
+  width:64px;height:64px;flex:0 0 64px;border-radius:9px;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  font-size:19px;font-weight:800;color:#fff;border:2px solid #ffffff40;
+}
+.c-art img{width:100%;height:100%;object-fit:cover}
+.c-art.U{background:linear-gradient(150deg,var(--u-1),var(--u-2))}
+.c-art.M{background:linear-gradient(150deg,var(--m-1),var(--m-2))}
+.c-art.S{background:linear-gradient(150deg,var(--s-1),var(--s-2))}
+.c-art.CHG{background:linear-gradient(150deg,#4a3a08,#8a6a14);font-size:30px}
+.c-tx{flex:1;min-width:0}
+.c-nm{font-size:20px;font-weight:800;margin-bottom:2px}
+.c-ef{font-size:15px;line-height:1.4;color:#cddaf1;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
 .i-done{margin-top:20px;padding:14px;border-radius:10px;background:#0f3d24;
   border:2px solid #1d9a52;font-size:18px;font-weight:800;text-align:center}
 .i-foot{flex:0 0 auto;padding-top:10px}
