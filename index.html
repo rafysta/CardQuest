@@ -8,15 +8,14 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.3.0">
+<link rel="stylesheet" href="css/style.css?v=0.4.0">
 </head>
 <body>
 
 <div id="app">
   <div class="topbar">
-    <div class="logo">CardQuest<small>レイアウト案 v0.3.0</small></div>
+    <div class="logo">CardQuest<small>レイアウト案 v0.4.0</small></div>
     <div class="tabs">
-      <button class="minibtn" id="mode-toggle">情報：長押し</button>
       <button class="tab on" data-screen="screen-battle">バトル画面</button>
       <button class="tab" data-screen="screen-deck">デッキ編集</button>
       <button class="tab" data-screen="screen-notes">この案について</button>
@@ -26,26 +25,30 @@
   <!-- ===== バトル画面 ===== -->
   <section class="screen on" id="screen-battle">
     <div class="statusbar">
-      <div class="half enemy">
+      <div class="side enemy">
         <span class="who">『放火魔』マグドラ</span>
         <span class="lp">♥♥♥♡♡</span>
-        <span class="meta">手札 <b>5</b>　デッキ <b>38</b></span>
+        <span class="meta">手札</span>
+        <span id="ehand"></span>
+        <span class="meta">デッキ <b>38</b></span>
       </div>
-      <div class="turn">ターン 4 ／ あなたの番</div>
-      <div class="half mine">
-        <span class="meta">カードを長押しすると詳細</span>
-        <span class="meta">手札 <b>8</b>　デッキ <b>34</b></span>
+      <div id="turnbox"></div>
+      <div class="side mine">
+        <span class="meta">デッキ <b>34</b></span>
         <span class="lp">♥♥♥♥♡</span>
         <span class="who">あなた</span>
       </div>
     </div>
 
-    <div style="flex:1;min-height:0;display:flex;gap:10px;padding-right:10px">
+    <div class="battle-row">
       <div class="board" id="board"></div>
       <div id="info-fix"></div>
     </div>
 
-    <div class="hand-wrap" id="hand"></div>
+    <div class="hand-wrap">
+      <div class="hand" id="hand"></div>
+      <button id="btn-skip">ターンを<br>終了する</button>
+    </div>
   </section>
 
   <!-- ===== デッキ編集画面 ===== -->
@@ -69,37 +72,41 @@
 
   <!-- ===== 説明 ===== -->
   <section class="screen notes" id="screen-notes">
-    <h2>v0.3 で変えたこと</h2>
+    <h2>v0.4 で変えたこと</h2>
     <ul>
-      <li><b>ユニットを横に並べ、チャネリングを上に積む</b>形にしました。相手も自分も同じ向き（下がユニット・上に積む）で、<b>左が相手・右が自分</b>です。</li>
-      <li>カードは<b>アイコンだけ</b>。モンスターは名前とＡ／Ｄを、魔法と技能は名前を、<b>絵の上に重ねて</b>書いています。</li>
-      <li>チャネリングしたカードにも<b>小さなアイコン</b>を付けました。重なっていても、下端の帯にアイコンと名前が出ます。</li>
-      <li>場と手札が重ならないよう、高さを固定しました。</li>
-      <li><b>長押ししている間だけ</b>カードの詳細が出ます。指を離すと消えます。自分の場を押すと相手側に、相手の場を押すと自分側に出るので、指で隠れません。</li>
-      <li>デッキ編集の絞り込みで、日本語入力が壊れる不具合を直しました。</li>
+      <li>カードの情報は<b>右端に常時表示</b>。長押しはやめて、<b>カードを押すだけ</b>で切り替わります。</li>
+      <li>手札を場までドラッグして離すと、右のパネルに<b>ＯＫ／キャンセル</b>が出ます。押し間違いはここで止まります。</li>
+      <li>チャネリングの重ね方を逆にしました。<b>ユニットが手前で全体が見え、チャネリングカードはその下に潜り込みます</b>。1階層目はユニットの下、2階層目は1階層目の下、という順です。</li>
+      <li>チャネリング1階層ぶんの見える高さを 48px → <b>60px</b> に広げました。</li>
+      <li>レーン番号をやめ、レーンの間に隙間を入れました。</li>
+      <li><b>6階層すべてに点線</b>を引いたので、自分と相手のどのカードが同じ階層かが一目で分かります。ユニットが居ないレーンでも点線は出ます。</li>
+      <li>そのユニットが<b>チャネリングできる範囲</b>を、はっきりした実線の枠で囲みました。</li>
+      <li>相手の手札の枚数を、裏カードを並べて見せます。</li>
+      <li>いま何ターン目かを、画面中央に大きく出します。</li>
+      <li>手札は左から少しずつ重ねて並べます。いちばん左が手前で、右のカードはその下に潜ります。隠れる幅ぶん文字を右にずらしてあるので、名前は必ず読めます。</li>
+      <li>手札の右に「ターンを終了する」ボタンを付けました。</li>
     </ul>
 
-    <h3>情報の出し方は2つ用意しました</h3>
+    <h3>この画面で試せること</h3>
     <div class="box">
-      <p>画面右上の「情報：長押し」を押すと、<b>右端に常時表示</b>するモードに切り替わります。両方試して決めてください。</p>
-      <ul>
-        <li><b>長押し（おすすめ）</b>…場所を取らないので、カードを大きくできます（186×130）。ただし押している間しか見えません。</li>
-        <li><b>右端に常時表示</b>…いつでも見えますが、268pxを常に使うのでカードが小さくなります（146×118）。</li>
-      </ul>
+      <p>手札のカードを、右側（自分の場）のレーンまでドラッグして離してみてください。確認が出て、ＯＫを押すと実際に場に出ます。モンスターは空き枠に、魔法と技能はユニットの上に置けます。</p>
+      <p>場のカード・手札のカードを押すと、右のパネルの内容が切り替わります。</p>
     </div>
 
     <h3>カードの絵</h3>
     <div class="box">
-      <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、そのカードの絵になります。名前とＡ／Ｄは絵の上に重なるので、絵を入れても情報は消えません。</p>
+      <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、そのカードの絵になります。名前とＡ／Ｄは絵の上に重なります。</p>
     </div>
 
-    <p style="margin-top:18px;color:#96a7c6">※ まだ対戦はできません。配置が決まってからゲーム部分を組み込みます。</p>
+    <p style="margin-top:18px;color:#96a7c6">※ 勝敗やチャネリングの効果などのルールはまだ入っていません。</p>
   </section>
 </div>
 
-<script src="js/data.js?v=0.3.0"></script>
-<script src="js/version.js?v=0.3.0"></script>
-<script src="js/layout.js?v=0.3.0"></script>
-<script src="js/update.js?v=0.3.0"></script>
+<div id="flash"></div>
+
+<script src="js/data.js?v=0.4.0"></script>
+<script src="js/version.js?v=0.4.0"></script>
+<script src="js/layout.js?v=0.4.0"></script>
+<script src="js/update.js?v=0.4.0"></script>
 </body>
 </html>

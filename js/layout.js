@@ -1,27 +1,25 @@
-/* CardQuest v0.3 — レイアウト確認用のモックアップ
- * ゲームロジックはまだ動きません。画面の配置・大きさ・操作感だけを確認します。
+/* CardQuest v0.4 — レイアウト確認用のモックアップ
+ * バトルのルールはまだ動きませんが、カードを出す操作（ドラッグ＋確認）は試せます。
  */
 'use strict';
 
 const ART_DIR = 'assets/cards/';
 const TYPE_MARK = { U: 'Ｕ', M: 'Ｍ', S: 'Ｓ' };
 const TYPE_NAME = { U: 'モンスター', M: '魔法', S: '技能' };
+const LAYERS = 6;                    /* チャネリングの最大階層 */
 
-/* 絵が用意できるまでの仮アイコン用。ヨルムンガンド → ヨル */
 function abbrev(name, n) {
   const base = name.replace(/[『』「」\sの・]/g, '');
   let s = base.slice(0, n || 3);
   if (/[ッャュョゥィぁぃぅぇぉっゃゅょー]$/.test(s) && s.length > 1) s = base.slice(0, s.length + 1);
   return s;
 }
-/* assets/cards/<id>.png があればそれを、無ければ略称を出す */
 function artInner(card, chars) {
   const a = abbrev(card.n, chars || 3);
   return `<img src="${ART_DIR}${card.id}.png" alt=""
      onerror="this.replaceWith(document.createTextNode('${a}'))">`;
 }
 
-/* ---------- 画面切り替え ---------- */
 document.querySelectorAll('.tab').forEach((b) => {
   b.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach((x) => x.classList.remove('on'));
@@ -32,7 +30,9 @@ document.querySelectorAll('.tab').forEach((b) => {
 });
 
 /* ================= バトル画面 ================= */
-const SAMPLE = {
+const G = {
+  turn: 4,
+  enemyHand: 5,
   enemy: [
     { cid: 10, chs: [{ cid: 153, up: true }, { cid: 117, up: false }, { cid: 101, up: false }] },
     null,
@@ -42,13 +42,13 @@ const SAMPLE = {
     { cid: 1, chs: [{ cid: 153, up: true }, { cid: 193, up: true }, { cid: 135, up: false }] },
     { cid: 40, chs: [] },
     null
-  ]
+  ],
+  hand: [5, 108, 165, 22, 135, 57, 183, 12]
 };
-const HAND = [5, 108, 165, 22, 135, 57, 183, 12];
 
-/* --- 場のユニット（アイコンのみ。名前とＡ／Ｄを絵の中に重ねる） --- */
-function unitHTML(card, sel) {
-  return `<div class="card unit ${card.t} ${sel ? 'sel' : ''}" data-card="${card.id}">
+/* --- 場のユニット（アイコンのみ。名前とＡ／Ｄは絵の上） --- */
+function unitHTML(card) {
+  return `<div class="card unit ${card.t}" data-card="${card.id}">
     <div class="art">${artInner(card)}</div>
     <div class="topline"><span class="nm">${card.n}</span>
       <span class="tm">${TYPE_MARK[card.t]}</span></div>
@@ -56,157 +56,242 @@ function unitHTML(card, sel) {
   </div>`;
 }
 
-/* --- 手札（モンスターは名前＋Ａ／Ｄ、魔法と技能は名前のみ） --- */
-function handHTML(card, sel) {
+/* --- チャネリングカード。ユニットの「下」に重なるので、上端の帯だけが見える --- */
+function chHTML(card, back, k) {
+  const bottom = `style="bottom:calc(${k} * var(--vstep));z-index:${100 - k}"`;
+  if (back) {
+    return `<div class="card ch back" data-card="${card.id}" ${bottom}>
+      <div class="strip"><span class="ico back">？</span><span class="nm">裏向き</span></div>
+      <div class="art">？</div></div>`;
+  }
+  return `<div class="card ch ${card.t}" data-card="${card.id}" ${bottom}>
+    <div class="strip"><span class="ico ${card.t}">${abbrev(card.n, 2)}</span>
+      <span class="nm">${card.n}</span></div>
+    <div class="art">${artInner(card)}</div></div>`;
+}
+
+/* --- 1レーン --- */
+function laneHTML(slot, side, i) {
+  let inner = '';
+  let cap = '';
+  if (slot) {
+    const c = CARD_BY_ID[slot.cid];
+    const max = c.ch || LAYERS;
+    cap = `<div class="cap-box" style="height:calc(${max} * var(--vstep))"></div>`;
+    slot.chs.slice(0, max).forEach((ch, idx) => {
+      inner += chHTML(CARD_BY_ID[ch.cid], !ch.up, idx + 1);
+    });
+    inner += unitHTML(c);
+  } else {
+    inner = `<div class="card empty-unit">空き</div>`;
+  }
+  return `<div class="lane" data-side="${side}" data-i="${i}">${cap}${inner}</div>`;
+}
+
+function renderBoard() {
+  const e = G.enemy.map((s, i) => laneHTML(s, 'e', i)).join('');
+  const m = G.mine.map((s, i) => laneHTML(s, 'm', i)).join('');
+  let grid = '';
+  for (let k = LAYERS; k >= 1; k--) grid += `<div class="gband"><span>${k}</span></div>`;
+  document.getElementById('board').innerHTML =
+    `<div class="bhalf enemy" id="half-e"><div class="layer-grid">${grid}</div>
+       <div class="lanes">${e}</div></div>
+     <div class="bhalf mine" id="half-m"><div class="layer-grid">${grid}</div>
+       <div class="lanes">${m}</div></div>`;
+}
+
+/* --- 手札：左のカードが手前。右へ少しずつずらして重ねる --- */
+function handHTML(card, i, sel) {
   const bot = card.t === 'U'
     ? `<div class="botline"><span class="ad">Ａ${card.a} Ｄ${card.d}</span></div>` : '';
-  return `<div class="card hand-card ${card.t} ${sel ? 'sel' : ''}" data-card="${card.id}">
+  return `<div class="card hand-card ${card.t} ${sel ? 'sel' : ''}"
+      data-card="${card.id}" data-hand="${i}" style="z-index:${100 - i}">
     <div class="art">${artInner(card)}</div>
     <div class="topline"><span class="nm">${card.n}</span>
       <span class="tm">${TYPE_MARK[card.t]}</span></div>
     ${bot}
   </div>`;
 }
+function renderHand() {
+  const el = document.getElementById('hand');
+  el.innerHTML = G.hand.map((id, i) => handHTML(CARD_BY_ID[id], i, false)).join('');
+  /* 枚数が増えたら重なりを深くして、はみ出さないようにする */
+  const CW = 168, W = el.clientWidth || 900, n = G.hand.length;
+  const step = n > 1 ? Math.min(128, Math.floor((W - CW) / (n - 1))) : CW;
+  el.style.setProperty('--hstep', Math.max(46, step) + 'px');
+}
 
-/* --- チャネリングカード。重なっても下端の帯（アイコン＋名前）が見える --- */
-function chHTML(card, back) {
+/* --- 相手の手札の枚数を、裏カードを並べて見せる --- */
+function renderEnemyHand() {
+  let h = '';
+  for (let i = 0; i < G.enemyHand; i++) h += `<span class="mini" style="z-index:${20 - i}"></span>`;
+  document.getElementById('ehand').innerHTML = h + `<b>${G.enemyHand}</b>`;
+}
+function renderTurn() {
+  document.getElementById('turnbox').innerHTML =
+    `<span class="tn">第 ${G.turn} ターン</span><span class="tw">あなたの番</span>`;
+}
+
+renderBoard(); renderHand(); renderEnemyHand(); renderTurn();
+
+/* ================= 右の情報パネル ================= */
+let pending = null;      /* 確認待ちの操作 */
+
+function infoCardHTML(card, back) {
   if (back) {
-    return `<div class="card ch back" data-card="${card.id}">
-      <div class="art">？</div>
-      <div class="strip"><span class="ico back">？</span><span class="nm">裏向き</span></div>
-    </div>`;
-  }
-  return `<div class="card ch ${card.t}" data-card="${card.id}">
-    <div class="art">${artInner(card)}</div>
-    <div class="strip"><span class="ico ${card.t}">${abbrev(card.n, 2)}</span>
-      <span class="nm">${card.n}</span></div>
-  </div>`;
-}
-
-/* --- 1レーン：下にユニット、その上にチャネリングを積む --- */
-function laneHTML(slot, side, i) {
-  if (!slot) {
-    return `<div class="lane" data-lane="${side}${i}">
-      <div class="stack"></div>
-      <div class="card empty-unit">ユニットなし</div></div>`;
-  }
-  const c = CARD_BY_ID[slot.cid];
-  const max = c.ch || 6;
-  const used = slot.chs.slice(0, max);
-  /* .stack は column-reverse。DOMの先頭が画面のいちばん下（＝ユニットのすぐ上）。
-     ＣＨ１→ＣＨn の順に置き、余った容量は空き枠で上に足す。 */
-  let st = '';
-  used.forEach((ch) => { st += chHTML(CARD_BY_ID[ch.cid], !ch.up); });
-  for (let k = used.length; k < max; k++) st += `<div class="card slot"></div>`;
-  return `<div class="lane" data-lane="${side}${i}">
-    <div class="stack">${st}</div>
-    ${unitHTML(c, side === 'm' && slot.cid === 40)}
-  </div>`;
-}
-
-function renderBoard() {
-  const e = SAMPLE.enemy.map((s, i) => laneHTML(s, 'e', i)).join('');
-  const m = SAMPLE.mine.map((s, i) => laneHTML(s, 'm', i)).join('');
-  const nums = '<div class="lanenums"><span>１</span><span>２</span><span>３</span></div>';
-  document.getElementById('board').innerHTML = `
-    <div class="bhalf enemy" id="half-e">
-      <div class="lanes">${e}</div>${nums}
-      <div class="info" id="info-e"></div>
-    </div>
-    <div class="bhalf mine" id="half-m">
-      <div class="lanes">${m}</div>${nums}
-      <div class="info" id="info-m"></div>
-    </div>`;
-}
-renderBoard();
-
-document.getElementById('hand').innerHTML =
-  HAND.map((id, i) => handHTML(CARD_BY_ID[id], i === 0)).join('');
-
-/* --- 選択：もう一度押すと解除 --- */
-document.getElementById('hand').addEventListener('click', (ev) => {
-  const b = ev.target.closest('.card');
-  if (!b || longPressFired) return;
-  const was = b.classList.contains('sel');
-  document.querySelectorAll('.hand .card.sel').forEach((x) => x.classList.remove('sel'));
-  if (!was) b.classList.add('sel');
-});
-
-/* ================= 長押しでカードの詳細 ================= */
-const HOLD_MS = 380;
-let holdTimer = null, longPressFired = false;
-
-function infoHTML(card, back) {
-  if (back) {
-    return `<div class="info-inner">
-      <div class="info-art back">？</div>
-      <div class="info-body"><h3>裏向きのカード</h3>
-        <p class="t">まだ開かれていないので、何のカードかは分かりません。</p></div></div>`;
+    return `<div class="i-art back">？</div>
+      <h3>裏向きのカード</h3>
+      <p class="i-t">まだ開かれていないので、何のカードかは分かりません。</p>`;
   }
   const kv = card.t === 'U'
     ? `<span>攻撃力 ${card.a}</span><span>防御力 ${card.d}</span>
-       <span>ＣＨ ${card.ch}</span><span>召還Ｌｖ ${card.lv}</span><span>${card.p} G</span>`
-    : `<span>${TYPE_NAME[card.t]}</span><span>${card.p} G</span>`;
-  return `<div class="info-inner">
-    <div class="info-art ${card.t}">${artInner(card)}</div>
-    <div class="info-body">
-      <div class="tag">${TYPE_NAME[card.t]}</div>
-      <h3>${card.n}</h3>
-      <div class="kv">${kv}</div>
-      <p class="t">${card.e || '（特殊能力なし）'}</p>
-    </div></div>`;
+       <span>ＣＨ ${card.ch}</span><span>召還Ｌｖ ${card.lv}</span>`
+    : `<span>${TYPE_NAME[card.t]}</span>`;
+  return `<div class="i-art ${card.t}">${artInner(card)}</div>
+    <div class="i-tag">${TYPE_NAME[card.t]}</div>
+    <h3>${card.n}</h3>
+    <div class="i-kv">${kv}</div>
+    <p class="i-t">${card.e || '（特殊能力なし）'}</p>`;
 }
 
-function showInfo(el) {
+function showCardInfo(el) {
+  pending = null;
   const card = CARD_BY_ID[+el.dataset.card];
   const back = el.classList.contains('back');
-  const fixed = document.getElementById('app').classList.contains('info-fixed');
-  if (fixed) {
-    const p = document.getElementById('info-fix');
-    p.innerHTML = infoHTML(card, back);
-    p.classList.add('on');
-    return;
-  }
-  /* 押した指と重ならないよう、反対側の場に出す */
-  let target;
-  if (el.closest('#half-e')) target = 'info-m';
-  else if (el.closest('#half-m')) target = 'info-e';
-  else target = (el.getBoundingClientRect().left + el.offsetWidth / 2) > window.innerWidth / 2
-    ? 'info-e' : 'info-m';
-  const p = document.getElementById(target);
-  p.innerHTML = infoHTML(card, back);
-  p.classList.add('on');
-}
-function hideInfo() {
-  document.querySelectorAll('.info.on, #info-fix.on').forEach((x) => x.classList.remove('on'));
+  document.getElementById('info-fix').innerHTML =
+    `<div class="i-body">${infoCardHTML(card, back)}</div>
+     <div class="i-foot"><p class="i-hint">手札のカードを場までドラッグすると出せます</p></div>`;
 }
 
-document.addEventListener('pointerdown', (ev) => {
+function showConfirm(handIdx, side, lane) {
+  const card = CARD_BY_ID[G.hand[handIdx]];
+  const slot = G.mine[lane];
+  let ng = '';
+  let what = '';
+  if (!slot) {
+    if (card.t === 'U') what = `<b>${lane + 1}番目の枠</b> に出します`;
+    else ng = 'ここは空き枠です。魔法と技能はユニットの上にしか置けません。';
+  } else {
+    const host = CARD_BY_ID[slot.cid];
+    if (slot.chs.length >= (host.ch || LAYERS)) ng = `${host.n} のチャネルはもう空いていません。`;
+    else if (card.t === 'U') ng = 'ここにはすでにユニットが居ます。';
+    else what = `<b>${host.n}</b> の ${slot.chs.length + 1} 階層目にチャネリングします`;
+  }
+  const info = document.getElementById('info-fix');
+  if (ng) {
+    pending = null;
+    info.innerHTML =
+      `<div class="i-body">${infoCardHTML(card, false)}
+        <div class="i-ask ng"><span class="q">この場所には置けません</span>${ng}</div></div>
+       <div class="i-foot btns"><button class="btn ng" id="btn-ng">閉じる</button></div>`;
+  } else {
+    pending = { handIdx, lane };
+    info.innerHTML =
+      `<div class="i-body">${infoCardHTML(card, false)}
+        <div class="i-ask"><span class="q">この操作でよろしいですか？</span>${what}</div></div>
+       <div class="i-foot btns">
+         <button class="btn ok" id="btn-ok">ＯＫ</button>
+         <button class="btn ng" id="btn-ng">キャンセル</button>
+       </div>`;
+    document.getElementById('btn-ok').onclick = doPending;
+  }
+  document.getElementById('btn-ng').onclick = () => {
+    pending = null;
+    document.getElementById('info-fix').innerHTML =
+      `<div class="i-body">${infoCardHTML(card, false)}</div>
+       <div class="i-foot"><p class="i-hint">手札のカードを場までドラッグすると出せます</p></div>`;
+  };
+}
+
+function doPending() {
+  if (!pending) return;
+  const { handIdx, lane } = pending;
+  const cid = G.hand[handIdx];
+  const card = CARD_BY_ID[cid];
+  if (!G.mine[lane]) G.mine[lane] = { cid, chs: [] };
+  else G.mine[lane].chs.push({ cid, up: false });
+  G.hand.splice(handIdx, 1);
+  pending = null;
+  renderBoard(); renderHand();
+  document.getElementById('info-fix').innerHTML =
+    `<div class="i-body"><div class="i-done">場に出しました</div></div>
+     <div class="i-foot"><p class="i-hint">カードを押すと、その内容がここに出ます</p></div>`;
+}
+function flash(msg) {
+  const b = document.getElementById('flash');
+  b.textContent = msg; b.classList.add('on');
+  setTimeout(() => b.classList.remove('on'), 1600);
+}
+
+/* 最初の表示 */
+document.getElementById('info-fix').innerHTML =
+  `<div class="i-body">${infoCardHTML(CARD_BY_ID[10], false)}</div>
+   <div class="i-foot"><p class="i-hint">カードを押すと、その内容がここに出ます</p></div>`;
+
+/* ================= 操作：タップで情報／ドラッグで場に出す ================= */
+let drag = null;
+
+document.getElementById('screen-battle').addEventListener('pointerdown', (ev) => {
   const el = ev.target.closest('.card');
-  longPressFired = false;
-  if (!el || el.classList.contains('slot') || el.classList.contains('empty-unit')) return;
-  clearTimeout(holdTimer);
-  holdTimer = setTimeout(() => { longPressFired = true; showInfo(el); }, HOLD_MS);
-});
-['pointerup', 'pointercancel', 'pointerleave'].forEach((t) =>
-  document.addEventListener(t, () => { clearTimeout(holdTimer); hideInfo(); }));
-document.addEventListener('contextmenu', (ev) => { if (ev.target.closest('.card')) ev.preventDefault(); });
-
-/* 情報の出し方の切り替え（長押し ／ 右端に常時表示） */
-document.getElementById('mode-toggle').addEventListener('click', (ev) => {
-  const app = document.getElementById('app');
-  app.classList.toggle('info-fixed');
-  ev.currentTarget.textContent = app.classList.contains('info-fixed')
-    ? '情報：右端に常時' : '情報：長押し';
-  hideInfo();
-  if (app.classList.contains('info-fixed')) {
-    const p = document.getElementById('info-fix');
-    p.innerHTML = infoHTML(CARD_BY_ID[10], false);
-    p.classList.add('on');
+  if (!el || el.classList.contains('empty-unit')) return;
+  if (el.classList.contains('hand-card')) {
+    drag = { el, id: +el.dataset.card, idx: +el.dataset.hand,
+             x0: ev.clientX, y0: ev.clientY, moved: false, ghost: null };
+    el.setPointerCapture(ev.pointerId);
+  } else {
+    showCardInfo(el);
   }
 });
 
-/* ================= デッキ編集画面 ================= */
+document.addEventListener('pointermove', (ev) => {
+  if (!drag) return;
+  const dx = ev.clientX - drag.x0, dy = ev.clientY - drag.y0;
+  if (!drag.moved && Math.hypot(dx, dy) < 10) return;
+  if (!drag.moved) {
+    drag.moved = true;
+    const c = CARD_BY_ID[drag.id];
+    const g = document.createElement('div');
+    g.className = 'ghost card ' + c.t;
+    g.innerHTML = `<div class="art">${artInner(c)}</div>
+      <div class="topline"><span class="nm">${c.n}</span></div>`;
+    document.body.appendChild(g);
+    drag.ghost = g;
+    drag.el.classList.add('dragging');
+    document.querySelectorAll('#half-m .lane').forEach((l) => l.classList.add('droppable'));
+  }
+  drag.ghost.style.left = ev.clientX + 'px';
+  drag.ghost.style.top = ev.clientY + 'px';
+  const lane = laneUnder(ev.clientX, ev.clientY);
+  document.querySelectorAll('.lane.over').forEach((l) => l.classList.remove('over'));
+  if (lane) lane.classList.add('over');
+});
+
+function laneUnder(x, y) {
+  const els = document.elementsFromPoint(x, y);
+  for (const e of els) {
+    const l = e.closest && e.closest('.lane');
+    if (l && l.dataset.side === 'm') return l;
+  }
+  return null;
+}
+
+document.addEventListener('pointerup', (ev) => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  document.querySelectorAll('.lane.droppable,.lane.over').forEach((l) =>
+    l.classList.remove('droppable', 'over'));
+  if (d.ghost) d.ghost.remove();
+  d.el.classList.remove('dragging');
+  if (!d.moved) { showCardInfo(d.el); return; }
+  const lane = laneUnder(ev.clientX, ev.clientY);
+  if (lane) showConfirm(d.idx, 'm', +lane.dataset.i);
+});
+
+document.getElementById('btn-skip').addEventListener('click', () => {
+  G.turn += 1; renderTurn(); flash('ターンを終了しました');
+});
+
+/* ================= デッキ編集画面（v0.3から変更なし） ================= */
 const ALL_COLS = {
   U: [
     { k: 'n',   label: 'カード名',  w: 210, type: 'text',  fixed: true,  def: true },
@@ -232,7 +317,7 @@ const deck = {};
 [1, 1, 8, 40, 101, 108, 153, 193].forEach((id) => { deck[id] = (deck[id] || 0) + 1; });
 
 let dType = 'U', sortKey = 'id', sortAsc = true, filters = {}, selectedId = 1;
-let composing = false;                     /* 日本語入力の変換中はしぼり込みを止める */
+let composing = false;
 const grp = () => (dType === 'U' ? 'U' : 'MS');
 const cols = () => ALL_COLS[grp()].filter((c) => shown[grp()][c.k]);
 
@@ -244,8 +329,6 @@ function renderColbar() {
       `<button class="colchip ${shown[g][c.k] ? 'on' : ''} ${c.fixed ? 'fixed' : ''}"
         data-col="${c.k}" ${c.fixed ? 'disabled' : ''}>${c.label}</button>`).join('');
 }
-
-/* 見出しと入力欄。並べ替え・列の変更のときだけ作り直す（入力中は触らない） */
 function renderHead() {
   const cs = cols();
   const head = cs.map((c) => {
@@ -268,7 +351,6 @@ function renderHead() {
   document.getElementById('thead').innerHTML =
     `<tr>${head}</tr><tr class="filters">${filterRow}</tr>`;
 }
-
 function renderBody() {
   const cs = cols();
   let rows = CARDS.filter((c) => c.t === dType);
@@ -293,7 +375,6 @@ function renderBody() {
       ? a - b : String(a ?? '').localeCompare(String(b ?? ''), 'ja');
     return sortAsc ? r : -r;
   });
-
   document.getElementById('tbody').innerHTML = rows.map((c) => {
     const cells = cs.map((col) => {
       if (col.type === 'count') {
@@ -310,14 +391,12 @@ function renderBody() {
     }).join('');
     return `<tr data-id="${c.id}" class="${c.id === selectedId ? 'on' : ''}">${cells}</tr>`;
   }).join('');
-
   const sum = (t) => Object.entries(deck).reduce((s, [id, n]) => s + (CARD_BY_ID[id].t === t ? n : 0), 0);
   const u = sum('U'), m = sum('M'), k = sum('S');
   document.getElementById('deck-count').innerHTML =
     `<span>${rows.length} 種を表示</span><span>モンスター <b>${u}</b></span>` +
     `<span>魔法 <b>${m}</b></span><span>技能 <b>${k}</b></span><span>合計 <b>${u + m + k}</b>／50</span>`;
 }
-
 function renderDetail() {
   const c = CARD_BY_ID[selectedId];
   const stat = c.t === 'U'
@@ -341,7 +420,6 @@ document.getElementById('colbar').addEventListener('click', (ev) => {
   shown[grp()][b.dataset.col] = !shown[grp()][b.dataset.col];
   renderColbar(); renderHead(); renderBody();
 });
-
 document.getElementById('thead').addEventListener('click', (ev) => {
   const th = ev.target.closest('th[data-sort]');
   if (th && th.dataset.sort) {
@@ -355,9 +433,6 @@ document.getElementById('thead').addEventListener('click', (ev) => {
     return renderBody();
   }
 });
-
-/* 入力欄は作り直さないので、日本語入力（IME）が壊れない。
-   変換の途中では絞り込みを走らせず、確定してから反映する。 */
 const thead = document.getElementById('thead');
 thead.addEventListener('compositionstart', () => { composing = true; });
 thead.addEventListener('compositionend', (ev) => {
@@ -370,7 +445,6 @@ thead.addEventListener('input', (ev) => {
   filters[f] = ev.target.value;
   renderBody();
 });
-
 document.getElementById('tbody').addEventListener('click', (ev) => {
   const plus = ev.target.closest('[data-plus]');
   if (plus) { const id = +plus.dataset.plus; deck[id] = Math.min(3, (deck[id] || 0) + 1); return renderBody(); }
@@ -388,7 +462,6 @@ document.getElementById('tbody').addEventListener('click', (ev) => {
     renderDetail();
   }
 });
-
 document.querySelectorAll('.dtab').forEach((b) => {
   b.addEventListener('click', () => {
     document.querySelectorAll('.dtab').forEach((x) => x.classList.remove('on'));
@@ -399,8 +472,4 @@ document.querySelectorAll('.dtab').forEach((b) => {
     renderColbar(); renderHead(); renderBody(); renderDetail();
   });
 });
-
-renderColbar();
-renderHead();
-renderBody();
-renderDetail();
+renderColbar(); renderHead(); renderBody(); renderDetail();

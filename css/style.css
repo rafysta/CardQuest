@@ -8,9 +8,10 @@
   --s-1:#0f3d24; --s-2:#1d9a52; --s-edge:#8ff0b5;
 
   --fs-base:18px;
-  --cw:186px;    /* カードの幅 */
-  --chh:130px;   /* カードの高さ */
-  --vstep:48px;  /* 重ねたとき見える高さ */
+  --cw:140px;     /* 場のカードの幅 */
+  --chh:160px;    /* 場のカードの高さ */
+  --vstep:60px;   /* チャネリング1階層ぶんの見える高さ */
+  --hstep:128px;  /* 手札を重ねるときの1枚ぶんの見える幅 */
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -20,6 +21,7 @@ body{
   font-size:var(--fs-base); line-height:1.4;
   -webkit-text-size-adjust:100%; overflow:hidden;
   -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+  touch-action:manipulation;
 }
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 input{-webkit-user-select:text;user-select:text}
@@ -27,72 +29,102 @@ input{-webkit-user-select:text;user-select:text}
 #app{display:flex;flex-direction:column;height:100%;max-height:100%}
 
 .topbar{
-  height:54px;flex:0 0 54px;display:flex;align-items:center;gap:12px;
+  height:52px;flex:0 0 52px;display:flex;align-items:center;gap:12px;
   padding:0 14px;background:var(--panel);border-bottom:2px solid var(--line);
 }
 .logo{font-size:22px;font-weight:800;letter-spacing:.04em;white-space:nowrap}
 .logo small{font-size:13px;color:var(--dim);font-weight:400;margin-left:8px}
 .tabs{display:flex;gap:8px;margin-left:auto}
-.tab,.minibtn{
+.tab{
   height:40px;padding:0 16px;border-radius:9px;font-size:16px;font-weight:700;
   background:var(--panel2);border:2px solid var(--line);color:var(--dim);white-space:nowrap;
 }
 .tab.on{background:var(--accent);color:#241c00;border-color:var(--accent)}
-.minibtn{color:var(--txt)}
 .screen{flex:1;min-height:0;display:none;flex-direction:column}
 .screen.on{display:flex}
 
 /* ================= バトル画面 ================= */
 .statusbar{
-  height:42px;flex:0 0 42px;display:flex;align-items:center;
+  height:48px;flex:0 0 48px;display:flex;align-items:center;
   background:var(--panel);border-bottom:1px solid var(--line);font-size:16px;
 }
-.statusbar .half{flex:1;display:flex;align-items:center;gap:14px;padding:0 16px;min-width:0}
-.statusbar .half.mine{justify-content:flex-end}
-.statusbar .turn{
-  flex:0 0 auto;padding:0 18px;font-weight:800;color:var(--accent);white-space:nowrap;
-  border-left:1px solid var(--line);border-right:1px solid var(--line);align-self:stretch;
-  display:flex;align-items:center;
-}
+.statusbar .side{flex:1;display:flex;align-items:center;gap:14px;padding:0 16px;min-width:0}
+.statusbar .side.mine{justify-content:flex-end}
 .who{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lp{color:#ff8fa3;font-weight:800;font-size:19px;letter-spacing:.08em;white-space:nowrap}
+.lp{color:#ff8fa3;font-weight:800;font-size:20px;letter-spacing:.06em;white-space:nowrap}
 .meta{color:var(--dim);font-size:15px;white-space:nowrap}
-.meta b{color:var(--txt);font-size:16px}
+.meta b{color:var(--txt);font-size:17px}
 
-/* 場：左が相手・右が自分。どちらも下にユニット、上にチャネリングを積む */
-.board{flex:1;min-width:0;min-height:0;display:flex;gap:14px;padding:6px 0 0 10px}
+/* ターン表示 */
+#turnbox{
+  flex:0 0 auto;align-self:stretch;display:flex;align-items:center;gap:12px;padding:0 20px;
+  border-left:1px solid var(--line);border-right:1px solid var(--line);background:#0d1626;
+}
+#turnbox .tn{font-size:21px;font-weight:800;color:var(--accent);white-space:nowrap}
+#turnbox .tw{font-size:15px;color:var(--txt);background:#24406e;border:1px solid #4f7bc4;
+  padding:2px 12px;border-radius:20px;white-space:nowrap}
+
+/* 相手の手札の枚数 */
+#ehand{display:flex;align-items:center}
+#ehand .mini{
+  width:22px;height:30px;flex:0 0 22px;border-radius:4px;margin-right:-11px;
+  background:repeating-linear-gradient(135deg,#20304f 0 4px,#182543 4px 8px);
+  border:1px solid #46587e;box-shadow:1px 0 2px #0007;
+}
+#ehand b{margin-left:20px;font-size:17px}
+
+/* ---- 場 ---- */
+.battle-row{flex:1;min-height:0;display:flex;gap:10px;padding:6px 10px 0}
+.board{flex:1;min-width:0;display:flex;gap:16px}
 .bhalf{
-  flex:1;min-width:0;position:relative;display:flex;flex-direction:column;
-  background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:6px 8px 0;
+  position:relative;flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;
+  background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:6px;
 }
 .bhalf.enemy{border-color:#4a2b33}
 .bhalf.mine{border-color:#2a4a55}
-.lanes{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-items:end}
-.lane{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:0}
-.stack{display:flex;flex-direction:column-reverse;align-items:center;margin-bottom:6px}
-.stack > .ch + .ch{margin-bottom:calc(var(--vstep) - var(--chh))}
-.stack > .slot{margin-bottom:4px}
-.stack > .ch:first-child{margin-bottom:0}
-.lanenums{
-  flex:0 0 24px;height:24px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
-}
-.lanenums span{
-  display:flex;align-items:center;justify-content:center;
-  font-size:15px;font-weight:800;color:#7189b3;letter-spacing:.2em;
-}
+.lanes{display:flex;justify-content:center;gap:12px}
 
-/* ---- カード（アイコンのみ。文字は絵の上に重ねる） ---- */
+/* 1レーン＝6階層ぶんの高さ＋ユニット1枚 */
+.lane{
+  position:relative;z-index:3;width:var(--cw);
+  height:calc(var(--chh) + 6 * var(--vstep));flex:0 0 var(--cw);
+}
+/* 階層の目安。左右の場で高さがそろうので、同じ階層が一直線に並ぶ */
+.layer-grid{
+  position:absolute;left:6px;right:6px;bottom:calc(6px + var(--chh));
+  height:calc(6 * var(--vstep));z-index:1;pointer-events:none;
+}
+.gband{
+  height:var(--vstep);border-top:1px dashed #33496f;position:relative;
+}
+.gband{border-top:1px dashed #33496f}
+.gband:nth-child(odd){background:#ffffff06}
+.gband:last-child{border-bottom:1px dashed #33496f}
+.gband span{
+  position:absolute;left:2px;top:2px;font-size:11px;color:#41598a;letter-spacing:.1em;
+}
+/* 最大チャネル数の範囲をはっきり囲む */
+.cap-box{
+  position:absolute;left:-3px;right:-3px;bottom:var(--chh);z-index:2;
+  border:2px solid #5c7ba8;border-radius:8px;pointer-events:none;
+}
+.bhalf.mine .cap-box{border-color:#4f93a8}
+.bhalf.enemy .cap-box{border-color:#a8687a}
+.lane.droppable{outline:3px dashed var(--accent);outline-offset:4px;border-radius:10px}
+.lane.over{background:#facc1522;border-radius:10px}
+
+/* ---- カード ---- */
 .card{
-  width:var(--cw);height:var(--chh);flex:0 0 auto;position:relative;
+  width:var(--cw);height:var(--chh);position:relative;
   border-radius:11px;border:2px solid var(--line);overflow:hidden;
-  box-shadow:0 3px 7px rgba(0,0,0,.55);
+  box-shadow:0 3px 8px rgba(0,0,0,.6);
 }
 .card.U{border-color:var(--u-edge);background:linear-gradient(150deg,var(--u-1),var(--u-2))}
 .card.M{border-color:var(--m-edge);background:linear-gradient(150deg,var(--m-1),var(--m-2))}
 .card.S{border-color:var(--s-edge);background:linear-gradient(150deg,var(--s-1),var(--s-2))}
 .card .art{
   position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  font-size:40px;font-weight:800;color:#ffffff30;letter-spacing:.04em;white-space:nowrap;
+  font-size:34px;font-weight:800;color:#ffffff2e;white-space:nowrap;
 }
 .card .art img{width:100%;height:100%;object-fit:cover;display:block}
 .card .topline{
@@ -100,7 +132,7 @@ input{-webkit-user-select:text;user-select:text}
   padding:5px 7px;background:linear-gradient(#000c,#0000);
 }
 .card .topline .nm{
-  flex:1;min-width:0;font-size:17px;font-weight:800;color:#fff;
+  flex:1;min-width:0;font-size:16px;font-weight:800;color:#fff;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px #000;
 }
 .card .topline .tm{
@@ -111,37 +143,33 @@ input{-webkit-user-select:text;user-select:text}
   position:absolute;left:0;right:0;bottom:0;padding:5px 8px;
   background:linear-gradient(#0000,#000c);text-align:right;
 }
-.card .botline .ad{font-size:19px;font-weight:800;color:#fff;text-shadow:0 1px 3px #000;
+.card .botline .ad{font-size:17px;font-weight:800;color:#fff;text-shadow:0 1px 3px #000;
   white-space:nowrap;letter-spacing:-.01em}
-.card.sel{outline:5px solid var(--accent);outline-offset:2px;z-index:50}
-.card.acted{filter:grayscale(.5) brightness(.78)}
 
-/* 空きユニット枠・空きチャネル枠 */
+/* 場のユニットは常にいちばん手前・いちばん下 */
+.card.unit{position:absolute;left:0;bottom:0;z-index:100}
 .card.empty-unit{
-  border:2px dashed #2c3b58;background:#0e1728;box-shadow:none;
+  position:absolute;left:0;bottom:0;z-index:100;
+  border:2px dashed #33456b;background:#0e1728;box-shadow:none;
   display:flex;align-items:center;justify-content:center;
-  color:#43567a;font-size:15px;letter-spacing:.1em;
-}
-.card.slot{
-  height:var(--vstep);border:2px dashed #2a3a58;background:#0d1626;box-shadow:none;
+  color:#4a5f88;font-size:15px;letter-spacing:.2em;
 }
 
-/* チャネリングカード：下端の帯（アイコン＋名前）が重なっても見える */
-.card.ch{}
+/* チャネリングカード：ユニットの「下」に潜り込み、上端の帯だけが見える */
+.card.ch{position:absolute;left:0}
 .card.ch.back{
   border-color:#3a4a6b;
   background:repeating-linear-gradient(135deg,#1a2540 0 9px,#141d33 9px 18px);
 }
-.card.ch .art{font-size:38px}
 .card.ch .strip{
-  position:absolute;left:0;right:0;bottom:0;height:var(--vstep);
-  display:flex;align-items:center;gap:8px;padding:0 8px;
-  background:linear-gradient(#0000,#000a 22%,#000d);
+  position:absolute;left:0;right:0;top:0;height:var(--vstep);z-index:2;
+  display:flex;align-items:center;gap:7px;padding:0 7px;
+  background:linear-gradient(#000d,#000a 70%,#0000);
 }
 .card.ch .strip .ico{
-  flex:0 0 34px;width:34px;height:34px;border-radius:7px;
+  flex:0 0 36px;width:36px;height:36px;border-radius:7px;
   display:flex;align-items:center;justify-content:center;
-  font-size:14px;font-weight:800;color:#fff;border:1px solid #ffffff55;
+  font-size:15px;font-weight:800;color:#fff;border:1px solid #ffffff55;
   line-height:1;letter-spacing:-.02em;
 }
 .card.ch .strip .ico.U{background:linear-gradient(140deg,var(--u-1),var(--u-2))}
@@ -149,65 +177,81 @@ input{-webkit-user-select:text;user-select:text}
 .card.ch .strip .ico.S{background:linear-gradient(140deg,var(--s-1),var(--s-2))}
 .card.ch .strip .ico.back{background:#22304d;color:#7f95bd}
 .card.ch .strip .nm{
-  flex:1;min-width:0;font-size:17px;font-weight:800;color:#fff;
+  flex:1;min-width:0;font-size:16px;font-weight:800;color:#fff;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px #000;
 }
 
-/* 手札 */
+/* ---- 手札 ---- */
 .hand-wrap{
-  flex:0 0 150px;height:150px;display:flex;align-items:center;gap:10px;
+  flex:0 0 150px;height:150px;display:flex;align-items:center;gap:14px;
   padding:8px 12px;background:var(--panel);border-top:2px solid var(--line);
-  overflow-x:auto;overflow-y:hidden;
 }
-.hand-card{--cw:168px;--chh:126px;transition:transform .08s}
-.hand-card .art{font-size:34px}
-.hand-card.sel{transform:translateY(-9px)}
+.hand{flex:1;min-width:0;display:flex;align-items:center;overflow:hidden}
+.hand-card{--cw:168px;--chh:126px;flex:0 0 var(--cw);transition:transform .08s;
+  touch-action:none}
+.hand-card .art{font-size:32px}
+.hand-card + .hand-card{margin-left:calc(var(--hstep) - var(--cw))}
+/* 重なって隠れる幅ぶん、文字を右にずらして必ず見えるようにする */
+.hand-card + .hand-card .topline,
+.hand-card + .hand-card .botline{padding-left:calc(var(--cw) - var(--hstep) + 7px)}
+.hand-card.dragging{opacity:.35}
+#btn-skip{
+  flex:0 0 128px;width:128px;height:110px;border-radius:12px;
+  background:var(--panel2);border:2px solid var(--line);color:var(--txt);
+  font-size:17px;font-weight:800;line-height:1.35;
+}
+#btn-skip:active{background:#24406e}
 
-/* ---- 長押しで出る情報（押した指と重ならない側に出す） ---- */
-.info{
-  position:absolute;inset:10px;z-index:80;display:none;
-  background:#0b1220f2;border:3px solid var(--accent);border-radius:14px;padding:16px;
+/* ドラッグ中の分身 */
+.ghost{
+  position:fixed;z-index:999;pointer-events:none;transform:translate(-50%,-50%);
+  --cw:150px;--chh:112px;opacity:.92;
 }
-.info.on{display:block}
-.info-inner{display:flex;gap:16px;height:100%}
-.info-art{
-  width:180px;height:210px;flex:0 0 180px;border-radius:12px;overflow:hidden;
-  display:flex;align-items:center;justify-content:center;
-  font-size:46px;font-weight:800;color:#ffffff55;border:2px solid #ffffff40;
-}
-.info-art img{width:100%;height:100%;object-fit:cover}
-.info-art.U{background:linear-gradient(150deg,var(--u-1),var(--u-2))}
-.info-art.M{background:linear-gradient(150deg,var(--m-1),var(--m-2))}
-.info-art.S{background:linear-gradient(150deg,var(--s-1),var(--s-2))}
-.info-art.back{background:repeating-linear-gradient(135deg,#1a2540 0 9px,#141d33 9px 18px)}
-.info-body{flex:1;min-width:0}
-.info-body .tag{
-  display:inline-block;font-size:13px;font-weight:800;letter-spacing:.1em;
-  padding:2px 10px;border-radius:6px;background:#0a1120;border:1px solid var(--line);
-}
-.info-body h3{font-size:28px;margin:6px 0 10px}
-.info-body .kv{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}
-.info-body .kv span{background:#0a1120;border:1px solid var(--line);
-  padding:3px 11px;border-radius:8px;font-size:17px;font-weight:800}
-.info-body .t{font-size:19px;line-height:1.5}
 
-/* ---- 右端に常時表示するモード ---- */
+/* ---- 右の情報パネル（常時表示） ---- */
 #info-fix{
-  flex:0 0 268px;width:268px;display:none;
+  flex:0 0 300px;width:300px;display:flex;flex-direction:column;
   background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:14px;
 }
-#app.info-fixed #info-fix{display:block}
-#app.info-fixed .info{display:none !important}
-#app.info-fixed{--cw:146px;--chh:118px;--vstep:44px}
-#app.info-fixed .hand-card{--cw:140px;--chh:118px}
-#app.info-fixed .card .botline .ad{font-size:16px}
-#app.info-fixed .card .topline .nm{font-size:15px}
-#app.info-fixed .card .art{font-size:32px}
-#info-fix .info-inner{flex-direction:column;gap:12px}
-#info-fix .info-art{width:100%;height:150px;flex:0 0 150px}
-#info-fix .info-body h3{font-size:22px}
-#info-fix .info-body .t{font-size:16px}
-#info-fix .info-body .kv span{font-size:15px}
+.i-body{flex:1;min-height:0;overflow:hidden}
+.i-art{
+  width:100%;height:150px;border-radius:10px;overflow:hidden;margin-bottom:10px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:44px;font-weight:800;color:#ffffff55;border:2px solid #ffffff33;
+}
+.i-art img{width:100%;height:100%;object-fit:cover}
+.i-art.U{background:linear-gradient(150deg,var(--u-1),var(--u-2))}
+.i-art.M{background:linear-gradient(150deg,var(--m-1),var(--m-2))}
+.i-art.S{background:linear-gradient(150deg,var(--s-1),var(--s-2))}
+.i-art.back{background:repeating-linear-gradient(135deg,#1a2540 0 9px,#141d33 9px 18px)}
+.i-tag{display:inline-block;font-size:13px;font-weight:800;letter-spacing:.1em;
+  padding:2px 10px;border-radius:6px;background:#0a1120;border:1px solid var(--line)}
+#info-fix h3{font-size:23px;margin:6px 0 8px}
+.i-kv{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.i-kv span{background:#0a1120;border:1px solid var(--line);
+  padding:2px 10px;border-radius:8px;font-size:15px;font-weight:800}
+.i-t{font-size:17px;line-height:1.5}
+.i-ask{margin-top:14px;padding:12px;border-radius:10px;
+  background:#3a2f05;border:2px solid var(--accent);font-size:16px;line-height:1.5}
+.i-ask .q{display:block;font-size:18px;font-weight:800;color:var(--accent);margin-bottom:4px}
+.i-ask.ng{background:#3d1414;border-color:#f87171}
+.i-ask.ng .q{color:#ffb0b0}
+.i-done{margin-top:20px;padding:14px;border-radius:10px;background:#0f3d24;
+  border:2px solid #1d9a52;font-size:18px;font-weight:800;text-align:center}
+.i-foot{flex:0 0 auto;padding-top:10px}
+.i-hint{font-size:14px;color:var(--dim);line-height:1.4}
+.i-foot.btns{display:flex;gap:10px}
+.btn{flex:1;height:60px;border-radius:11px;font-size:19px;font-weight:800}
+.btn.ok{background:var(--accent);color:#241c00}
+.btn.ng{background:var(--panel2);border:2px solid var(--line);color:var(--txt)}
+
+#flash{
+  position:fixed;left:50%;bottom:170px;transform:translateX(-50%);z-index:500;
+  background:#241c00;color:var(--accent);border:2px solid var(--accent);
+  padding:12px 22px;border-radius:10px;font-size:17px;font-weight:800;
+  opacity:0;transition:opacity .18s;pointer-events:none;
+}
+#flash.on{opacity:1}
 
 /* ================= デッキ編集画面 ================= */
 .deck-wrap{flex:1;min-height:0;display:grid;grid-template-columns:1fr 372px;
