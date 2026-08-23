@@ -3,12 +3,15 @@
  *       GitHub Pagesが返す Cache-Control によって古いファイルが使われ続けるのを防ぐため、
  *       fetch に cache:'no-store' を指定する。ネットワークが使えないときだけ Cache Storage を使う。
  */
-const CACHE_VERSION = 'cardquest-v11';
+const CACHE_VERSION = 'cardquest-v12';
 const APP_SHELL = [
   './',
   './index.html',
   './css/style.css',
   './js/data.js',
+  './js/engine/rng.js',
+  './js/engine/state.js',
+  './js/engine/stats.js',
   './js/version.js',
   './js/layout.js',
   './js/update.js',

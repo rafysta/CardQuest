@@ -150,6 +150,10 @@ input{-webkit-user-select:text;user-select:text}
 /* Ａ／Ｄはカードの幅に収まる大きさにする（カードは正方形なので --chh がそのまま幅） */
 .card .botline .ad{font-size:calc((var(--chh) - 24px) / 6.6);font-weight:800;color:#fff;
   text-shadow:0 1px 3px #000;white-space:nowrap;letter-spacing:-.01em}
+/* エンジンが計算した現在値。素の値より高い＝緑、低い＝赤 */
+.card .botline .ad b.v{font-weight:800;font-style:normal}
+.card .botline .ad b.v.up{color:#7ee08a}
+.card .botline .ad b.v.dn{color:#ff8585}
 
 /* 場のユニットは常にいちばん手前・いちばん下 */
 .card.unit{position:absolute;left:0;bottom:0;z-index:100}

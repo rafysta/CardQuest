@@ -61,15 +61,21 @@ const G = {
 const REDRAW = [30, 143, 101, 8, 46, 188, 117, 2];
 
 /* --- 場のユニット（アイコンのみ。名前とＡ／Ｄは絵の上）
- * own …… 持ち主が自分か  /  pup …… 持ち主と操作している人がズレている（傀儡・憑依） */
-function unitHTML(card, own, pup) {
+ * own …… 持ち主が自分か  /  pup …… 持ち主と操作している人がズレている（傀儡・憑依）
+ * st  …… エンジンが計算した現在の能力値 {atk, def, cap}。素の値より高いと緑、低いと赤 */
+function unitHTML(card, own, pup, st) {
+  const a = st ? st.atk : card.a;
+  const d = st ? st.def : card.d;
+  const cls = (v, base) =>
+    (st && typeof base === 'number' && v !== base) ? (v > base ? ' up' : ' dn') : '';
   return `<div class="card unit ${card.t} ${own ? 'own' : 'foe'} ${pup ? 'pup' : ''}"
       data-card="${card.id}" data-own="${own ? 1 : 0}" data-pup="${pup ? 1 : 0}">
     <div class="art">${artInner(card)}</div>
     ${pup ? '<div class="pup-tag">傀儡</div>' : ''}
     <div class="topline"><span class="nm">${card.n}</span>
       <span class="ow">${own ? '自' : '敵'}</span></div>
-    <div class="botline"><span class="ad">Ａ${card.a} Ｄ${card.d}</span></div>
+    <div class="botline"><span class="ad">Ａ<b class="v${cls(a, card.a)}">${a}</b>
+      Ｄ<b class="v${cls(d, card.d)}">${d}</b></span></div>
   </div>`;
 }
 
@@ -99,26 +105,38 @@ function chHTML(card, back, k, own, st) {
 }
 
 /* --- 1レーン --- */
-function laneHTML(slot, side, i) {
+function laneHTML(slot, side, i, st) {
   let inner = '';
   let cap = '';
   if (slot) {
     const c = CARD_BY_ID[slot.cid];
-    const max = c.ch || LAYERS;
+    /* 枠の高さはエンジンが計算したＣＨ上限（膨張・五つ星などを反映）。
+     * 遮蔽などで上限が枚数より下がっても、置かれているカードは全部見せる */
+    const max = Math.max(st ? st.cap : (c.ch || LAYERS), slot.chs.length);
     cap = `<div class="cap-box" style="height:calc(var(--chh) + ${max} * var(--vstep) + 8px)"></div>`;
-    slot.chs.slice(0, max).forEach((ch, idx) => {
+    slot.chs.slice(0, LAYERS).forEach((ch, idx) => {
       inner += chHTML(CARD_BY_ID[ch.cid], !ch.up, idx + 1, isOwn(ch, side), ch.st);
     });
-    inner += unitHTML(c, isOwn(slot, side), isPuppet(slot, side));
+    inner += unitHTML(c, isOwn(slot, side), isPuppet(slot, side), st);
   } else {
     inner = `<div class="card empty-unit">空き</div>`;
   }
   return `<div class="lane" data-side="${side}" data-i="${i}">${cap}${inner}</div>`;
 }
 
+/* 盤面全体の能力値をエンジンで計算する。lanes[0..2]=自陣 / [3..5]=敵陣 */
+function computeStats() {
+  if (typeof CQStats === 'undefined' || typeof CQState === 'undefined') return null;
+  const b = CQState.boardFromUI(G, CARD_BY_ID);
+  CQStats.recalc(b, { cards: CARD_BY_ID });
+  return b;
+}
+
 function renderBoard() {
-  const e = G.enemy.map((s, i) => laneHTML(s, 'e', i)).join('');
-  const m = G.mine.map((s, i) => laneHTML(s, 'm', i)).join('');
+  const stats = computeStats();
+  const stAt = (side, i) => (stats ? stats.lanes[side === 'm' ? i : 3 + i] : null);
+  const e = G.enemy.map((s, i) => laneHTML(s, 'e', i, stAt('e', i))).join('');
+  const m = G.mine.map((s, i) => laneHTML(s, 'm', i, stAt('m', i))).join('');
   let grid = '';
   for (let k = LAYERS; k >= 1; k--) grid += `<div class="gband"></div>`;
   document.getElementById('board').innerHTML =
