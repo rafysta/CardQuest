@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.11.0">
+<link rel="stylesheet" href="css/style.css?v=0.11.1">
 </head>
 <body>
 
@@ -27,17 +27,17 @@
   <section class="screen on" id="screen-battle">
     <div class="statusbar">
       <div class="side enemy">
-        <span class="who">『放火魔』マグドラ</span>
-        <span class="lp">♥♥♥♡♡</span>
+        <span class="who" id="foe-name">相手</span>
+        <span class="lp" id="foe-lp">♥ 10</span>
         <span class="meta">手札</span>
         <span id="ehand"></span>
-        <span class="meta">デッキ <b>38</b></span>
+        <span class="meta">デッキ <b id="foe-deck">50</b></span>
       </div>
       <div id="turnbox"></div>
       <div class="side mine">
-        <span class="meta">デッキ <b>34</b></span>
-        <span class="lp">♥♥♥♥♡</span>
-        <span class="who">あなた</span>
+        <span class="meta">デッキ <b id="my-deck">50</b></span>
+        <span class="lp" id="my-lp">♥ 10</span>
+        <span class="who" id="my-name">あなた</span>
       </div>
     </div>
 
@@ -48,7 +48,7 @@
 
     <div class="hand-wrap">
       <div class="hand" id="hand"></div>
-      <button id="btn-skip">ターンを<br>終了する</button>
+      <div class="acts" id="acts"></div>
     </div>
   </section>
 
@@ -89,6 +89,32 @@
 
   <!-- ===== 説明 ===== -->
   <section class="screen notes" id="screen-notes">
+    <h2>v0.11.1 で変えたこと ― バトル画面が実際に遊べるようになりました</h2>
+    <ul>
+      <li>バトル画面が<b>エンジンと繋がりました</b>。見た目だけのモックアップではなく、
+        ドロー・召還・チャネル・押し込み・リバース・<b>アタック</b>・デッキ攻撃・チェンジ・ターン終了が
+        すべて本物のルールで動きます。ＬＰが0になるか山札が尽きると決着します。</li>
+      <li><b>相手は自動で動きます</b>（画面上部の「相手：自動」で手動に切り替えると、
+        同じ端末で両陣営を交互に操作できます）。ただし今の相手は
+        <b>その場で合法な手をランダムに選ぶだけ</b>で、強くはありません。本物の敵ＡＩは次の次の版です。</li>
+      <li>自分のモンスターを押すと<b>行動メニュー</b>（アタック／デッキ攻撃／リバース）が右に出ます。
+        アタックを選ぶと、狙える相手のモンスターだけが黄色く光ります。</li>
+      <li><b>オープンフェイズ</b>：攻撃側→防御側の順に、チャネルを下から順に開けます。
+        開ける階層は黄色い枠と「▶」で示します。クローズはできません。</li>
+      <li>右のパネルに<b>「ここまでの動き」</b>が出ます。相手が何をしたか、戦闘で何が起きたかが分かります。</li>
+      <li>まだ<b>カードの効果は発動しません</b>（次の版で入れます）。いまは
+        「表なら攻撃力＋100／裏なら防御力＋100」と、能力値に効く技能（狂戦士化・膨張・五つ星・迎撃・
+        反射・貫通・不死・救済・甲殻・気化・隠遁・磁力など）と憑依・リバース召還が働きます。</li>
+      <li>デッキは両陣営とも<b>見本の50枚</b>で固定です。デッキ編集画面とはまだ繋がっていません。</li>
+    </ul>
+
+    <h3>カードの見方</h3>
+    <div class="box">
+      <p>モンスターの<b>Ａ／Ｄはいまの値</b>です。素の値より高いと緑、低いと赤で出ます。
+        右上の「行動済」はそのターンもう動けないという意味、「連続」は連続攻撃の2回目が残っているという意味です。</p>
+      <p>モンスターの上の枠は<b>チャネルできる上限</b>です（膨張や五つ星で伸び縮みします）。</p>
+    </div>
+
     <h2>v0.8 で変えたこと</h2>
     <ul>
       <li>場に立っている<b>モンスターにも持ち主の印</b>を付けました。傀儡・憑依で相手の場に移されても、誰のモンスターか分かります。</li>
@@ -157,7 +183,8 @@
 
     <h3>この画面で試せること</h3>
     <div class="box">
-      <p>手札のカードを、場のレーンまでドラッグして離してみてください。確認が出て、ＯＫを押すと実際に場に出ます。モンスターは自分の空き枠に召還でき、どのカードも<b>自分・相手どちらのユニット</b>にもチャネルできます。チャネルが一杯のときは、入れ替える階層を選べます。</p>
+      <p>手札のカードを、場のレーンまでドラッグして離してみてください。確認が出て、ＯＫを押すと実際に場に出ます。モンスターは自分の空き枠に召還でき、どのカードも<b>自分・相手どちらのユニット</b>にもチャネルできます。チャネルが一杯のときは、入れ替える階層を選べます（押し込みは配置ステップだけ）。</p>
+      <p>「配置を終える」を押すとメインステップです。自分のモンスターを押すと、アタック・デッキ攻撃・リバースが選べます。</p>
       <p>場のカード・手札のカードを押すと、右のパネルの内容が切り替わります。</p>
     </div>
 
@@ -166,21 +193,22 @@
       <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、そのカードの絵になります。名前とＡ／Ｄは絵の上に重なります。</p>
     </div>
 
-    <p style="margin-top:18px;color:#96a7c6">※ この画面はまだレイアウト確認用のモックアップで、ターン進行・能力値・戦闘の計算とはつながっていません。実際のエンジンの動作は「エンジン検証」タブで見られます。エンジン側はターン進行（v0.10）と戦闘＝アタック（v0.11）まで入っていて、カードの効果の発動（魔法・技能の効果そのもの）はまだこれからです。</p>
+    <p style="margin-top:18px;color:#96a7c6">※ v0.11.1 でバトル画面はエンジンと繋がり、実際に1バトルを最後まで遊べます。まだ入っていないのは「カードの効果の発動」（魔法と、オープンで発動するユニット固有能力）と、本物の敵ＡＩ、ラン（分岐マップ）、セーブ・ショップ・コレクションです。エンジン単体の動作は「エンジン検証」タブでも確認できます。</p>
   </section>
 </div>
 
 <div id="flash"></div>
 
-<script src="js/data.js?v=0.11.0"></script>
-<script src="js/engine/rng.js?v=0.11.0"></script>
-<script src="js/engine/state.js?v=0.11.0"></script>
-<script src="js/engine/stats.js?v=0.11.0"></script>
-<script src="js/engine/turn.js?v=0.11.0"></script>
-<script src="js/engine/combat.js?v=0.11.0"></script>
-<script src="js/version.js?v=0.11.0"></script>
-<script src="js/layout.js?v=0.11.0"></script>
-<script src="js/simulate.js?v=0.11.0"></script>
-<script src="js/update.js?v=0.11.0"></script>
+<script src="js/data.js?v=0.11.1"></script>
+<script src="js/engine/rng.js?v=0.11.1"></script>
+<script src="js/engine/state.js?v=0.11.1"></script>
+<script src="js/engine/stats.js?v=0.11.1"></script>
+<script src="js/engine/turn.js?v=0.11.1"></script>
+<script src="js/engine/combat.js?v=0.11.1"></script>
+<script src="js/engine/ai.js?v=0.11.1"></script>
+<script src="js/version.js?v=0.11.1"></script>
+<script src="js/layout.js?v=0.11.1"></script>
+<script src="js/simulate.js?v=0.11.1"></script>
+<script src="js/update.js?v=0.11.1"></script>
 </body>
 </html>

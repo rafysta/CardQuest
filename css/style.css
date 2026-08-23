@@ -126,11 +126,14 @@ input{-webkit-user-select:text;user-select:text}
 .card.U{border-color:var(--u-edge);background:linear-gradient(150deg,var(--u-1),var(--u-2))}
 .card.M{border-color:var(--m-edge);background:linear-gradient(150deg,var(--m-1),var(--m-2))}
 .card.S{border-color:var(--s-edge);background:linear-gradient(150deg,var(--s-1),var(--s-2))}
+/* カース（憑依で生成される。デッキには入らない） */
+.card.C{border-color:var(--pup-c);background:linear-gradient(150deg,#2a1046,#6b2fa8)}
 .card .art{
   position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-size:34px;font-weight:800;color:#ffffff2e;white-space:nowrap;
 }
-.card .art img{width:100%;height:100%;object-fit:cover;display:block}
+.card .art img{width:100%;height:100%;object-fit:cover;display:block;
+  -webkit-user-drag:none;user-drag:none;pointer-events:none}
 .card .topline{
   position:absolute;left:0;right:0;top:0;display:flex;align-items:center;gap:6px;
   padding:5px 7px;background:linear-gradient(#000c,#0000);
@@ -271,6 +274,7 @@ input{-webkit-user-select:text;user-select:text}
 .i-art.U{background:linear-gradient(150deg,var(--u-1),var(--u-2))}
 .i-art.M{background:linear-gradient(150deg,var(--m-1),var(--m-2))}
 .i-art.S{background:linear-gradient(150deg,var(--s-1),var(--s-2))}
+.i-art.C{background:linear-gradient(150deg,#2a1046,#6b2fa8)}
 .i-art.back{background:repeating-linear-gradient(135deg,#8b96ae 0 11px,#79849c 11px 22px);
   border-color:#cfd8e8;color:#ffffff99}
 .i-tag{display:inline-block;font-size:13px;font-weight:800;letter-spacing:.1em;
@@ -300,8 +304,8 @@ input{-webkit-user-select:text;user-select:text}
 
 /* 押し込む階層を選ぶ（番号の並び＋選んだ階層の中身を1行で） */
 .lay-row{display:flex;gap:5px;margin-top:10px}
-.lay-chip{
-  flex:1;height:42px;border-radius:8px;font-size:18px;font-weight:800;
+.lay-chip{flex:0 0 auto;min-width:46px;
+  height:42px;border-radius:8px;font-size:18px;font-weight:800;
   background:#0a1120;border:2px solid var(--line);color:var(--txt);
 }
 .lay-chip.on{background:var(--accent);border-color:var(--accent);color:#241c00}
@@ -320,6 +324,7 @@ input{-webkit-user-select:text;user-select:text}
 .c-art.U{background:linear-gradient(150deg,var(--u-1),var(--u-2))}
 .c-art.M{background:linear-gradient(150deg,var(--m-1),var(--m-2))}
 .c-art.S{background:linear-gradient(150deg,var(--s-1),var(--s-2))}
+.c-art.C{background:linear-gradient(150deg,#2a1046,#6b2fa8)}
 .c-art.CHG{background:linear-gradient(150deg,#4a3a08,#8a6a14);font-size:30px}
 .c-tx{flex:1;min-width:0}
 .c-nm{font-size:20px;font-weight:800;margin-bottom:2px}
@@ -355,6 +360,81 @@ input{-webkit-user-select:text;user-select:text}
   opacity:0;transition:opacity .18s;pointer-events:none;
 }
 #flash.on{opacity:1}
+
+
+/* ================= v0.11.1：エンジンと繋いだバトル画面 ================= */
+
+/* 上部中央の小さな操作ボタン（相手の操作モード・新しい対戦） */
+#turnbox .tiny{
+  font-size:12px;font-weight:800;color:var(--dim);background:var(--panel2);
+  border:1px solid var(--line);border-radius:8px;padding:4px 8px;white-space:nowrap;
+}
+#turnbox .tiny:active{background:#24406e}
+
+/* 手札の右のボタン置き場（配置を終える／ターンを終了する／もう一度） */
+.acts{display:flex;gap:10px;flex:0 0 auto}
+.act-btn{
+  flex:0 0 var(--act-w);width:var(--act-w);height:var(--act-h);border-radius:11px;
+  background:var(--panel2);border:2px solid var(--line);color:var(--txt);
+  font-size:17px;font-weight:800;line-height:1.35;
+}
+.act-btn:active{background:#24406e}
+
+/* 場のレーンの状態表示 */
+.lane.sel{outline:3px solid var(--own-c);outline-offset:4px;border-radius:10px}
+.lane.target{outline:3px solid var(--accent);outline-offset:4px;border-radius:10px;
+  background:#facc1518}
+.lane.fighting{background:#ffffff10;border-radius:10px}
+.lane.opening{outline:3px dashed var(--accent);outline-offset:4px;border-radius:10px}
+
+/* いま開ける階層（三角カーソルの代わり） */
+.card.ch.openable{box-shadow:0 0 0 3px var(--accent),0 3px 8px rgba(0,0,0,.6)}
+.card.ch .strip .cur{color:var(--accent);font-size:14px;margin-right:2px}
+
+/* ユニットの状態バッジ（行動済み・連続攻撃） */
+.st-tag{
+  position:absolute;right:4px;bottom:30px;z-index:6;font-size:12px;font-weight:800;
+  padding:2px 6px;border-radius:6px;background:#0009;border:1px solid #64748b;color:#cbd5e1;
+}
+.st-tag.go{border-color:var(--accent);color:var(--accent)}
+
+/* 右パネル：現在値・行動メニュー・ログ */
+.i-kv.now span b{color:var(--accent)}
+.i-kv .warnkv{border-color:#f87171;color:#ffb0b0}
+.i-kv .okkv{border-color:var(--accent);color:var(--accent)}
+.i-lead{font-size:16px;line-height:1.6;color:#cddaf1}
+.i-loot{margin-top:12px;padding:9px 11px;border-radius:9px;background:#0f3d24;
+  border:1px solid #1d9a52;font-size:15px;line-height:1.5}
+.i-result{font-size:26px;font-weight:800;text-align:center;padding:14px;border-radius:10px;
+  margin-bottom:10px}
+.i-result.win{background:#0f3d24;border:2px solid #1d9a52;color:#8ff0b5}
+.i-result.lose{background:#3d1414;border:2px solid #f87171;color:#ffb0b0}
+.acts-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.act-row{
+  text-align:left;background:var(--panel2);border:2px solid var(--line);border-radius:10px;
+  padding:12px 13px;font-size:16px;font-weight:800;line-height:1.35;
+}
+.act-row:active{background:#24406e}
+.act-row .sub{display:block;font-size:13px;font-weight:400;color:#a9bbd8;margin-top:2px}
+.act-row.off{opacity:.5;font-weight:400;font-size:14px;color:var(--dim)}
+.rep{margin:8px 0 0 0;padding:0;list-style:none;font-size:14px;line-height:1.5;color:#cddaf1}
+.rep li{padding:4px 0;border-bottom:1px solid #1d2942}
+.rep li:last-child{border-bottom:none;color:var(--txt);font-weight:800}
+.ch-list{margin:9px 0 0 0;padding:0;list-style:none;font-size:14px;line-height:1.5}
+.ch-list li{display:flex;gap:7px;align-items:center;padding:3px 0}
+.ch-list li.on{color:var(--accent);font-weight:800}
+.ch-list .fu{font-size:12px;color:var(--dim);border:1px solid var(--line);
+  border-radius:5px;padding:0 5px}
+.ch-list .mk{margin-left:auto;font-size:13px}
+.lay-chip.off{opacity:.35}
+.lay-chip:disabled{cursor:default}
+
+/* 戦闘中の対戦カード表示 */
+.vs{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;
+  background:#0a1120;border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+.vs b{font-size:19px;color:var(--accent)}
+.vs .vs-a,.vs .vs-d{flex:1;min-width:0;line-height:1.35}
+.vs .vs-x{color:var(--dim)}
 
 /* ================= デッキ編集画面 ================= */
 .deck-wrap{flex:1;min-height:0;display:grid;grid-template-columns:1fr 372px;

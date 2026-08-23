@@ -23,6 +23,7 @@ const CQRng = require(path.join(root, 'js/engine/rng.js'));
 const S = require(path.join(root, 'js/engine/state.js'));
 const CQTurn = require(path.join(root, 'js/engine/turn.js'));
 const CQCombat = require(path.join(root, 'js/engine/combat.js'));
+const CQAi = require(path.join(root, 'js/engine/ai.js'));
 
 /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚 */
 const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 47, 61, 63, 65, 66, 71, 20, 22,
@@ -34,53 +35,20 @@ function makeDeck(rng) {
   return deck;
 }
 
-function autoPlacement(m) {
-  const p = m.players[m.active];
-  const own = S.lanesOf(m.active);
-  const emptyLane = own.filter(function (i) { return m.board.lanes[i].unit == null; })[0];
-  if (emptyLane !== undefined) {
-    const idx = p.hand.findIndex(function (id) {
-      const c = CARD_BY_ID[id];
-      return c && c.t === 'U' && S.unitStats(c).lv <= 1;
-    });
-    if (idx >= 0) CQTurn.summon(m, emptyLane, idx);
-  }
-  const target = own.filter(function (i) { return m.board.lanes[i].unit != null; })[0];
-  if (target !== undefined && p.hand.length) {
-    const idx = m.rng.int(0, p.hand.length - 1);
-    const lane = m.board.lanes[target];
-    const opts = lane.count >= lane.cap && lane.channels.length
-      ? { layer: m.rng.int(1, lane.channels.length) } : undefined;
-    CQTurn.channel(m, target, idx, opts);
-  }
-}
-
-function autoOpenPhases(m) {
+/* 手の選択は js/engine/ai.js（仮のランダム方策）に任せる。M5で本物のＡＩに差し替える */
+function playTurn(m) {
+  CQTurn.beginTurn(m);
+  if (m.winner) return;
   let guard = 0;
-  while (m.combat && guard++ < 40) {
-    const layers = CQCombat.openableLayers(m);
-    if (layers.length && m.rng.next() < 0.5) CQCombat.open(m, layers[m.rng.int(0, layers.length - 1)]);
-    else CQCombat.endOpen(m);
+  while (m.phase === 'discard' && guard++ < 20) CQAi.discardStep(m);
+  if (m.phase === 'placement') { CQAi.playPlacement(m); CQTurn.endPlacement(m); }
+  guard = 0;
+  while (m.phase === 'main' && guard++ < 20) {
+    if (!CQAi.mainStep(m)) break;
+    CQAi.finishCombat(m);
+    if (m.combat) throw new Error('オープンフェイズが終わらない');
   }
-  if (m.combat) throw new Error('オープンフェイズが終わらない');
-}
-
-function autoMain(m) {
-  S.lanesOf(m.active).forEach(function (i) {
-    if (m.winner || m.phase !== 'main') return;
-    if (m.board.lanes[i].unit == null) return;
-    const targets = CQCombat.attackTargets(m, i);
-    if (targets.length) {
-      CQCombat.declareAttack(m, i, targets[m.rng.int(0, targets.length - 1)]);
-      autoOpenPhases(m);
-      return;
-    }
-    if (CQCombat.canDeckAttack(m, i).ok) { CQCombat.deckAttack(m, i); return; }
-    const lane = m.board.lanes[i];
-    if (!lane.stiff && lane.reversePtr < lane.channels.length) {
-      CQTurn.reverseAction(m, i, [lane.reversePtr + 1]);
-    }
-  });
+  if (m.phase === 'main') CQTurn.endTurn(m);
 }
 
 /** 盤面の不変条件を確かめる（壊れていたら例外） */
@@ -111,11 +79,7 @@ function runMatch(seed, maxTurns) {
   });
   let guard = 0;
   while (!m.winner && m.turn < maxTurns && guard++ < 5000) {
-    CQTurn.beginTurn(m);
-    if (m.winner) break;
-    while (m.phase === 'discard') CQTurn.discardCard(m, m.players[m.active].hand.length - 1);
-    if (m.phase === 'placement') { autoPlacement(m); CQTurn.endPlacement(m); }
-    if (m.phase === 'main') { autoMain(m); if (m.phase === 'main') CQTurn.endTurn(m); }
+    playTurn(m);
     checkInvariants(m);
   }
   return m;
