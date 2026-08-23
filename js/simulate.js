@@ -1,0 +1,100 @@
+/* CardQuest — エンジン検証：自動対戦（開発用）
+ *
+ * 「エンジン検証」タブから、js/engine/turn.js のターン進行を実際に1本走らせて
+ * ブラウザ上で目視確認するための画面。ゲームの本編UIではない。
+ * 両陣営とも「その場で合法な行動をランダムに選ぶ」だけの単純な方策で、
+ * 召還・チャネル・押し込み・リバース・ターン終了・手札上限・ドロー・勝敗判定が
+ * 一通り動くことを確認する。戦闘（アタック）はまだ無い（M3で追加）ため、
+ * 決着はターン上限か山札切れで付く。
+ */
+'use strict';
+(function () {
+  if (typeof document === 'undefined') return;
+  const el = document.getElementById('sim-run');
+  if (!el) return;                              // この画面が無いページでは何もしない
+
+  /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚に揃える */
+  const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 151, 152, 158, 165, 101, 104, 117, 143, 180];
+  function makeDeck() {
+    const deck = [];
+    while (deck.length < 50) deck.push(POOL[deck.length % POOL.length]);
+    return deck;
+  }
+
+  /** 配置ステップで打てる手をランダムに1つ選んで実行する（何もできなければ何もしない） */
+  function autoPlacement(m) {
+    const p = m.players[m.active];
+    const own = CQState.lanesOf(m.active);
+    // 空きレーンがあれば、召還できるユニットを1体だけ出す
+    const emptyLane = own.find((i) => m.board.lanes[i].unit == null);
+    if (emptyLane !== undefined) {
+      const idx = p.hand.findIndex((id) => {
+        const c = CARD_BY_ID[id];
+        return c && c.t === 'U' && CQState.unitStats(c).lv <= 1;
+      });
+      if (idx >= 0) CQTurn.summon(m, emptyLane, idx);
+    }
+    // 自陣にユニットが居れば、手札を1枚ランダムにチャネルしてみる
+    const targetLane = own.find((i) => m.board.lanes[i].unit != null);
+    if (targetLane !== undefined && p.hand.length) {
+      const idx = m.rng.int(0, p.hand.length - 1);
+      const lane = m.board.lanes[targetLane];
+      CQStats.recalc(m.board, { cards: CARD_BY_ID });
+      const opts = lane.count >= lane.cap && lane.channels.length
+        ? { layer: m.rng.int(1, lane.channels.length) } : undefined;
+      CQTurn.channel(m, targetLane, idx, opts);
+    }
+  }
+
+  /** メインステップで、行動可能な自陣ユニットに1階層だけリバースを試みる */
+  function autoMain(m) {
+    CQState.lanesOf(m.active).forEach((i) => {
+      const lane = m.board.lanes[i];
+      if (lane.unit != null && !lane.stiff && lane.reversePtr < lane.channels.length) {
+        CQTurn.reverseAction(m, i, [lane.reversePtr + 1]);
+      }
+    });
+  }
+
+  function runMatch(seed, maxTurns) {
+    const rng = CQRng.create(seed);
+    const first = rng.next() < 0.5 ? 'self' : 'enemy';
+    const m = CQTurn.createMatch({
+      cards: CARD_BY_ID, rng,
+      selfDeck: makeDeck(), enemyDeck: makeDeck(), first
+    });
+    let guard = 0;
+    while (!m.winner && m.turn < maxTurns && guard++ < 4000) {
+      CQTurn.beginTurn(m);
+      if (m.winner) break;
+      while (m.phase === 'discard') CQTurn.discardCard(m, m.players[m.active].hand.length - 1);
+      if (m.phase === 'placement') {
+        autoPlacement(m);
+        CQTurn.endPlacement(m);
+      }
+      if (m.phase === 'main') {
+        autoMain(m);
+        CQTurn.endTurn(m);
+      }
+    }
+    return m;
+  }
+
+  function render(m) {
+    const p1 = m.players.self, p2 = m.players.enemy;
+    const resultEl = document.getElementById('sim-result');
+    const status = m.winner
+      ? `<b class="${m.winner === 'self' ? 'up' : 'dn'}">${m.winner === 'self' ? '自分' : '相手'}の勝ち</b>（${m.turn} 手番）`
+      : `<b>決着つかず</b>（ターン上限 ${m.turn} 手番）`;
+    resultEl.innerHTML = `${status}
+      　自分：ＬＰ${p1.lp} 手札${p1.hand.length} デッキ${p1.deckCount}${p1.lost ? '（山札切れ）' : ''}
+      　相手：ＬＰ${p2.lp} 手札${p2.hand.length} デッキ${p2.deckCount}${p2.lost ? '（山札切れ）' : ''}`;
+    document.getElementById('sim-log').textContent = m.log.join('\n');
+  }
+
+  el.addEventListener('click', () => {
+    const seed = parseInt(document.getElementById('sim-seed').value, 10) || 1;
+    const m = runMatch(seed, 30);
+    render(m);
+  });
+})();

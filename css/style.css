@@ -448,3 +448,18 @@ td.nm{font-weight:800}
 .notes li{margin:4px 0}
 .notes code{background:#0a1120;padding:1px 6px;border-radius:4px;font-size:15px}
 .notes .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:10px 0}
+
+/* エンジン検証（開発用） */
+.sim{padding:18px 26px;overflow:auto;font-size:16px;line-height:1.6}
+.sim-note{color:#96a7c6;max-width:900px}
+.sim-controls{display:flex;align-items:center;gap:14px;margin:14px 0}
+.sim-controls input{background:var(--panel);border:1px solid var(--line);border-radius:6px;color:#fff;padding:6px 8px}
+.sim-controls button{background:var(--accent);color:#0b1220;font-weight:800;border:none;border-radius:8px;
+  padding:10px 20px;cursor:pointer;font-size:15px}
+.sim-controls button:hover{filter:brightness(1.08)}
+.sim-result{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;
+  margin-bottom:12px;white-space:pre-line;font-size:15px}
+.sim-result .up{color:#7ee08a}
+.sim-result .dn{color:#ff8585}
+.sim-log{background:#060a13;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+  max-height:52vh;overflow:auto;font-size:13px;line-height:1.6;white-space:pre-wrap;color:#c7d2e8}

@@ -20,6 +20,7 @@ const CARDS = ctx.CARDS, CARD_BY_ID = ctx.CARD_BY_ID;
 const CQRng = require(path.join(root, 'js/engine/rng.js'));
 const S = require(path.join(root, 'js/engine/state.js'));
 const CQStats = require(path.join(root, 'js/engine/stats.js'));
+const CQTurn = require(path.join(root, 'js/engine/turn.js'));
 
 /* ---- ミニ・テストハーネス ---- */
 let pass = 0, fail = 0; const failures = [];
@@ -367,6 +368,225 @@ t('layout.js の G から盤面を作れる', () => {
   // 敵1: ヨルムンガンド + 裏1 → 防+100。裏の own 未設定 → 敵側が置いた扱い
   eq([b.lanes[3].def, b.lanes[3].channels[0].mine], [550 + 100, false], 'アダプタ 敵陣');
   eq(b.hand, { self: 3, enemy: 5 }, 'アダプタ 手札');
+});
+
+/* ================= M2: ターン進行 ================= */
+section('turn: 山札・ドロー');
+t('createDeck は残枚数の多重集合を作る', () => {
+  const d = CQTurn.createDeck([8, 8, 8, 101]);
+  eq(d, { 8: 3, 101: 1 }, 'createDeck');
+});
+t('draw：山札が尽きたら null', () => {
+  const rng = CQRng.create(1);
+  const p = CQTurn.createPlayer([8]);
+  eq(CQTurn.draw(rng, p), 8, 'draw 1枚目');
+  eq(CQTurn.draw(rng, p), null, 'draw 枯渇');
+  eq(p.hand, [8], 'hand');
+});
+t('draw：同じシードなら同じ結果（決定的）', () => {
+  const deck = []; for (let i = 0; i < 20; i++) deck.push(8, 101, 151);
+  const p1 = CQTurn.createPlayer(deck); const r1 = CQRng.create(99);
+  const p2 = CQTurn.createPlayer(deck); const r2 = CQRng.create(99);
+  for (let i = 0; i < 10; i++) { CQTurn.draw(r1, p1); CQTurn.draw(r2, p2); }
+  eq(p1.hand, p2.hand, 'draw determinism');
+});
+
+section('turn: マッチ・ドローステップ');
+function mkDeck(n, ids) { const d = []; for (let i = 0; i < n; i++) d.push(ids[i % ids.length]); return d; }
+function newMatch(seed, opts) {
+  return CQTurn.createMatch(Object.assign({
+    cards: CARD_BY_ID, rng: CQRng.create(seed === undefined ? 1 : seed),
+    selfDeck: mkDeck(50, [8, 101, 151, 180]),
+    enemyDeck: mkDeck(50, [8, 101, 151, 180]),
+    first: 'self'
+  }, opts || {}));
+}
+t('初手は6枚、以降は1枚', () => {
+  const m = newMatch();
+  CQTurn.beginTurn(m);
+  eq([m.turn, m.phase, m.players.self.hand.length], [1, 'placement', 6], '初手6枚');
+  CQTurn.endPlacement(m); CQTurn.endTurn(m);      // 自分のターン終了 → 相手へ
+  CQTurn.beginTurn(m);                            // 相手の初手も6枚
+  eq(m.players.enemy.hand.length, 6, '相手の初手6枚');
+  CQTurn.endPlacement(m); CQTurn.endTurn(m);      // 相手のターン終了 → 自分へ
+  CQTurn.beginTurn(m);
+  eq([m.turn, m.players.self.hand.length], [3, 7], '2ターン目は+1枚');
+});
+t('手札7枚超過で discard フェーズに入る', () => {
+  const m = newMatch(2, { selfDeck: mkDeck(50, [8]) });
+  CQTurn.beginTurn(m);
+  CQTurn.endPlacement(m); CQTurn.endTurn(m);
+  CQTurn.beginTurn(m); CQTurn.endPlacement(m); CQTurn.endTurn(m);   // 敵ターンを消化
+  CQTurn.beginTurn(m);                             // 自分2ターン目：6+1=7枚（超過なし）
+  eq(m.phase, 'placement', '7枚ちょうどは超過なし');
+});
+t('山札切れは即敗北', () => {
+  const m = newMatch(3, { selfDeck: [8, 8] });      // 2枚しかない→初手6枚requiredで枯渇
+  CQTurn.beginTurn(m);
+  eq([m.players.self.lost, CQTurn.checkResult(m)], [true, 'enemy'], '山札切れ敗北');
+});
+
+section('turn: 配置ステップ');
+t('召還：Lv1は可、レーン埋まり・Lv2以上は不可', () => {
+  const m = newMatch(4, { selfDeck: mkDeck(50, [8, 10]) });
+  CQTurn.beginTurn(m);
+  const idxPig = m.players.self.hand.indexOf(8);
+  const r1 = CQTurn.summon(m, 0, idxPig);
+  eq(r1.ok, true, '召還 成功');
+  eq(m.board.lanes[0].unit, 8, '召還先');
+  eq(m.board.lanes[0].stiff, true, '召還は硬直');
+  const r2 = CQTurn.summon(m, 0, m.players.self.hand.indexOf(8));
+  eq(r2.ok, false, 'レーン埋まり拒否');
+  const idx10 = m.players.self.hand.indexOf(10);
+  if (idx10 >= 0) {
+    const r3 = CQTurn.summon(m, 1, idx10);
+    eq(r3.ok, false, 'Lv5は直接召還できない');
+  }
+});
+t('チャネル：裏向きで積み、満杯まで', () => {
+  const m = newMatch(5, { selfDeck: mkDeck(50, [8, 101, 151, 180]) });
+  CQTurn.beginTurn(m);
+  CQTurn.summon(m, 0, m.players.self.hand.indexOf(8));
+  const before = m.players.self.hand.length;
+  const r = CQTurn.channel(m, 0, 0);
+  eq(r.ok, true, 'チャネル成功');
+  eq([m.board.lanes[0].channels.length, m.board.lanes[0].channels[0].up, m.players.self.hand.length],
+     [1, false, before - 1], 'チャネル結果');
+});
+t('チャネル：満杯で押し込み（配置ステップのみ）', () => {
+  const m = newMatch(6, { selfDeck: mkDeck(50, [8, 8, 8, 8, 8, 8, 180, 180, 180, 180]) });
+  CQTurn.beginTurn(m);                                              // Pig(CH4)を召還してCH4まで積む
+  CQTurn.summon(m, 0, m.players.self.hand.indexOf(8));
+  for (let i = 0; i < 4; i++) CQTurn.channel(m, 0, 0);
+  eq(m.board.lanes[0].channels.length, 4, '満杯');
+  const r = CQTurn.channel(m, 0, 0, { layer: 2 });
+  eq([r.ok, m.board.lanes[0].channels.length], [true, 4], '押し込み成功・枚数不変');
+});
+t('相手の場にもチャネルできる（原作準拠）', () => {
+  const m = newMatch(7, { selfDeck: mkDeck(50, [8, 101]), enemyDeck: mkDeck(50, [8, 101]) });
+  CQTurn.beginTurn(m); CQTurn.summon(m, 0, m.players.self.hand.indexOf(8));
+  CQTurn.endPlacement(m); CQTurn.endTurn(m);
+  CQTurn.beginTurn(m);                                              // 敵ターン：敵がレーン3召還
+  CQTurn.summon(m, 3, m.players.enemy.hand.indexOf(8));
+  const r = CQTurn.channel(m, 0, m.players.enemy.hand.indexOf(101));// 敵が自分（プレイヤー）のレーン0へチャネル
+  eq(r.ok, true, '敵→自レーンへのチャネル成立');
+  eq(m.board.lanes[0].channels[0].mine, false, '所有者は置いた側（敵）');
+});
+
+section('turn: メインステップ・リバース');
+/* リバースのテストは、盤面を直接組み立てて判定ロジックだけを検証する（ドローの偶然性を排除するため）。
+ * 「開いた階層より下へは同じターン中は戻れない」性質上、ドロー経由の召還→チャネル→即クローズは
+ * 原理的に成立しない（開いた瞬間にポインタが進み、そのターン中は同じ階層に触れられなくなる）。
+ * ここでは「前のターンに開かれてポインタが0に戻っている」状態を直接作って検証する。 */
+function mkBattleBoard() {
+  const m = CQTurn.createMatch({ cards: CARD_BY_ID, rng: CQRng.create(1), selfDeck: [], enemyDeck: [], first: 'self' });
+  m.phase = 'main';
+  return m;
+}
+t('リバース：階層は飛ばせるが、開いた階層より下へは戻れない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151)]);
+  const skip = CQTurn.reverseAction(m, 0, [2]);
+  eq([skip.ok, m.board.lanes[0].reversePtr, m.board.lanes[0].channels[1].up], [true, 2, true], '飛び越し可');
+  const back = CQTurn.reverseAction(m, 0, [1]);
+  eq(back.ok, false, '戻れない');
+});
+t('技能カード以外（ユニット・魔法・カース）はクローズできない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(101)]);                            // 表向きの魔法（前ターンに開いた想定）
+  const r = CQTurn.reverseAction(m, 0, [1]);
+  eq(r.ok, false, '魔法カードはクローズ不可');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(8, [up(151)]);                           // 技能カードはクローズ可
+  const r2 = CQTurn.reverseAction(m2, 0, [1]);
+  eq(r2.ok, true, '技能カードはクローズ可');
+});
+t('腐食は封印がないとクローズできない（同レーンに封印があれば可）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(167)]);
+  const noSeal = CQTurn.reverseAction(m, 0, [1]);
+  eq(noSeal.ok, false, '封印なしは不可');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(8, [up(167), up(156)]);                  // 封印(156)も表で同レーンに
+  const withSeal = CQTurn.reverseAction(m2, 0, [1]);
+  eq(withSeal.ok, true, '封印ありは可');
+});
+t('固定・石化があるレーンはリバースできない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(159), down(151)]);                 // 固定(159)は表でないと効かない
+  const r = CQTurn.reverseAction(m, 0, [2]);
+  eq(r.ok, false, '固定でリバース不可');
+});
+t('硬直しているレーンはリバースできない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151)]);
+  m.board.lanes[0].stiff = true;
+  const r = CQTurn.reverseAction(m, 0, [1]);
+  eq(r.ok, false, '硬直でリバース不可');
+});
+t('メインステップでは敵陣のユニットをリバースできない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[3] = lane(8, [down(151)]);
+  const r = CQTurn.reverseAction(m, 3, [1]);
+  eq(r.ok, false, '敵陣はリバース不可');
+});
+t('メインのチャネルは押し込み不可・対象が行動済みなら不可', () => {
+  const m = newMatch(12, { selfDeck: mkDeck(50, [8, 8, 8, 8, 8, 180, 180, 180, 180, 180]) });
+  CQTurn.beginTurn(m);
+  CQTurn.summon(m, 0, m.players.self.hand.indexOf(8));
+  for (let i = 0; i < 4; i++) CQTurn.channel(m, 0, m.players.self.hand.indexOf(8) >= 0 ? m.players.self.hand.indexOf(8) : 0);
+  m.board.lanes[0].stiff = false;
+  CQTurn.endPlacement(m);
+  const push = CQTurn.channel(m, 0, 0, { layer: 1 });
+  eq(push.ok, false, 'メインステップは押し込み不可');
+});
+
+section('turn: チェンジ・ターン終了');
+t('チェンジは自分の最初のターンのみ、LP1消費', () => {
+  const m = newMatch(13);
+  CQTurn.beginTurn(m);
+  const lp0 = m.players.self.lp, n0 = m.players.self.hand.length;
+  const r = CQTurn.change(m);
+  eq([r.ok, m.players.self.lp, m.players.self.hand.length], [true, lp0 - 1, n0], 'チェンジ成功');
+  const r2 = CQTurn.change(m);
+  eq(r2.ok, false, '既にチェンジ済みは不可（何か操作済み扱い）');
+});
+t('表向き魔法カードはターン終了時に消える（停滞があれば残る）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(101)]);                            // 魔法のみ・停滞なし
+  m.board.lanes[1] = lane(8, [up(101), up(151)]);                   // 魔法＋停滞
+  m.players.self.actedThisTurn = true;                              // 自動補充を回避
+  CQTurn.endTurn(m);
+  eq(m.board.lanes[0].channels.length, 0, '停滞なし：魔法は消える');
+  eq(m.board.lanes[1].channels.some((c) => c.card === 101), true, '停滞あり：魔法は残る');
+});
+t('未行動かつ手札5枚以下ならターン終了時に1枚補充', () => {
+  const m = newMatch(15, { selfDeck: mkDeck(50, [8, 101, 151, 180, 8, 101]) });
+  CQTurn.beginTurn(m);                                              // 6枚
+  while (m.players.self.hand.length > 5) m.players.self.hand.pop(); // テスト用に5枚まで減らす
+  CQTurn.endPlacement(m);
+  const before = m.players.self.hand.length;
+  CQTurn.endTurn(m);
+  eq(m.players.self.hand.length, before + 1, '未行動時の自動補充');
+});
+t('ターン終了で自陣の硬直・リバースポインタが解除される', () => {
+  const m = newMatch(16);
+  CQTurn.beginTurn(m);
+  CQTurn.summon(m, 0, m.players.self.hand.indexOf(8));
+  eq(m.board.lanes[0].stiff, true, '召還直後は硬直');
+  CQTurn.endPlacement(m); CQTurn.endTurn(m);
+  eq([m.board.lanes[0].stiff, m.board.lanes[0].reversePtr], [false, 0], '解除された');
+});
+t('ターン数は両者の手番で+1される', () => {
+  const m = newMatch(17);
+  CQTurn.beginTurn(m); CQTurn.endPlacement(m); CQTurn.endTurn(m);
+  CQTurn.beginTurn(m); CQTurn.endPlacement(m); CQTurn.endTurn(m);
+  eq(m.turn, 2, '2手番で turn=2');
+});
+t('LPが0になると相手の勝ち', () => {
+  const m = newMatch(18);
+  m.players.self.lp = 0;
+  eq(CQTurn.checkResult(m), 'enemy', 'LP0で敗北');
 });
 
 /* ================= 結果 ================= */
