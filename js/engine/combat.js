@@ -1,0 +1,563 @@
+/* CardQuest エンジン — 戦闘（アタック）
+ *
+ * 『SOULGATE 戦闘処理』（03_combat）と『カードバトル仕様書』§7 を移植する。
+ * 原作の流れ（EV0006 page7→EV0152 page6→page9→page10→page11→EV0152 page7）をそのまま
+ * 5つの段階に分ける：
+ *
+ *   ① 攻撃宣言   canAttack / canTarget / declareAttack
+ *   ② 戦闘導入   甲殻の強制クローズ・帯電のＬＰドレイン・当事者以外の凍結
+ *   ③ 攻撃側オープンフェイズ   open / endOpen（下から上への一方通行。クローズ不可）
+ *   ④ 防御側オープンフェイズ   同上＋甲殻・硬直・縛鎖の制限
+ *   ⑤ 判定と破壊             反射→迎撃の順。貫通で両方無効。不死なら生存して迎撃だけ走る
+ *   ⑥ 戦闘終了               硬直・連続攻撃の権利・表向き魔法の消滅・爆殺の自爆・憑依の発動
+ *
+ * このモジュールも DOM に依存しない。UI はカーソル操作を open()/endOpen() の呼び出しに変換する。
+ *
+ * 通常攻撃フラグ（原作 SW550）は destroy() の opts.normalAttack として持ち回す。
+ * これが「戦利品が入る／救済が効かない／憑依が発動する」の唯一の分岐点（仕様書§7.4）。
+ */
+'use strict';
+(function (global) {
+
+  const isNode = (typeof require === 'function' && typeof window === 'undefined');
+  const S = isNode ? require('./state.js') : global.CQState;
+  const Stats = isNode ? require('./stats.js') : global.CQStats;
+  const Turn = isNode ? require('./turn.js') : global.CQTurn;
+
+  const LOOT_MAX = 7;                       // 原作 V979 の上限
+
+  function other(side) { return side === 'self' ? 'enemy' : 'self'; }
+  function jp(side) { return side === 'self' ? '自分' : '相手'; }
+  function note(m, msg) { m.log.push(msg); }
+  function nameOf(m, id) { const c = m.cards[id]; return c ? c.n : ('#' + id); }
+
+  /** 戦闘中は当事者以外のレーンの能力値を凍結する（原作 EV0171 page1 冒頭） */
+  function combatOpt(m) {
+    return m.combat ? { attacker: m.combat.attacker, defender: m.combat.defender } : null;
+  }
+  function recalc(m) { return Stats.recalc(m.board, { cards: m.cards, combat: combatOpt(m) }); }
+
+  function damage(m, side, n) {
+    if (!n) return;
+    m.players[side].lp -= n;
+  }
+  function heal(m, side, n) {
+    const p = m.players[side];
+    p.lp += n; if (p.lp > p.maxLp) p.lp = p.maxLp;
+  }
+
+  /* ================= ① 攻撃宣言 ================= */
+
+  /** 攻撃側としての適格性（原作 EV0006 page7 → SW357） */
+  function canAttack(m, laneIndex) {
+    if (m.winner) return { ok: false, reason: '対局は終了しています' };
+    if (m.phase !== 'main') return { ok: false, reason: 'メインステップではありません' };
+    if (S.lanesOf(m.active).indexOf(laneIndex) < 0) return { ok: false, reason: '自陣のユニットだけが攻撃できます' };
+    const ln = m.board.lanes[laneIndex];
+    if (ln.unit == null) return { ok: false, reason: 'ユニットが居ません' };
+    if (ln.channeled) return { ok: false, reason: 'このターンにチャネリングしたユニットは攻撃できません' };
+    if (ln.stiff && !ln.extraAttack) return { ok: false, reason: 'そのユニットは行動済みです' };
+    recalc(m);
+    if (ln.acc.vapor >= 1) return { ok: false, reason: '気化しているユニットは攻撃できません' };
+    return { ok: true };
+  }
+
+  /** 防御側としての適格性（原作 EV0006 page7 → SW358）。追跡は制限をすべて無視する */
+  function canTarget(m, atkLane, defLane) {
+    const a = canAttack(m, atkLane);
+    if (!a.ok) return a;
+    const foeSide = other(m.active);
+    if (S.lanesOf(foeSide).indexOf(defLane) < 0) return { ok: false, reason: '相手のレーンではありません' };
+    const D = m.board.lanes[defLane];
+    if (D.unit == null) return { ok: false, reason: 'そのレーンにユニットは居ません' };
+    const A = m.board.lanes[atkLane];
+    recalc(m);
+    if (A.acc.pursuit >= 1) return { ok: true };                       // 追跡：制限を無視
+    if (D.acc.vapor >= 1) return { ok: false, reason: '気化しているユニットは攻撃対象になりません' };
+    const foes = S.lanesOf(foeSide).map(function (i) { return m.board.lanes[i]; })
+      .filter(function (l) { return l.unit != null; });
+    const hidden = foes.filter(function (l) { return l.acc.hide >= 1; }).length;
+    if (D.acc.hide >= 1 && foes.length > hidden)
+      return { ok: false, reason: '隠遁：隠遁していないユニットが居る間は狙えません' };
+    const magnets = foes.filter(function (l) { return l.acc.magnet >= 1; }).length;
+    if (magnets >= 1 && D.acc.magnet === 0)
+      return { ok: false, reason: '磁力：磁力を持つユニットしか狙えません' };
+    return { ok: true };
+  }
+
+  /** 攻撃できる相手レーンの一覧（ＵＩ・ＡＩ用） */
+  function attackTargets(m, atkLane) {
+    const res = [];
+    if (!canAttack(m, atkLane).ok) return res;
+    S.lanesOf(other(m.active)).forEach(function (i) {
+      if (canTarget(m, atkLane, i).ok) res.push(i);
+    });
+    return res;
+  }
+
+  /* ================= ② 戦闘導入 ================= */
+
+  /** 甲殻(183)：防御側になった瞬間に全チャンネルを強制クローズする（原作 CE0257）。
+   * 甲殻カード自身(183)は閉じない。ただし固有能力由来（値10＝エグゼデグゼス）なら183も閉じる */
+  function applyShell(m) {
+    const D = m.board.lanes[m.combat.defender];
+    if (!D || D.unit == null || D.acc.shell < 1) return;
+    const innate = D.acc.shell >= 10;
+    D.channels.forEach(function (ch) {
+      if (!ch.up) return;
+      if (ch.card === 183 && !innate) return;
+      ch.up = false;
+    });
+    note(m, '甲殻：' + nameOf(m, D.unit) + ' のチャンネルが閉じた');
+  }
+
+  /** 攻撃を宣言して戦闘に入る。成功すると m.combat が立ち、攻撃側のオープンフェイズが始まる。
+   * 開けるカードが無ければ自動的に次の段階へ進み、そのまま判定まで走ることもある。 */
+  function declareAttack(m, atkLane, defLane) {
+    const chk = canTarget(m, atkLane, defLane);
+    if (!chk.ok) return chk;
+    const A = m.board.lanes[atkLane], D = m.board.lanes[defLane];
+    const pierce = A.acc.pierce >= 1;
+
+    // 帯電（ニドヘッグ／原作 V813〜）：防御側の値だけ攻撃側マスターのＬＰが減る。貫通で無効。
+    //   [修正5] 原作は対象制限で攻撃が成立しなかった場合にもＬＰを奪うが、
+    //           宣言し放題になるため「戦闘が実際に始まったときだけ」に限定した
+    if (!pierce && D.acc.drain >= 1) {
+      damage(m, m.active, D.acc.drain);
+      note(m, '帯電：' + jp(m.active) + ' のＬＰ -' + D.acc.drain);
+      if (Turn.checkResult(m)) return { ok: true, aborted: true, result: null };
+    }
+
+    m.combat = {
+      attacker: atkLane, defender: defLane,
+      attackerSide: m.active, defenderSide: other(m.active),
+      opener: 'attacker', phase: 'attackerOpen', cursor: 1,
+      opened: [], result: null
+    };
+    m.phase = 'battle';
+    note(m, jp(m.active) + ' の ' + nameOf(m, A.unit) + ' が ' + nameOf(m, D.unit) + ' に攻撃');
+    recalc(m);
+    applyShell(m);
+    recalc(m);
+    return startOpenPhase(m);
+  }
+
+  /* ================= ③④ オープンフェイズ ================= */
+
+  function openerLane(m) { return m.combat.opener === 'attacker' ? m.combat.attacker : m.combat.defender; }
+  /** いまオープンフェイズを行っている側（'self'|'enemy'） */
+  function openerSide(m) {
+    if (!m.combat) return null;
+    return m.combat.opener === 'attacker' ? m.combat.attackerSide : m.combat.defenderSide;
+  }
+
+  /** そもそもオープンフェイズが成立するか（成立しなければ丸ごとスキップ） */
+  function canOpenPhase(m) {
+    const c = m.combat, ln = m.board.lanes[openerLane(m)];
+    if (!ln || ln.unit == null || ln.count === 0) return false;
+    if (ln.acc.lock >= 1) return false;                    // 固定(159)・石化(168)
+    if (c.opener === 'defender') {
+      if (ln.acc.shell >= 1 && ln.acc.shell !== 10) return false;   // 甲殻（固有の10だけ例外）
+      if (ln.stiff) return false;                                   // 硬直（防御時のみ効く）
+    }
+    return true;
+  }
+
+  /** いま開ける階層の一覧（三角カーソル位置以上・裏向き・縛鎖でない） */
+  function openableLayers(m) {
+    if (!m.combat || !canOpenPhase(m)) return [];
+    const c = m.combat, ln = m.board.lanes[openerLane(m)], res = [];
+    for (let n = c.cursor; n <= ln.count; n++) {
+      const ch = ln.channels[n - 1];
+      if (!ch || ch.up) continue;
+      if (c.opener === 'defender' && m.board.chainLocked && m.board.chainLocked.indexOf(n) >= 0) continue;
+      res.push(n);
+    }
+    return res;
+  }
+
+  function startOpenPhase(m) {
+    m.combat.cursor = 1;
+    m.combat.phase = m.combat.opener === 'attacker' ? 'attackerOpen' : 'defenderOpen';
+    if (openableLayers(m).length === 0) return endOpenPhase(m);
+    return { ok: true, phase: m.combat.phase };
+  }
+
+  /** 開かずにこのフェイズを終える（Ｂキーで最上段まで飛ばしたのと同じ） */
+  function endOpenPhase(m) {
+    const c = m.combat;
+    c.cursor = 0;
+    if (c.opener === 'attacker') { c.opener = 'defender'; return startOpenPhase(m); }
+    c.phase = 'judge';
+    return resolve(m);
+  }
+  function endOpen(m) {
+    if (!m.combat || (m.combat.phase !== 'attackerOpen' && m.combat.phase !== 'defenderOpen'))
+      return { ok: false, reason: 'オープンフェイズではありません' };
+    return endOpenPhase(m);
+  }
+
+  /** 指定した階層をオープンする。カーソルより下の階層は選べない（下から上への一方通行）。
+   * 開いた瞬間に魔法（M4でフック）とリバース召還が起動する。 */
+  function open(m, layer) {
+    if (!m.combat || (m.combat.phase !== 'attackerOpen' && m.combat.phase !== 'defenderOpen'))
+      return { ok: false, reason: 'オープンフェイズではありません' };
+    if (openableLayers(m).indexOf(layer) < 0) return { ok: false, reason: 'その階層は開けません' };
+    const c = m.combat, laneIndex = openerLane(m), ln = m.board.lanes[laneIndex];
+    const ch = ln.channels[layer - 1];
+
+    ch.up = true;
+    ch.revealed = true;                                   // 開いた瞬間に全員に見える
+    ch.opened = true;                                     // この戦闘で開けた印（原作のリング表示）
+    c.opened.push({ lane: laneIndex, layer: layer, card: ch.card });
+    note(m, jp(openerSide(m)) + ' が ' + layer + '階層目の ' + nameOf(m, ch.card) + ' をオープン');
+    recalc(m);
+
+    const eff = onOpen(m, laneIndex, layer, ch);
+
+    // 階層が1枚減ったときはカーソルを進めない（上のカードが1段落ちてくるので相殺される）
+    if (!eff.consumed) c.cursor = layer + 1;
+    recalc(m);
+
+    if (!m.combat) return { ok: true, effect: eff };       // 魔法の効果などで戦闘が終わっていた
+    if (m.winner) { return { ok: true, effect: eff }; }
+    if (openableLayers(m).length === 0) {
+      const r = endOpenPhase(m);
+      return { ok: true, effect: eff, result: r && r.result };
+    }
+    return { ok: true, effect: eff };
+  }
+
+  /** オープンによる割り込み処理（原作 EV0182 ＣＨオープン処理） */
+  function onOpen(m, laneIndex, layer, ch) {
+    const id = ch.card;
+    if (id >= 1 && id <= 100) return reverseSummon(m, laneIndex, layer, ch);
+    // 魔法(101〜150)の発動は M4。無効(190)・抑制(120)によるガードもそちらで扱う
+    if (m.hooks && typeof m.hooks.onMagicOpen === 'function') {
+      const nullified = m.board.lanes[laneIndex].acc.nullify >= 1;
+      m.hooks.onMagicOpen(m, laneIndex, layer, id, { nullified: nullified });
+    }
+    return { consumed: false, result: 'magic' };
+  }
+
+  /** リバース召還（原作 EV0182 [C]）。潜行ユニットがオープンされて場に出る */
+  function reverseSummon(m, laneIndex, layer, ch) {
+    const ln = m.board.lanes[laneIndex], id = ch.card;
+    const drop = function () {
+      ln.channels.splice(layer - 1, 1);
+      ln.count = ln.channels.length;
+      recalc(m);
+    };
+    // (2) 抵抗(178)：出てこようとしたカードを破壊する（カースも壊せる）
+    if (ln.acc.resist >= 1) {
+      drop();
+      note(m, '抵抗：' + nameOf(m, id) + ' は破壊された');
+      return { consumed: true, result: 'resist' };
+    }
+    // (3) カース(90〜100)：何も起きない（表のまま残る）
+    if (id >= 90) return { consumed: false, result: 'curse' };
+    // (4) 融合(162)：分離せずチャンネルのまま留まる（潜行継続）
+    if (ln.acc.fusion >= 1) {
+      note(m, '融合：' + nameOf(m, id) + ' は潜行したまま');
+      return { consumed: false, result: 'fusion' };
+    }
+    // (5) 召還レベル：配置階層 >= 召還レベル で成功
+    const lv = S.unitStats(m.cards[id]).lv;
+    if (layer < lv) {
+      drop();
+      note(m, nameOf(m, id) + ' は召還レベルが足りず破壊された');
+      return { consumed: true, result: 'level' };
+    }
+    // (6) 召還先＝そのカードを置いたマスターの場。空きが無ければ破壊
+    const destSide = ch.mine ? 'self' : 'enemy';
+    const dest = S.lanesOf(destSide).filter(function (i) { return m.board.lanes[i].unit == null; })[0];
+    if (dest === undefined) {
+      drop();
+      note(m, nameOf(m, id) + ' は召還先が無く破壊された');
+      return { consumed: true, result: 'nospace' };
+    }
+    ln.channels.splice(layer - 1, 1);
+    ln.count = ln.channels.length;
+    m.board.lanes[dest] = S.makeLane(id, [], m.cards);    // (7) 召還されたユニットは硬直しない
+    recalc(m);
+    note(m, 'リバース召還：' + nameOf(m, id));
+    return { consumed: true, result: 'summon', lane: dest };
+  }
+
+  /* ================= ⑤ 判定 ================= */
+
+  function resolve(m) {
+    const c = m.combat;
+    recalc(m);
+    const A = m.board.lanes[c.attacker], D = m.board.lanes[c.defender];
+    const result = {
+      attacker: c.attacker, defender: c.defender,
+      attackerSide: c.attackerSide, defenderSide: c.defenderSide,
+      atk: A.atk, def: D.def, dAtk: D.atk, aDef: A.def,
+      success: false, destroyed: [], survived: [], lp: { self: 0, enemy: 0 }, loot: []
+    };
+    // 呪爆などで戦闘中に当事者が消えていたら判定しない
+    if (A.unit == null || D.unit == null) { c.result = result; return endBattle(m, result); }
+
+    const ATK = A.atk, DEF = D.def, dATK = D.atk, aDEF = A.def;
+    const pierce = A.acc.pierce >= 1;                     // 貫通：迎撃・反射を完全無効化
+    const intercept = !pierce && D.acc.counter >= 1;
+    const reflect = !pierce && D.acc.reflect >= 1;
+    result.pierce = pierce;
+
+    if (ATK < DEF) {
+      // ---- 攻撃失敗 ----
+      if (reflect) {
+        const r = (D.unit === 63) ? ATK * 2 : ATK;        // インフェルノは反射2倍
+        result.reflect = r;
+        if (r >= aDEF) {
+          note(m, '反射：攻撃側が破壊された');
+          destroyIn(m, c.attacker, result, { normalAttack: true });
+          return endBattle(m, result);
+        }
+      }
+      if (intercept) {
+        result.intercept = dATK;
+        if (dATK >= aDEF) {
+          note(m, '迎撃：攻撃側が破壊された');
+          destroyIn(m, c.attacker, result, { normalAttack: true });
+          return endBattle(m, result);
+        }
+      }
+      note(m, '攻撃失敗（' + ATK + ' < ' + DEF + '）');
+      return endBattle(m, result);
+    }
+
+    // ---- 攻撃成功（同値も成功）----
+    result.success = true;
+    note(m, '攻撃成功（' + ATK + ' ≧ ' + DEF + '）');
+    const d = destroyIn(m, c.defender, result, { normalAttack: true });
+    if (d.survived === 'undying' && intercept && dATK >= aDEF) {
+      note(m, '不死で耐えた ' + nameOf(m, D.unit) + ' の迎撃：攻撃側が破壊された');
+      destroyIn(m, c.attacker, result, { normalAttack: true });
+    }
+    return endBattle(m, result);
+  }
+
+  /** 戦闘の中で破壊する（憑依の取り憑き先＝相手側の当事者レーンを渡す） */
+  function destroyIn(m, laneIndex, result, opts) {
+    const c = m.combat;
+    const foe = laneIndex === c.attacker ? c.defender : c.attacker;
+    const r = destroy(m, laneIndex, Object.assign({ curseTarget: foe }, opts || {}));
+    if (r.survived) result.survived.push({ lane: laneIndex, by: r.survived });
+    else if (r.ok) result.destroyed.push({ lane: laneIndex, unit: r.unit, lp: r.lp, side: r.ownerSide });
+    if (r.lp) result.lp[r.ownerSide] += r.lp;
+    return r;
+  }
+
+  /* ================= ⑥ 破壊処理（原作 CE0167〜0172 死亡1〜6） ================= */
+
+  /** ユニットを破壊する。opts:
+   *   normalAttack … 通常攻撃による破壊か（原作 SW550）。戦利品・救済・憑依の唯一の分岐点
+   *   suppress     … ＬＰダメージと憑依を抑止（原作 SW574。傀儡の強制排除など）
+   *   curseTarget  … 憑依の取り憑き先レーン
+   *   magic        … 魔法処理中（不死・ゾンビ帰還・戦利品が働かない。原作 SW325） */
+  function destroy(m, laneIndex, opts) {
+    const o = opts || {}, ln = m.board.lanes[laneIndex];
+    if (!ln || ln.unit == null) return { ok: false };
+    if (!ln.acc) recalc(m);                              // 一度も集計していない盤面から呼ばれた場合
+    const normal = !!o.normalAttack;
+    const inBattle = !!m.combat && !o.magic;
+    const side = S.sideOf(laneIndex);
+    const ownerSide = ln.flipped ? other(side) : side;    // 傀儡で持ち主が反転しているか
+    const unitId = ln.unit, chDmg = ln.baseCh;            // ＬＰダメージ＝カード記載の素のＣＨ数
+
+    // [1] 不死(177)：戦闘中かつ魔法処理中でなければ、ＬＰダメージだけ受けて生き残る
+    if (inBattle && ln.acc.undying >= 1) {
+      if (!o.suppress) damage(m, ownerSide, chDmg);
+      note(m, '不死：' + nameOf(m, unitId) + ' は破壊されない（ＬＰ -' + chDmg + '）');
+      recalc(m);
+      return { ok: true, survived: 'undying', unit: unitId, lp: o.suppress ? 0 : chDmg, ownerSide: ownerSide };
+    }
+    // [2] 救済(179)：通常攻撃“以外”の破壊だけを無効化する。ＬＰダメージも無し
+    if (!normal && ln.acc.salvation >= 1) {
+      note(m, '救済：' + nameOf(m, unitId) + ' は破壊されない');
+      return { ok: true, survived: 'salvation', unit: unitId, lp: 0, ownerSide: ownerSide };
+    }
+
+    // [3] 憑依の予約（封印(156)があると残せない）
+    if (!o.suppress && normal && ln.acc.seal === 0 && o.curseTarget != null) {
+      const cards = [];
+      if (unitId >= 65 && unitId <= 74) cards.push(unitId + 26);       // カースID＝元ID+26
+      for (let i = 0; i < ln.acc.curseChain; i++) cards.push(97);      // カース97の連鎖
+      if (cards.length) m.pendingCurse = { cards: cards, target: o.curseTarget, ownerSide: ownerSide };
+    }
+    // [4] ＬＰダメージ
+    if (!o.suppress) {
+      damage(m, ownerSide, chDmg);
+      if (chDmg) note(m, jp(ownerSide) + ' のＬＰ -' + chDmg + '（' + nameOf(m, unitId) + ' 破壊）');
+    }
+    // [5] ゾンビ帰還：スネイルリキッド(28)は持ち主の手札が5枚以下なら手札に戻る
+    if (!o.magic && unitId === 28 && m.players[ownerSide].hand.length <= 5) {
+      m.players[ownerSide].hand.push(28);
+      note(m, nameOf(m, 28) + ' は手札に戻った');
+    }
+    // [6] 戦利品：フリーユニット戦で、敵陣のユニットを通常攻撃で倒したときだけ
+    if (!o.magic && normal && side === 'enemy' && !ln.flipped && !ln.swapped &&
+        m.opponentId >= 101 && m.loot.length < LOOT_MAX) {
+      m.loot.push(unitId);
+      note(m, '戦利品：' + nameOf(m, unitId));
+    }
+    // [7] 除去。付いていたチャンネルは全て消滅する（手札にもデッキにも戻らない）
+    const lost = ln.channels.map(function (ch) { return ch.card; });
+    m.board.lanes[laneIndex] = S.emptyLane();
+    recalc(m);
+    Turn.checkResult(m);
+    return { ok: true, unit: unitId, lp: o.suppress ? 0 : chDmg, ownerSide: ownerSide, lostChannels: lost };
+  }
+
+  /* ================= ⑦ 戦闘終了（原作 EV0152 page7） ================= */
+
+  function endBattle(m, result) {
+    const c = m.combat;
+    const A = m.board.lanes[c.attacker];
+    m.combat = null;
+    recalc(m);
+
+    if (A.unit != null) {
+      A.stiff = true;                                     // 硬直するのは攻撃側だけ
+      if (A.extraAttack) A.extraAttack = false;           // 連続攻撃の2回目を消費した
+      else if (A.acc.petrify === 0 && A.acc.multiAtk >= 1) A.extraAttack = true;
+    }
+    applyPendingCurse(m);
+    expireMagic(m);
+    m.players[result.attackerSide || m.active].actedThisTurn = true;
+
+    result.loot = m.loot.slice();
+    m.lastBattle = result;
+    m.phase = m.winner ? 'over' : 'main';
+    Turn.checkResult(m);
+    note(m, '戦闘終了');
+    return { ok: true, result: result };
+  }
+
+  /** 憑依（カース）の付着。原作 CE0279。戦闘が完全に終わってから走る */
+  function applyPendingCurse(m) {
+    const pc = m.pendingCurse;
+    m.pendingCurse = null;
+    if (!pc) return;
+    const ln = m.board.lanes[pc.target];
+    if (!ln || ln.unit == null) return;
+    pc.cards.forEach(function (cid) {
+      recalc(m);
+      if (!(ln.cap > ln.count)) return;                   // 空きが無ければ発動しない
+      ln.channels.push({ card: cid, up: true, revealed: true, mine: pc.ownerSide === 'self', st: 'possess' });
+      ln.count = ln.channels.length;
+      note(m, '憑依：' + nameOf(m, cid) + ' が ' + nameOf(m, ln.unit) + ' に取り憑いた');
+    });
+    recalc(m);
+  }
+
+  /** 表向き魔法カードの消滅（原作 EV0049 魔法消去）。戦闘終了時とターン終了時に走る。
+   *   ・爆殺(104)が飽和状態で開いていたら自爆（通常攻撃ではないので救済が効く）
+   *   ・停滞(151)があるレーンの魔法は消えない
+   *   ・放出(160)があるレーンは表向きの技能も一緒に消える */
+  function expireMagic(m) {
+    recalc(m);
+    m.board.lanes.forEach(function (ln, i) {
+      if (ln.unit != null && ln.acc.swBomb && ln.cap === ln.count) {
+        note(m, '爆殺：' + nameOf(m, ln.unit) + ' が自爆');
+        destroy(m, i, { normalAttack: false });
+      }
+    });
+    recalc(m);
+    m.board.lanes.forEach(function (ln) {
+      if (ln.unit == null) return;
+      if (ln.acc.stasis >= 1) return;                     // 停滞
+      const release = ln.channels.some(function (ch) { return ch.up && ch.card === 160; });
+      ln.channels = ln.channels.filter(function (ch) {
+        if (!ch.up) return true;
+        if (ch.card >= 101 && ch.card <= 150) return false;
+        if (release && ch.card >= 151) return false;      // 放出
+        return true;
+      });
+      ln.count = ln.channels.length;
+    });
+    recalc(m);
+  }
+
+  /* ================= デッキ攻撃（直接攻撃） ================= */
+
+  /** 山札から1枚を破壊する（ドローと同じ抽選で1枚減らす。原作 CE0346） */
+  function destroyDeckCard(m, side) {
+    const p = m.players[side];
+    if (p.deckCount <= 0) return null;
+    for (;;) {
+      for (let id = 1; id <= 200; id++) {
+        const n = p.deck[id] || 0;
+        if (n > 0 && m.rng.int(1, 50) <= n) {
+          p.deck[id] = n - 1; p.deckCount -= 1;
+          if (p.deckCount <= 0) p.lost = true;
+          return id;
+        }
+      }
+    }
+  }
+
+  /** デッキ攻撃の可否。攻撃対象にできる敵ユニットが0体のとき。跳躍(163)なら2体以下でも可 */
+  function canDeckAttack(m, laneIndex) {
+    const a = canAttack(m, laneIndex);
+    if (!a.ok) return a;
+    const foeSide = other(m.active);
+    const foes = S.lanesOf(foeSide).map(function (i) { return m.board.lanes[i]; })
+      .filter(function (l) { return l.unit != null; });
+    const targetable = foes.filter(function (l) { return l.acc.vapor === 0; }).length;
+    if (m.board.lanes[laneIndex].acc.leap >= 1) {
+      if (foes.length <= 2) return { ok: true, byLeap: true };
+      return { ok: false, reason: '跳躍でも敵ユニットが3体居ると通れません' };
+    }
+    if (targetable > 0) return { ok: false, reason: '攻撃できる敵ユニットが居ます' };
+    return { ok: true };
+  }
+
+  /** デッキ攻撃：相手ＬＰ -1 ＋ 相手の山札を1枚破壊 */
+  function deckAttack(m, laneIndex) {
+    const chk = canDeckAttack(m, laneIndex);
+    if (!chk.ok) return chk;
+    const ln = m.board.lanes[laneIndex], foeSide = other(m.active);
+    damage(m, foeSide, 1);
+    if (ln.unit === 22) heal(m, m.active, 1);             // ビッグモスキート
+    const lostCard = destroyDeckCard(m, foeSide);
+    if (ln.acc.multiAtk >= 1) ln.extraAttack = !ln.extraAttack;
+    ln.stiff = true;
+    m.players[m.active].actedThisTurn = true;
+    note(m, jp(m.active) + ' のデッキ攻撃：' + jp(foeSide) + ' のＬＰ -1、山札1枚破壊');
+    recalc(m);
+    const result = Turn.checkResult(m);
+    if (result) m.phase = 'over';
+    return { ok: true, lostCard: lostCard, result: result };
+  }
+
+  /* ================= 戦闘の途中終了（原作 EV0154） ================= */
+
+  /** デッキ切れなどで戦闘を打ち切る。憑依は発動しない */
+  function abortBattle(m) {
+    if (!m.combat) return { ok: false };
+    const c = m.combat, A = m.board.lanes[c.attacker];
+    m.combat = null;
+    m.pendingCurse = null;
+    recalc(m);
+    if (A.unit != null) {
+      A.stiff = true;
+      if (A.extraAttack) A.extraAttack = false;
+      else if (A.acc.petrify === 0 && A.acc.multiAtk >= 1) A.extraAttack = true;
+    }
+    m.phase = m.winner ? 'over' : 'main';
+    note(m, '戦闘が途中で終了した');
+    return { ok: true };
+  }
+
+  const api = {
+    canAttack, canTarget, attackTargets, declareAttack,
+    canOpenPhase, openableLayers, openerLane, openerSide, open, endOpen,
+    destroy, expireMagic, applyPendingCurse,
+    canDeckAttack, deckAttack, destroyDeckCard, abortBattle
+  };
+  global.CQCombat = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);

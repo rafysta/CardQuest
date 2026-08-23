@@ -1,0 +1,144 @@
+/* CardQuest — ヘッドレス自動対戦（開発用）
+ *
+ *   node tools/simulate.js [試行回数] [ターン上限]
+ *
+ * 両陣営が「その場で合法な行動をランダムに選ぶ」だけの方策で対戦させ、
+ * 例外・無限ループ・状態不整合が起きないことを確かめる。
+ * 原作の「超過ＣＨ無限ループ」のような事故を再発させないための回帰チェックで、
+ * 勝率の数字そのものは（敵ＡＩが未実装なので）バランス評価には使えない。
+ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const root = path.join(__dirname, '..');
+const ctx = {};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(path.join(root, 'js/data.js'), 'utf8')
+  .replace(/const (CARDS|CARD_BY_ID|DECKS)\b/g, 'var $1'), ctx);
+const CARD_BY_ID = ctx.CARD_BY_ID;
+
+const CQRng = require(path.join(root, 'js/engine/rng.js'));
+const S = require(path.join(root, 'js/engine/state.js'));
+const CQTurn = require(path.join(root, 'js/engine/turn.js'));
+const CQCombat = require(path.join(root, 'js/engine/combat.js'));
+
+/* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚 */
+const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 47, 61, 63, 65, 66, 71, 20, 22,
+  151, 152, 154, 158, 165, 171, 172, 173, 176, 177, 178, 179, 183, 197,
+  101, 104, 117, 143, 180];
+function makeDeck(rng) {
+  const deck = [];
+  while (deck.length < 50) deck.push(POOL[rng.int(0, POOL.length - 1)]);
+  return deck;
+}
+
+function autoPlacement(m) {
+  const p = m.players[m.active];
+  const own = S.lanesOf(m.active);
+  const emptyLane = own.filter(function (i) { return m.board.lanes[i].unit == null; })[0];
+  if (emptyLane !== undefined) {
+    const idx = p.hand.findIndex(function (id) {
+      const c = CARD_BY_ID[id];
+      return c && c.t === 'U' && S.unitStats(c).lv <= 1;
+    });
+    if (idx >= 0) CQTurn.summon(m, emptyLane, idx);
+  }
+  const target = own.filter(function (i) { return m.board.lanes[i].unit != null; })[0];
+  if (target !== undefined && p.hand.length) {
+    const idx = m.rng.int(0, p.hand.length - 1);
+    const lane = m.board.lanes[target];
+    const opts = lane.count >= lane.cap && lane.channels.length
+      ? { layer: m.rng.int(1, lane.channels.length) } : undefined;
+    CQTurn.channel(m, target, idx, opts);
+  }
+}
+
+function autoOpenPhases(m) {
+  let guard = 0;
+  while (m.combat && guard++ < 40) {
+    const layers = CQCombat.openableLayers(m);
+    if (layers.length && m.rng.next() < 0.5) CQCombat.open(m, layers[m.rng.int(0, layers.length - 1)]);
+    else CQCombat.endOpen(m);
+  }
+  if (m.combat) throw new Error('オープンフェイズが終わらない');
+}
+
+function autoMain(m) {
+  S.lanesOf(m.active).forEach(function (i) {
+    if (m.winner || m.phase !== 'main') return;
+    if (m.board.lanes[i].unit == null) return;
+    const targets = CQCombat.attackTargets(m, i);
+    if (targets.length) {
+      CQCombat.declareAttack(m, i, targets[m.rng.int(0, targets.length - 1)]);
+      autoOpenPhases(m);
+      return;
+    }
+    if (CQCombat.canDeckAttack(m, i).ok) { CQCombat.deckAttack(m, i); return; }
+    const lane = m.board.lanes[i];
+    if (!lane.stiff && lane.reversePtr < lane.channels.length) {
+      CQTurn.reverseAction(m, i, [lane.reversePtr + 1]);
+    }
+  });
+}
+
+/** 盤面の不変条件を確かめる（壊れていたら例外） */
+function checkInvariants(m) {
+  m.board.lanes.forEach(function (ln, i) {
+    if (ln.unit == null) {
+      if (ln.channels.length) throw new Error('レーン' + i + '：ユニットが居ないのにチャンネルが残っている');
+      return;
+    }
+    if (ln.channels.length > 6) throw new Error('レーン' + i + '：階層が6を超えた');
+    if (ln.count !== ln.channels.length) throw new Error('レーン' + i + '：枚数カウントがずれている');
+    if (ln.count > ln.cap) throw new Error('レーン' + i + '：上限を超えたチャンネルが残っている');
+  });
+  ['self', 'enemy'].forEach(function (side) {
+    const p = m.players[side];
+    if (p.hand.length > 7) throw new Error(side + '：手札が7枚を超えた');
+    if (p.deckCount < 0) throw new Error(side + '：山札が負になった');
+  });
+}
+
+function runMatch(seed, maxTurns) {
+  const rng = CQRng.create(seed);
+  const m = CQTurn.createMatch({
+    cards: CARD_BY_ID, rng: rng,
+    selfDeck: makeDeck(rng), enemyDeck: makeDeck(rng),
+    first: rng.next() < 0.5 ? 'self' : 'enemy',
+    opponentId: 101
+  });
+  let guard = 0;
+  while (!m.winner && m.turn < maxTurns && guard++ < 5000) {
+    CQTurn.beginTurn(m);
+    if (m.winner) break;
+    while (m.phase === 'discard') CQTurn.discardCard(m, m.players[m.active].hand.length - 1);
+    if (m.phase === 'placement') { autoPlacement(m); CQTurn.endPlacement(m); }
+    if (m.phase === 'main') { autoMain(m); if (m.phase === 'main') CQTurn.endTurn(m); }
+    checkInvariants(m);
+  }
+  return m;
+}
+
+const runs = parseInt(process.argv[2], 10) || 300;
+const maxTurns = parseInt(process.argv[3], 10) || 80;
+const stat = { self: 0, enemy: 0, draw: 0, turns: 0, loot: 0, errors: [] };
+for (let seed = 1; seed <= runs; seed++) {
+  try {
+    const m = runMatch(seed, maxTurns);
+    if (m.winner) stat[m.winner] += 1; else stat.draw += 1;
+    stat.turns += m.turn;
+    stat.loot += m.loot.length;
+  } catch (e) {
+    stat.errors.push('seed ' + seed + ': ' + e.message);
+  }
+}
+console.log(runs + ' 戦：自陣側 ' + stat.self + ' 勝 / 敵陣側 ' + stat.enemy + ' 勝 / 決着つかず ' + stat.draw);
+console.log('平均 ' + (stat.turns / runs).toFixed(1) + ' 手番、戦利品 平均 ' + (stat.loot / runs).toFixed(2) + ' 枚');
+if (stat.errors.length) {
+  console.log('\n例外 ' + stat.errors.length + ' 件:');
+  stat.errors.slice(0, 10).forEach(function (e) { console.log('  ' + e); });
+  process.exit(1);
+}
+console.log('例外なし');

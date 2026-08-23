@@ -1,11 +1,11 @@
 /* CardQuest — エンジン検証：自動対戦（開発用）
  *
- * 「エンジン検証」タブから、js/engine/turn.js のターン進行を実際に1本走らせて
+ * 「エンジン検証」タブから、js/engine/ のターン進行と戦闘を実際に1本走らせて
  * ブラウザ上で目視確認するための画面。ゲームの本編UIではない。
  * 両陣営とも「その場で合法な行動をランダムに選ぶ」だけの単純な方策で、
- * 召還・チャネル・押し込み・リバース・ターン終了・手札上限・ドロー・勝敗判定が
- * 一通り動くことを確認する。戦闘（アタック）はまだ無い（M3で追加）ため、
- * 決着はターン上限か山札切れで付く。
+ * 召還・チャネル・押し込み・リバース・アタック・デッキ攻撃・ターン終了・
+ * 手札上限・ドロー・勝敗判定が一通り動くことを確認する。
+ * 敵ＡＩ（M5）はまだ無いので、強さの評価には使えない。
  */
 'use strict';
 (function () {
@@ -46,11 +46,30 @@
     }
   }
 
-  /** メインステップで、行動可能な自陣ユニットに1階層だけリバースを試みる */
+  /** 戦闘中のオープンフェイズを、両陣営とも「半々で開く」方策で最後まで進める */
+  function autoOpenPhases(m) {
+    let guard = 0;
+    while (m.combat && guard++ < 40) {
+      const layers = CQCombat.openableLayers(m);
+      if (layers.length && m.rng.next() < 0.5) CQCombat.open(m, layers[m.rng.int(0, layers.length - 1)]);
+      else CQCombat.endOpen(m);
+    }
+  }
+
+  /** メインステップ：攻撃できるユニットは攻撃し、残りは1階層だけリバースを試みる */
   function autoMain(m) {
     CQState.lanesOf(m.active).forEach((i) => {
+      if (m.winner || m.phase !== 'main') return;
+      if (m.board.lanes[i].unit == null) return;
+      const targets = CQCombat.attackTargets(m, i);
+      if (targets.length) {
+        CQCombat.declareAttack(m, i, targets[m.rng.int(0, targets.length - 1)]);
+        autoOpenPhases(m);
+        return;
+      }
+      if (CQCombat.canDeckAttack(m, i).ok) { CQCombat.deckAttack(m, i); return; }
       const lane = m.board.lanes[i];
-      if (lane.unit != null && !lane.stiff && lane.reversePtr < lane.channels.length) {
+      if (!lane.stiff && lane.reversePtr < lane.channels.length) {
         CQTurn.reverseAction(m, i, [lane.reversePtr + 1]);
       }
     });
@@ -61,7 +80,8 @@
     const first = rng.next() < 0.5 ? 'self' : 'enemy';
     const m = CQTurn.createMatch({
       cards: CARD_BY_ID, rng,
-      selfDeck: makeDeck(), enemyDeck: makeDeck(), first
+      selfDeck: makeDeck(), enemyDeck: makeDeck(), first,
+      opponentId: 101                      // フリーユニット戦扱い＝戦利品の記録も確認できる
     });
     let guard = 0;
     while (!m.winner && m.turn < maxTurns && guard++ < 4000) {
@@ -74,7 +94,7 @@
       }
       if (m.phase === 'main') {
         autoMain(m);
-        CQTurn.endTurn(m);
+        if (m.phase === 'main') CQTurn.endTurn(m);
       }
     }
     return m;
@@ -88,13 +108,14 @@
       : `<b>決着つかず</b>（ターン上限 ${m.turn} 手番）`;
     resultEl.innerHTML = `${status}
       　自分：ＬＰ${p1.lp} 手札${p1.hand.length} デッキ${p1.deckCount}${p1.lost ? '（山札切れ）' : ''}
-      　相手：ＬＰ${p2.lp} 手札${p2.hand.length} デッキ${p2.deckCount}${p2.lost ? '（山札切れ）' : ''}`;
+      　相手：ＬＰ${p2.lp} 手札${p2.hand.length} デッキ${p2.deckCount}${p2.lost ? '（山札切れ）' : ''}
+      ${m.loot.length ? '　戦利品：' + m.loot.map((id) => CARD_BY_ID[id].n).join('・') : ''}`;
     document.getElementById('sim-log').textContent = m.log.join('\n');
   }
 
   el.addEventListener('click', () => {
     const seed = parseInt(document.getElementById('sim-seed').value, 10) || 1;
-    const m = runMatch(seed, 30);
+    const m = runMatch(seed, 60);
     render(m);
   });
 })();

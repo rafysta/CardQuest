@@ -7,7 +7,7 @@
  *   ・手札上限7枚。超えたら強制的に1枚捨てる
  *   ・配置ステップ：召還（召還Lv<=1のみ・手札から直接）／チャネル（自陣・敵陣どちらも対象、押し込み可）
  *   ・メインステップ：リバース（自陣のみ・下から上へ一方通行）／チャネル（押し込み不可）
- *     ※アタック・特殊行動は M3/M4 で追加する（原作の実装順序どおり）
+ *     ※アタックは js/engine/combat.js（M3）。特殊行動は M4 で追加する（原作の実装順序どおり）
  *   ・ターン終了：表向き魔法カードの消滅（停滞があるレーンは除く）・未行動かつ手札5枚以下なら1枚補充・
  *     ＬＰクランプ・当該陣営の硬直とリバースポインタの解除
  *
@@ -84,8 +84,14 @@
       players: { self: createPlayer(opts.selfDeck, opts.selfOpts), enemy: createPlayer(opts.enemyDeck, opts.enemyOpts) },
       active: opts.first || 'self',
       turn: 0,                 // 原作 V335 相当。自他どちらのターンでも +1 される
-      phase: 'draw',           // 'draw' | 'discard' | 'placement' | 'main' | 'over'
+      phase: 'draw',           // 'draw' | 'discard' | 'placement' | 'main' | 'battle' | 'over'
       winner: null,
+      opponentId: opts.opponentId === undefined ? 0 : opts.opponentId,  // 原作 V340。101以上＝フリーユニット＝戦利品あり
+      combat: null,            // 戦闘中の状態（js/engine/combat.js が持つ）
+      pendingCurse: null,      // 憑依の予約（戦闘終了時に付着する）
+      loot: [],                // 戦利品（通常攻撃で倒した敵ユニットのID。最大7）
+      lastBattle: null,        // 直前の戦闘結果
+      hooks: opts.hooks || null,  // { onMagicOpen } … 魔法の発動（M4）
       log: []
     };
   }
@@ -97,7 +103,16 @@
     m.board.hand.self = m.players.self.hand.length;
     m.board.hand.enemy = m.players.enemy.hand.length;
   }
-  function recalc(m) { Stats.recalc(m.board, { cards: m.cards }); }
+  function recalc(m) {
+    // 戦闘中は当事者以外のレーンの能力値を凍結する（原作 EV0171 page1 冒頭）
+    const combat = m.combat ? { attacker: m.combat.attacker, defender: m.combat.defender } : null;
+    Stats.recalc(m.board, { cards: m.cards, combat: combat });
+  }
+  /** 戦闘モジュール。循環参照を避けるため、読み込み時ではなく呼ぶ瞬間に解決する */
+  function combatApi() {
+    return (typeof require === 'function' && typeof window === 'undefined')
+      ? require('./combat.js') : global.CQCombat;
+  }
   function note(m, msg) { m.log.push(msg); }
 
   /** カードオブジェクトを引く（マスターズソウルは呼び出し側が opts.msEquip を渡すこと） */
@@ -210,6 +225,7 @@
       const removed = lane.channels[layer - 1];
       lane.channels[layer - 1] = { card: id, up: false, mine: side === 'self', revealed: false };
       lane.stiff = true;
+      lane.channeled = true;                          // 原作 SW583〜：このターンはアタックできない
       p.actedThisTurn = true;
       syncHandCount(m);
       recalc(m);
@@ -221,6 +237,7 @@
     lane.channels.push({ card: id, up: false, mine: side === 'self', revealed: false });
     lane.count += 1;
     lane.stiff = true;                                // 付加されたレーンのユニットは硬直（原作準拠）
+    lane.channeled = true;                            // 原作 SW583〜：このターンはアタックできない
     p.actedThisTurn = true;
     syncHandCount(m);
     recalc(m);
@@ -310,14 +327,8 @@
     const side = m.active, p = activePlayer(m);
 
     recalc(m);
-    // 表向き魔法カード(101〜150)の消滅。停滞(151)があるレーンは残る
-    m.board.lanes.forEach(function (lane) {
-      if (lane.unit == null) return;
-      if (lane.acc.stasis >= 1) return;
-      lane.channels = lane.channels.filter(function (ch) { return !(ch.up && ch.card >= 101 && ch.card <= 150); });
-      lane.count = lane.channels.length;
-    });
-    recalc(m);
+    // 表向き魔法カード(101〜150)の消滅（＋爆殺の自爆・放出）。停滞(151)があるレーンは残る
+    combatApi().expireMagic(m);
 
     // 未行動かつ手札5枚以下なら1枚補充
     if (!p.actedThisTurn && p.hand.length <= 5) {
@@ -328,11 +339,14 @@
     // ＬＰクランプ
     if (p.lp > p.maxLp) p.lp = p.maxLp;
 
-    // 自陣の硬直・リバースポインタを解除
+    // 自陣の硬直・リバースポインタ・連続攻撃の権利を解除
     S.lanesOf(side).forEach(function (i) {
       m.board.lanes[i].stiff = false;
       m.board.lanes[i].reversePtr = 0;
+      m.board.lanes[i].extraAttack = false;
     });
+    // 「このターンにチャネリングされた」印は全レーンで解除する（原作 SW583〜588）
+    m.board.lanes.forEach(function (lane) { lane.channeled = false; });
 
     syncHandCount(m);
     const result = checkResult(m);

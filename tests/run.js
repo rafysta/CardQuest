@@ -21,6 +21,7 @@ const CQRng = require(path.join(root, 'js/engine/rng.js'));
 const S = require(path.join(root, 'js/engine/state.js'));
 const CQStats = require(path.join(root, 'js/engine/stats.js'));
 const CQTurn = require(path.join(root, 'js/engine/turn.js'));
+const CQCombat = require(path.join(root, 'js/engine/combat.js'));
 
 /* ---- ミニ・テストハーネス ---- */
 let pass = 0, fail = 0; const failures = [];
@@ -587,6 +588,353 @@ t('LPが0になると相手の勝ち', () => {
   const m = newMatch(18);
   m.players.self.lp = 0;
   eq(CQTurn.checkResult(m), 'enemy', 'LP0で敗北');
+});
+
+/* ================= combat: 攻撃宣言と対象制限 ================= */
+section('combat: 攻撃宣言');
+/** メインステップの盤面を直接組む（ドローを介さずレーンを置く） */
+function mkC(opts) {
+  const m = CQTurn.createMatch(Object.assign({
+    cards: CARD_BY_ID, rng: CQRng.create(1),
+    selfDeck: mkDeck(50, [8, 180]), enemyDeck: mkDeck(50, [8, 180]), first: 'self'
+  }, opts || {}));
+  m.phase = 'main';
+  return m;
+}
+/** 開かずにオープンフェイズを終えて、戦闘を判定まで進める */
+function fin(m) {
+  let guard = 0;
+  while (m.combat && guard++ < 10) CQCombat.endOpen(m);
+  return m.lastBattle;
+}
+/** 攻撃側レーン0・防御側レーン3 を置いた盤面 */
+function duel(atkUnit, atkChs, defUnit, defChs, opts) {
+  const m = mkC(opts);
+  m.board.lanes[0] = lane(atkUnit, atkChs || []);
+  m.board.lanes[3] = lane(defUnit, defChs || []);
+  return m;
+}
+
+t('攻撃成功は「攻撃力 ≧ 防御力」（同値も成功）', () => {
+  const m = duel(8, [], 1, []);                                  // A500 vs D500
+  const r = CQCombat.declareAttack(m, 0, 3);
+  eq([r.ok, r.result.success, m.board.lanes[3].unit], [true, true, null], '同値で成功');
+});
+t('攻撃力が足りなければ双方無傷', () => {
+  const m = duel(8, [], 8, [down(180), down(180)]);              // 500 vs 450+200=650
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[0].unit, m.board.lanes[3].unit], [false, 8, 8], '失敗・双方生存');
+});
+t('硬直したユニットは攻撃できない', () => {
+  const m = duel(8, [], 8, []);
+  m.board.lanes[0].stiff = true;
+  eq(CQCombat.canAttack(m, 0).ok, false, '硬直');
+});
+t('このターンにチャネリングされたユニットは攻撃できない', () => {
+  const m = duel(8, [], 8, []);
+  m.board.lanes[0].channeled = true;
+  eq(CQCombat.canAttack(m, 0).ok, false, 'チャネリング済み');
+});
+t('気化しているユニットは攻撃できず、攻撃対象にもならない', () => {
+  const a = duel(8, [up(176)], 8, []);
+  eq(CQCombat.canAttack(a, 0).ok, false, '気化は攻撃できない');
+  const b = duel(8, [], 8, [up(176)]);
+  eq(CQCombat.canTarget(b, 0, 3).ok, false, '気化は狙えない');
+});
+t('隠遁：隠遁していない味方が居る間は狙えない', () => {
+  const m = duel(8, [], 46, []);                                 // 46 ハイドクロウ＝隠遁
+  m.board.lanes[4] = lane(8, []);
+  eq([CQCombat.canTarget(m, 0, 3).ok, CQCombat.canTarget(m, 0, 4).ok], [false, true], '隠遁で守られる');
+  m.board.lanes[4] = S.emptyLane();
+  eq(CQCombat.canTarget(m, 0, 3).ok, true, '他が居なくなれば狙える');
+});
+t('磁力：磁力持ちが居る間は磁力持ちしか狙えない', () => {
+  const m = duel(8, [], 47, []);                                 // 47 マグネットウェブ＝磁力
+  m.board.lanes[4] = lane(8, []);
+  eq([CQCombat.canTarget(m, 0, 3).ok, CQCombat.canTarget(m, 0, 4).ok], [true, false], '磁力が身代わり');
+});
+t('追跡は気化・隠遁・磁力の制限をすべて無視する', () => {
+  const m = duel(2, [], 46, [up(176)]);                          // 2 パイロウイング＝追跡
+  m.board.lanes[4] = lane(47, []);
+  eq(CQCombat.canTarget(m, 0, 3).ok, true, '追跡');
+});
+t('攻撃できる相手が居ないときの一覧は空', () => {
+  const m = duel(8, [], 8, [up(176)]);
+  eq(CQCombat.attackTargets(m, 0), [], '対象なし');
+});
+
+/* ================= combat: 判定の分岐 ================= */
+section('combat: 迎撃・反射・貫通・不死');
+t('迎撃：攻撃失敗のとき、防御側の攻撃力 ≧ 攻撃側の防御力で攻撃側が破壊される', () => {
+  const m = duel(8, [], 7, [down(180), down(180)]);              // 7 ワーウルフ＝迎撃 / D450+200=650
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[0].unit, m.board.lanes[3].unit], [false, null, 7], '返り討ち');
+});
+t('迎撃：攻撃側の防御力のほうが高ければ何も起きない', () => {
+  const m = duel(8, [down(180), down(180)], 7, [down(180), down(180)]);  // 攻撃側 D450+200=650 > 迎撃500
+  CQCombat.declareAttack(m, 0, 3);
+  fin(m);                                                        // 双方とも開かずに終える
+  eq([m.board.lanes[0].unit, m.board.lanes[3].unit], [8, 7], '双方無傷');
+});
+t('反射は迎撃より先に判定される（インフェルノは2倍）', () => {
+  const m = duel(8, [], 63, [down(180), down(180)]);             // 63 インフェルノ＝反射・2倍 / D500+200=700
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.reflect, m.board.lanes[0].unit], [1000, null], '反射500×2で攻撃側破壊');
+});
+t('貫通は迎撃・反射を完全に無効化する', () => {
+  const m = duel(61, [], 7, [down(180), down(180)]);             // 61 ストライフ＝貫通 / A550 < D650
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.pierce, m.board.lanes[0].unit, m.board.lanes[3].unit], [true, 61, 7], '返り討ちにされない');
+});
+t('不死：破壊されずＬＰダメージだけ受け、そのあと迎撃だけが走る（相打ち）', () => {
+  const m = duel(8, [], 8, [up(177), up(171)]);                  // 不死＋迎撃。防御側 A450+200=650 D450
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[3].unit, m.board.lanes[0].unit, m.players.enemy.lp],
+     [true, 8, null, 6], '防御側は生存・攻撃側が破壊・ＬＰは減る');
+});
+
+/* ================= combat: ＬＰダメージと破壊処理 ================= */
+section('combat: ＬＰダメージ・戦利品・憑依');
+t('ＬＰダメージは「カード記載の素のＣＨ数」', () => {
+  const m = duel(8, [], 8, []);                                  // 8 ピッグマン＝ＣＨ4
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.players.enemy.lp, 6, '10 - 4');
+});
+t('膨張でＣＨ上限が増えてもＬＰダメージは変わらない', () => {
+  const m = duel(8, [], 8, [up(158)]);                           // 膨張で上限6・実枚数1
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.players.enemy.lp, 6, '素のＣＨ数4のまま');
+});
+t('ＣＨ数0のユニットを倒してもＬＰダメージは0', () => {
+  const m = duel(8, [], 22, []);                                 // 22 ビッグモスキート＝ＣＨ0
+  CQCombat.declareAttack(m, 0, 3);
+  eq([m.board.lanes[3].unit, m.players.enemy.lp], [null, 10], 'ダメージなし');
+});
+t('スネイルリキッドは破壊されると持ち主の手札に戻る', () => {
+  const m = duel(8, [], 28, []);                                 // 28 A450 D600 → 攻撃失敗するので直接破壊する
+  m.board.lanes[3] = lane(28, []);
+  CQCombat.destroy(m, 3, { normalAttack: true });
+  eq([m.board.lanes[3].unit, m.players.enemy.hand.indexOf(28) >= 0], [null, true], '手札帰還');
+});
+t('救済は通常攻撃には効かない', () => {
+  const m = duel(8, [], 8, [up(179)]);                           // 救済。D450 表1枚なので防御は450
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.board.lanes[3].unit, null, '通常攻撃では死ぬ');
+});
+t('救済は通常攻撃以外の破壊を無効化する', () => {
+  const m = duel(8, [], 8, [up(179)]);
+  const r = CQCombat.destroy(m, 3, { normalAttack: false });
+  eq([r.survived, m.board.lanes[3].unit, m.players.enemy.lp], ['salvation', 8, 10], '生存・ＬＰも減らない');
+});
+t('戦利品はフリーユニット戦（対戦相手ID 101以上）の通常攻撃撃破でのみ入る', () => {
+  const m = duel(8, [], 8, [], { opponentId: 101 });
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.loot, [8], '戦利品');
+  const m2 = duel(8, [], 8, [], { opponentId: 0 });
+  CQCombat.declareAttack(m2, 0, 3);
+  eq(m2.loot, [], '闘技場戦では入らない');
+});
+t('魔法など通常攻撃以外の破壊では戦利品にならない', () => {
+  const m = duel(8, [], 8, [], { opponentId: 101 });
+  CQCombat.destroy(m, 3, { normalAttack: false });
+  eq(m.loot, [], '特殊攻撃は戦利品なし');
+});
+t('憑依：通常攻撃で倒されたヘルファイアが相手にカースを残す', () => {
+  const m = duel(8, [], 65, []);                                 // 65 ヘルファイア → カース91
+  CQCombat.declareAttack(m, 0, 3);
+  const ch = m.board.lanes[0].channels[0];
+  eq([ch.card, ch.up, ch.st], [91, true, 'possess'], '表向きの憑依カード');
+});
+t('憑依：取り憑く先に空きが無ければ発動しない', () => {
+  const m = duel(8, [up(180), up(180), up(180), up(180)], 65, []);   // 攻撃側は飽和（ＣＨ4）
+  CQCombat.declareAttack(m, 0, 3);
+  eq([m.board.lanes[0].channels.length, m.board.lanes[0].channels.some((c) => c.card === 91)],
+     [4, false], '発動しない');
+});
+t('憑依：封印されたユニットはカースを残さない', () => {
+  const m = duel(8, [], 65, [up(156)]);                          // 封印
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.board.lanes[0].channels.length, 0, '封印で不発');
+});
+t('カース97の永続憑依は連鎖する', () => {
+  const m = duel(8, [], 8, [up(97)]);                            // 疫障250で防御200
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.board.lanes[0].channels.map((c) => c.card), [97], '97が移る');
+});
+
+/* ================= combat: オープンフェイズ ================= */
+section('combat: オープンフェイズ');
+t('攻撃側→防御側の順にフェイズが進む', () => {
+  const m = duel(8, [down(180), down(180)], 8, [down(180)]);
+  CQCombat.declareAttack(m, 0, 3);
+  eq([m.combat.phase, CQCombat.openerLane(m)], ['attackerOpen', 0], '攻撃側から');
+  CQCombat.endOpen(m);
+  eq([m.combat.phase, CQCombat.openerLane(m)], ['defenderOpen', 3], '次は防御側');
+});
+t('オープンは下から上への一方通行（飛ばすのは可・戻るのは不可）', () => {
+  const m = duel(8, [down(180), down(180), down(180)], 8, []);
+  CQCombat.declareAttack(m, 0, 3);
+  eq(CQCombat.open(m, 2).ok, true, '2階層目を開く');
+  eq(CQCombat.open(m, 1).ok, false, '1階層目には戻れない');
+  eq(CQCombat.openableLayers(m), [3], '残るのは3階層目だけ');
+});
+t('オープンフェイズでクローズはできない（表のカードは選べない）', () => {
+  const m = duel(8, [up(151), down(180)], 8, []);
+  CQCombat.declareAttack(m, 0, 3);
+  eq(CQCombat.openableLayers(m), [2], '表のカードは対象外');
+});
+t('開けるカードが無ければフェイズは自動でスキップされる', () => {
+  const m = duel(8, [], 8, []);                                  // 双方チャンネル0枚
+  const r = CQCombat.declareAttack(m, 0, 3);
+  eq([m.combat, r.result.success], [null, true], '判定まで一気に進む');
+});
+t('固定・石化があるとオープンフェイズごとスキップされる', () => {
+  const m = duel(8, [up(159), down(180)], 8, []);                // 159 固定
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.board.lanes[0].channels[1].up, false, '開けないまま判定へ');
+});
+t('甲殻：防御側になると全チャンネルが強制クローズされ、オープンもできない', () => {
+  const m = duel(8, [], 8, [up(183), up(180)]);                  // 183 甲殻
+  CQCombat.declareAttack(m, 0, 3);
+  const chs = m.board.lanes[3].channels;
+  eq([chs[0].up, chs[1].up], [true, false], '甲殻自身は開いたまま・他は閉じる');
+});
+t('硬直している防御側はオープンできない（攻撃側にはこの制限がない）', () => {
+  const m = duel(8, [up(180)], 8, [down(172)]);                 // 攻撃側 A600 / 防御側 D450+100=550
+  m.board.lanes[3].stiff = true;
+  CQCombat.declareAttack(m, 0, 3);
+  eq([m.combat, m.board.lanes[3].unit, m.board.lanes[3].channels.length], [null, null, 0], '開けずに判定→破壊');
+});
+t('縛鎖：攻撃側の表向き縛鎖と同じ階層番号は防御側が開けない', () => {
+  const m = duel(8, [up(197)], 8, [down(180), down(180)]);       // 197 縛鎖が1階層目
+  CQCombat.declareAttack(m, 0, 3);
+  eq([m.combat.phase, CQCombat.openableLayers(m)], ['defenderOpen', [2]], '1階層目は封じられる');
+});
+t('オープンした魔法・技能はその場で能力値に反映される', () => {
+  const m = duel(8, [down(192), down(180)], 8, [down(180), down(180)]);
+  CQCombat.declareAttack(m, 0, 3);
+  eq(m.board.lanes[0].atk, 500, 'オープン前は裏2枚ぶんが防御へ');
+  CQCombat.open(m, 1);
+  eq([m.board.lanes[0].atk, m.board.lanes[0].def], [600, 550], '開いた1枚が攻撃力へ移る');
+});
+
+/* ================= combat: リバース召還 ================= */
+section('combat: リバース召還');
+t('召還レベルを満たせば場に出る（硬直しない）', () => {
+  const m = duel(8, [down(8)], 8, [down(180)]);                  // 潜行ユニット8はＬｖ1
+  CQCombat.declareAttack(m, 0, 3);
+  const r = CQCombat.open(m, 1);
+  eq([r.effect.result, m.board.lanes[1].unit, m.board.lanes[1].stiff, m.board.lanes[0].channels.length],
+     ['summon', 8, false, 0], 'レーン1に召還');
+});
+t('配置階層が召還レベルに足りなければ破壊される', () => {
+  const m = duel(8, [down(10)], 8, [down(180)]);                 // 10 ヨルムンガンド＝召還Ｌｖ5
+  CQCombat.declareAttack(m, 0, 3);
+  const r = CQCombat.open(m, 1);
+  eq([r.effect.result, m.board.lanes[1].unit, m.board.lanes[0].channels.length],
+     ['level', null, 0], '破壊');
+});
+t('召還先の空きが無ければ破壊される', () => {
+  const m = duel(8, [down(8)], 8, [down(180)]);
+  m.board.lanes[1] = lane(8, []); m.board.lanes[2] = lane(8, []);
+  CQCombat.declareAttack(m, 0, 3);
+  const r = CQCombat.open(m, 1);
+  eq(r.effect.result, 'nospace', '空き無しで破壊');
+});
+t('抵抗があると出てこようとしたユニットを破壊する', () => {
+  const m = duel(8, [up(178), down(8)], 8, [down(180)]);         // 178 抵抗
+  CQCombat.declareAttack(m, 0, 3);
+  const r = CQCombat.open(m, 2);
+  eq([r.effect.result, m.board.lanes[1].unit], ['resist', null], '抵抗で破壊');
+});
+t('融合があると分離せずチャンネルのまま留まる', () => {
+  const m = duel(20, [down(8)], 8, [down(180)]);                 // 20 フュージョナル＝融合
+  CQCombat.declareAttack(m, 0, 3);
+  const r = CQCombat.open(m, 1);
+  eq([r.effect.result, m.board.lanes[0].channels.length, m.board.lanes[1].unit],
+     ['fusion', 1, null], '潜行のまま');
+});
+t('カードが1枚減ったぶんカーソルは進めない（上のカードが落ちてくる）', () => {
+  const m = duel(8, [down(8), down(180), down(180)], 8, []);
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 1);                                           // 1階層目が抜けて上が落ちる
+  eq(CQCombat.openableLayers(m), [1, 2], '同じ位置から続けられる');
+});
+
+/* ================= combat: 戦闘終了・連続攻撃 ================= */
+section('combat: 戦闘終了');
+t('攻撃側は硬直し、防御側は硬直しない', () => {
+  const m = duel(8, [], 8, [down(180), down(180)]);              // 攻撃失敗＝双方生存
+  CQCombat.declareAttack(m, 0, 3); fin(m);
+  eq([m.board.lanes[0].stiff, m.board.lanes[3].stiff, m.phase], [true, false, 'main'], '硬直は攻撃側だけ');
+});
+t('連続攻撃を持つと2回目の攻撃権が付き、使うと消える', () => {
+  const m = duel(8, [up(154)], 8, [down(180), down(180)]);       // 154 連続攻撃。600 < 650 で失敗
+  CQCombat.declareAttack(m, 0, 3); fin(m);
+  eq([m.board.lanes[0].extraAttack, CQCombat.canAttack(m, 0).ok], [true, true], '硬直をバイパス');
+  CQCombat.declareAttack(m, 0, 3); fin(m);
+  eq([m.board.lanes[0].extraAttack, CQCombat.canAttack(m, 0).ok], [false, false], '2回で打ち止め');
+});
+t('戦闘終了で表向きの魔法カードが消える', () => {
+  const m = duel(8, [up(101)], 8, [down(180), down(180)]);
+  CQCombat.declareAttack(m, 0, 3); fin(m);
+  eq(m.board.lanes[0].channels.length, 0, '魔法は消滅');
+});
+t('爆殺は飽和状態だと消滅処理で自爆する', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(104), down(180), down(180), down(180)]);   // ＣＨ4で飽和
+  CQCombat.expireMagic(m);
+  eq([m.board.lanes[0].unit, m.players.self.lp], [null, 6], '自爆してＬＰ-4');
+});
+t('放出があると表向きの技能も一緒に消える', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(160), up(152), down(180)]);
+  CQCombat.expireMagic(m);
+  eq(m.board.lanes[0].channels.map((c) => c.card), [180], '表の技能は消え、裏は残る');
+});
+
+/* ================= combat: デッキ攻撃 ================= */
+section('combat: デッキ攻撃');
+t('攻撃対象になる敵ユニットが0体ならデッキ攻撃できる', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, []);
+  const before = m.players.enemy.deckCount;
+  const r = CQCombat.deckAttack(m, 0);
+  eq([r.ok, m.players.enemy.lp, m.players.enemy.deckCount, m.board.lanes[0].stiff],
+     [true, 9, before - 1, true], 'ＬＰ-1・山札-1・硬直');
+});
+t('敵ユニットが居るとデッキ攻撃できない（気化は数えない）', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, []); m.board.lanes[3] = lane(8, []);
+  eq(CQCombat.canDeckAttack(m, 0).ok, false, '対象が居る');
+  m.board.lanes[3] = lane(8, [up(176)]);                         // 気化
+  eq(CQCombat.canDeckAttack(m, 0).ok, true, '気化だけなら通れる');
+});
+t('跳躍があれば敵ユニット2体以下でもデッキ攻撃できる', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(19, []);                               // 19 ブレードライダー＝跳躍
+  m.board.lanes[3] = lane(8, []); m.board.lanes[4] = lane(8, []);
+  eq(CQCombat.canDeckAttack(m, 0).ok, true, '2体まで');
+  m.board.lanes[5] = lane(8, []);
+  eq(CQCombat.canDeckAttack(m, 0).ok, false, '3体は不可');
+});
+t('ビッグモスキートはデッキ攻撃でＬＰを回復する', () => {
+  const m = mkC();
+  m.players.self.lp = 5;
+  m.board.lanes[0] = lane(22, []);
+  CQCombat.deckAttack(m, 0);
+  eq(m.players.self.lp, 6, 'ＬＰ+1');
+});
+t('デッキ攻撃で山札が尽きると敗北する', () => {
+  const m = mkC({ enemyDeck: [180] });
+  m.board.lanes[0] = lane(8, []);
+  const r = CQCombat.deckAttack(m, 0);
+  eq([r.result, m.winner], ['self', 'self'], '山札切れで勝利');
 });
 
 /* ================= 結果 ================= */

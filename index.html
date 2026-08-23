@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.10.0">
+<link rel="stylesheet" href="css/style.css?v=0.11.0">
 </head>
 <body>
 
@@ -74,9 +74,11 @@
   <!-- ===== エンジン検証（開発用） ===== -->
   <section class="screen sim" id="screen-sim">
     <h2>エンジン検証：自動対戦ログ</h2>
-    <p class="sim-note">実装計画M2で組んだターン進行エンジン（<code>js/engine/turn.js</code>）が単体で正しく動くかを、
-      ブラウザ上で実際に1本の対戦を自動再生して確認するための開発用画面です。まだ「戦闘（アタック）」は無い（M3で追加）ので、
-      召還・チャネル・リバース・ターン終了だけで進み、決着はターン上限か山札切れで付きます。</p>
+    <p class="sim-note">実装計画M2〜M3で組んだエンジン（<code>js/engine/turn.js</code>・<code>js/engine/combat.js</code>）が
+      正しく動くかを、ブラウザ上で実際に1本の対戦を自動再生して確認するための開発用画面です。
+      両陣営とも「その場で合法な手をランダムに選ぶ」だけなので、強さの評価には使えません（敵ＡＩはM5）。
+      召還・チャネル・リバースに加えて、アタック（オープンフェイズ→判定→破壊→ＬＰダメージ）と
+      デッキ攻撃まで走るので、たいていはＬＰ0で決着が付きます。</p>
     <div class="sim-controls">
       <label>シード <input type="number" id="sim-seed" value="1" style="width:6em"></label>
       <button id="sim-run">対戦を実行</button>
@@ -164,20 +166,21 @@
       <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、そのカードの絵になります。名前とＡ／Ｄは絵の上に重なります。</p>
     </div>
 
-    <p style="margin-top:18px;color:#96a7c6">※ この画面はまだレイアウト確認用のモックアップで、ターン進行や能力値の計算とはつながっていません。実際のエンジンの動作は「エンジン検証」タブで見られます。カードの効果の発動と戦闘（アタック）はまだ入っていません。</p>
+    <p style="margin-top:18px;color:#96a7c6">※ この画面はまだレイアウト確認用のモックアップで、ターン進行・能力値・戦闘の計算とはつながっていません。実際のエンジンの動作は「エンジン検証」タブで見られます。エンジン側はターン進行（v0.10）と戦闘＝アタック（v0.11）まで入っていて、カードの効果の発動（魔法・技能の効果そのもの）はまだこれからです。</p>
   </section>
 </div>
 
 <div id="flash"></div>
 
-<script src="js/data.js?v=0.10.0"></script>
-<script src="js/engine/rng.js?v=0.10.0"></script>
-<script src="js/engine/state.js?v=0.10.0"></script>
-<script src="js/engine/stats.js?v=0.10.0"></script>
-<script src="js/engine/turn.js?v=0.10.0"></script>
-<script src="js/version.js?v=0.10.0"></script>
-<script src="js/layout.js?v=0.10.0"></script>
-<script src="js/simulate.js?v=0.10.0"></script>
-<script src="js/update.js?v=0.10.0"></script>
+<script src="js/data.js?v=0.11.0"></script>
+<script src="js/engine/rng.js?v=0.11.0"></script>
+<script src="js/engine/state.js?v=0.11.0"></script>
+<script src="js/engine/stats.js?v=0.11.0"></script>
+<script src="js/engine/turn.js?v=0.11.0"></script>
+<script src="js/engine/combat.js?v=0.11.0"></script>
+<script src="js/version.js?v=0.11.0"></script>
+<script src="js/layout.js?v=0.11.0"></script>
+<script src="js/simulate.js?v=0.11.0"></script>
+<script src="js/update.js?v=0.11.0"></script>
 </body>
 </html>

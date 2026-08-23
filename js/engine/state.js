@@ -38,10 +38,17 @@
   function numeric(v, fb) { return typeof v === 'number' && isFinite(v) ? v : fb; }
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-  /** 空のレーン */
+  /** 空のレーン
+   *   stiff       … 硬直（原作 SW314〜319）
+   *   channeled   … このターンにチャネリングされた（原作 SW583〜588。アタックできない）
+   *   extraAttack … 連続攻撃(154)の2回目の権利（原作 SW526〜531。硬直をバイパスする）
+   *   flipped     … 傀儡による所有者反転（原作 SW568〜573。持ち主と居る場がズレている＝M4）
+   *   swapped     … 身転換(142)で入れ替えられた（以後そのユニットは戦利品にならない。原作 SW251＝M4）
+   */
   function emptyLane() {
     return { unit: null, baseCh: 0, channels: [],
              stiff: false, reversePtr: 0,
+             channeled: false, extraAttack: false, flipped: false, swapped: false,
              atk: 0, def: 0, cap: 0, count: 0, free: 0, acc: null };
   }
 
