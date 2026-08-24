@@ -483,11 +483,64 @@ function fitBoard() {
  * 縮小は CSS の transform:scale なので、getBoundingClientRect も elementsFromPoint も
  * 変換後のビューポート座標を返す＝ドラッグ判定はそのままで正しく動く。 */
 const APP_W = 1280, APP_H = 800;
-function fitApp() {
-  const s = Math.min(1, window.innerWidth / APP_W, window.innerHeight / APP_H);
-  document.documentElement.style.setProperty('--app-scale', s);
+const APP_EDGE = 6;        /* 画面の縁に触れないための余白。丸角・1px単位の丸め対策 */
+
+/** セーフエリア（切り欠き・丸角）の実測。env() はJSから直接読めないので
+ * `#sa-probe` の padding に入れておいて px で測る（index.html は viewport-fit=cover） */
+function safeInsets() {
+  const p = document.getElementById('sa-probe');
+  if (!p) return { t: 0, r: 0, b: 0, l: 0 };
+  const cs = getComputedStyle(p);
+  return {
+    t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0,
+    b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0
+  };
 }
-window.addEventListener('resize', () => { fitApp(); fitBoard(); renderHand(); });
+
+/** いま実際に見えている領域の大きさ。
+ * Androidブラウザは上にURLバーが出ていると **innerHeight が見えている高さより大きい**
+ * （innerHeight＝レイアウトビューポート＝URLバーが隠れたときの高さ）ことがある。
+ * これを信じて縮小率を決めていたため、Galaxy Tab で下端が切れていた。
+ * いちばん小さい値＝確実に見えている範囲を採る。 */
+function viewSize() {
+  let w = window.innerWidth, h = window.innerHeight;
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0) {
+    w = Math.min(w, vv.width);
+    /* ただしソフトキーボードが出ているときは visualViewport が大きく縮む。
+       これに追従すると、デッキ編集の絞り込み欄に文字を打つたび画面全体が跳ねてしまうので、
+       入力中の極端な縮み（2割超）は画面が狭くなったとは見なさない */
+    const ae = document.activeElement;
+    const typing = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+    if (!(typing && vv.height < h * 0.8)) h = Math.min(h, vv.height);
+  }
+  const de = document.documentElement;
+  if (de && de.clientWidth > 0) w = Math.min(w, de.clientWidth);   // 縦スクロールバーぶんを避ける
+  return { w: w, h: h };
+}
+
+/** 見えている領域にぴったり収まるよう縮小率と位置を決める（拡大はしない） */
+function fitApp() {
+  const v = viewSize(), sa = safeInsets();
+  const availW = Math.max(320, v.w - sa.l - sa.r - APP_EDGE * 2);
+  const availH = Math.max(200, v.h - sa.t - sa.b - APP_EDGE * 2);
+  const s = Math.min(1, availW / APP_W, availH / APP_H);
+  document.documentElement.style.setProperty('--app-scale', s);
+  const el = document.getElementById('app');
+  if (el) {
+    el.style.left = (sa.l + APP_EDGE + (availW - APP_W * s) / 2) + 'px';
+    el.style.top = (sa.t + APP_EDGE + (availH - APP_H * s) / 2) + 'px';
+  }
+}
+
+/** 画面の大きさが変わるきっかけをすべて拾う（URLバーの出入りは resize では来ないことがある） */
+function onViewChange() { fitApp(); fitBoard(); if (M) renderHand(); }
+window.addEventListener('resize', onViewChange);
+window.addEventListener('orientationchange', () => setTimeout(onViewChange, 250));
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', onViewChange);
+  window.visualViewport.addEventListener('scroll', onViewChange);
+}
 fitApp();
 
 /* --- 手札 --- */

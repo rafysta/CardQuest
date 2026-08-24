@@ -39,14 +39,30 @@ input{-webkit-user-select:text;user-select:text}
  * 画面に入りきらないときだけ全体を縮小表示する（--app-scale は js/layout.js が計算）。
  * これにより「タブレットで見えるもの」と「ＰＣで見えるもの」が必ず一致する。
  * 拡大はしない（1280×800より大きい画面では 1280×800 のまま中央に置く）。 */
+/* 位置は position:fixed ＋ JS が実測した px（`fitApp()` が left/top を書く）。
+ * 以前は left:50%/top:50% ＋ translate(-50%,-50%) で body の中央に置いていたが、
+ * Androidブラウザで上にURLバーが出ていると **body の高さ（レイアウトビューポート）が
+ * 実際に見えている高さより大きい** ため、中心がずれて下端が画面外に出ていた
+ * （2026-08-24 本人の指摘「Galaxy Tabで端が切れる」の原因）。
+ * 見えている領域は visualViewport で測り、その中央に自分で置く。 */
 #app{
-  position:absolute; left:50%; top:50%;
+  position:fixed; left:0; top:0;
   width:1280px; height:800px;
-  transform:translate(-50%,-50%) scale(var(--app-scale,1));
-  transform-origin:center center;
+  transform:scale(var(--app-scale,1));
+  transform-origin:0 0;
   display:flex; flex-direction:column;
   background:var(--bg); overflow:hidden;
   box-shadow:0 0 0 1px #1b2740, 0 18px 60px #0009;
+}
+
+/* セーフエリア（丸角・切り欠き）の実測用。env() は JS から直接読めないので、
+ * padding に入れておいて getComputedStyle で px として測る。
+ * index.html は viewport-fit=cover なので、この余白ぶんは避けて配置する必要がある。 */
+#sa-probe{
+  position:fixed; left:0; top:0; width:0; height:0;
+  visibility:hidden; pointer-events:none; z-index:-1;
+  padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px)
+          env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);
 }
 
 .topbar{
@@ -376,8 +392,10 @@ img.curse-art{
  * ここでメディアクエリを使うと「ウィンドウの高さ」で中身だけが変わってしまい、
  * 「どの画面でも同じレイアウト」という前提が崩れる。 */
 
+/* #app の中に入れてある（＝画面と一緒に縮む）。以前は body 直下の position:fixed だったが、
+ * 画面が小さいときに bottom:170px が見える範囲の外に出ることがあった */
 #flash{
-  position:fixed;left:50%;bottom:170px;transform:translateX(-50%);z-index:500;
+  position:absolute;left:50%;bottom:170px;transform:translateX(-50%);z-index:500;
   background:#241c00;color:var(--accent);border:2px solid var(--accent);
   padding:12px 22px;border-radius:10px;font-size:17px;font-weight:800;
   opacity:0;transition:opacity .18s;pointer-events:none;
