@@ -24,17 +24,30 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
-  background:var(--bg); color:var(--txt);
+  background:#05080f; color:var(--txt);
   font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic",system-ui,sans-serif;
   font-size:var(--fs-base); line-height:1.4;
-  -webkit-text-size-adjust:100%; overflow:hidden;
+  -webkit-text-size-adjust:100%; overflow:hidden; position:relative;
   -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
   touch-action:manipulation;
 }
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 input{-webkit-user-select:text;user-select:text}
 
-#app{display:flex;flex-direction:column;height:100%;max-height:100%}
+/* ---- 画面サイズは Galaxy Tab S11 横向き（1280×800）に固定する ----
+ * 大きい画面で開いてもレイアウトが伸びないよう、常に 1280×800 の箱として組み、
+ * 画面に入りきらないときだけ全体を縮小表示する（--app-scale は js/layout.js が計算）。
+ * これにより「タブレットで見えるもの」と「ＰＣで見えるもの」が必ず一致する。
+ * 拡大はしない（1280×800より大きい画面では 1280×800 のまま中央に置く）。 */
+#app{
+  position:absolute; left:50%; top:50%;
+  width:1280px; height:800px;
+  transform:translate(-50%,-50%) scale(var(--app-scale,1));
+  transform-origin:center center;
+  display:flex; flex-direction:column;
+  background:var(--bg); overflow:hidden;
+  box-shadow:0 0 0 1px #1b2740, 0 18px 60px #0009;
+}
 
 .topbar{
   height:52px;flex:0 0 52px;display:flex;align-items:center;gap:12px;
@@ -267,9 +280,11 @@ img.curse-art{
 }
 #btn-skip:active{background:#24406e}
 
-/* ドラッグ中の分身 */
+/* ドラッグ中の分身。#app と同じ倍率で縮めて、画面を縮小表示しているときも大きさが揃うようにする
+ * （ゴーストは body 直下＝#app の外に出すので、scale を自前で掛ける必要がある） */
 .ghost{
-  position:fixed;z-index:999;pointer-events:none;transform:translate(-50%,-50%);
+  position:fixed;z-index:999;pointer-events:none;
+  transform:translate(-50%,-50%) scale(var(--app-scale,1));
   --cw:112px;--chh:112px;opacity:.92;
 }
 
@@ -355,20 +370,11 @@ img.curse-art{
 .btn.ok{background:var(--accent);color:#241c00}
 .btn.ng{background:var(--panel2);border:2px solid var(--line);color:var(--txt)}
 
-/* 画面の高さが足りない端末では、右パネルを一回り小さくして
-   確認の内容がスクロールせずに収まるようにする */
-@media (max-height:700px){
-  .i-art{width:120px}
-  .c-art{width:48px;height:48px;flex:0 0 48px;font-size:16px}
-  .c-nm{font-size:18px}
-  .c-ef{font-size:14px;-webkit-line-clamp:2}
-  .i-ask{font-size:15px;padding:9px 10px;margin-top:9px}
-  .i-ask .q{font-size:17px}
-  .lay-chip{height:38px;font-size:17px}
-  .lay-now{margin-top:7px;font-size:14px}
-  .btn{height:52px;font-size:18px}
-  #info-fix{padding:11px}
-}
+/* ※ 以前あった @media (max-height:700px) の縮小指定は削除した。
+ * レイアウトを 1280×800 に固定したので中身の高さは常に同じで、
+ * 画面が小さいときは #app ごと縮小表示される（--app-scale）。
+ * ここでメディアクエリを使うと「ウィンドウの高さ」で中身だけが変わってしまい、
+ * 「どの画面でも同じレイアウト」という前提が崩れる。 */
 
 #flash{
   position:fixed;left:50%;bottom:170px;transform:translateX(-50%);z-index:500;
@@ -415,6 +421,16 @@ img.curse-art{
 
 /* メインステップで直接押して開けるカード（▶付き）。戦闘中の openable より控えめな光り方 */
 .card.ch.flippable{box-shadow:0 0 0 2px #d4a94088,0 3px 8px rgba(0,0,0,.6);cursor:pointer}
+
+/* ---- 開けるカードの2分割タップ領域（左＝開く／右＝内容を見る） ----
+ * 見えているのは上端の帯（.strip）だけなので、目印も境目もその高さに収める。 */
+.card.ch.split .strip .inf{
+  flex:0 0 auto;font-size:15px;color:var(--accent);opacity:.85;margin-left:3px;
+}
+.card.ch.split .strip::after{        /* 左右の境目の薄い縦線 */
+  content:'';position:absolute;left:50%;top:4px;bottom:4px;width:1px;
+  background:linear-gradient(#0000,var(--accent),#0000);opacity:.5;pointer-events:none;
+}
 
 /* 押し込み先の階層（一杯のレーンへドラッグ中、ポインタの下のカード） */
 .card.ch.push-over{box-shadow:0 0 0 3px var(--accent),0 0 14px var(--accent);z-index:115}

@@ -96,6 +96,8 @@ function humanSide() {
 }
 /** 手札を下段に出す側 */
 function handSide() { return humanSide() || 'self'; }
+/** いま人が戦闘のオープンフェイズを操作しているか（UI.mode に依存しない判定） */
+function humanOpening() { return !!(M && M.combat && !M.winner && humanSide()); }
 function laneSide(i) { return i < 3 ? 'self' : 'enemy'; }
 /** そのレーンのユニットの持ち主（傀儡で反転していることがある） */
 function unitOwner(i) {
@@ -228,7 +230,9 @@ function chHTML(i, k) {
   const oc = own ? 'own' : 'foe';
   const pos = ch.st === 'possess';
   const badge = `${pos ? '<span class="ow ps">憑</span>' : ''}<span class="ow">${own ? '自' : '敵'}</span>`;
-  const open = UI.mode === 'battle' && CQCombat.openerLane(M) === i
+  /* 戦闘中に開ける階層か。UI.mode ではなくエンジンの状態から決める
+     （情報を見るために UI.mode が 'info' になっても▶が消えないようにするため） */
+  const open = humanOpening() && CQCombat.openerLane(M) === i
     && CQCombat.openableLayers(M).indexOf(k) >= 0;
   /* メインステップ：直接押してリバースできるか（裏なら押した瞬間に開く。
      表の技能は誤タップでの閉じ事故を防ぐため、押すと情報パネルに「閉じる」ボタンが出る） */
@@ -242,14 +246,19 @@ function chHTML(i, k) {
   const attr = `data-lane="${i}" data-layer="${k}" data-card="${card.id}"
     data-own="${own ? 1 : 0}" data-known="${known ? 1 : 0}" data-st="${ch.st || ''}"
     ${closable ? 'data-closable="1"' : ''}`;
-  const mark = (open || flip) ? '<span class="cur">▶</span>' : '';
+  /* 開けるカードは「左半分＝開く／右半分＝内容を見る」の2つのタップ領域に分ける。
+     ▶（左）とⓘ（右）がその目印。境目には薄い縦線を出す（.card.ch.split の ::after） */
+  const split = open || flip;
+  const mark = split ? '<span class="cur">▶</span>' : '';
+  const info = split ? '<span class="inf">ⓘ</span>' : '';
+  const splitCls = split ? 'split' : '';
   if (!ch.up) {
     const nm = known ? `<span class="nm">${card.n}</span>` : '<span class="nm hid">？</span>';
-    return `<div class="card ch back ${oc} ${open ? 'openable' : ''} ${flip ? 'flippable' : ''}" ${attr} ${bottom}>
-      <div class="strip">${mark}${nm}${badge}</div></div>`;
+    return `<div class="card ch back ${oc} ${open ? 'openable' : ''} ${flip ? 'flippable' : ''} ${splitCls}" ${attr} ${bottom}>
+      <div class="strip">${mark}${nm}${badge}${info}</div></div>`;
   }
-  return `<div class="card ch ${card.t} ${oc} ${pos ? 'possess' : ''}" ${attr} ${bottom}>
-    <div class="strip">${mark}<span class="nm">${card.n}</span>${badge}</div>
+  return `<div class="card ch ${card.t} ${oc} ${pos ? 'possess' : ''} ${splitCls}" ${attr} ${bottom}>
+    <div class="strip">${mark}<span class="nm">${card.n}</span>${badge}${info}</div>
     <div class="art">${artInner(card)}</div></div>`;
 }
 
@@ -303,7 +312,19 @@ function fitBoard() {
   root.setProperty('--cw', chh + 'px');
   root.setProperty('--vstep', vstep + 'px');
 }
-window.addEventListener('resize', () => { fitBoard(); renderHand(); });
+
+/* --- 画面サイズは Galaxy Tab S11 横向き（1280×800）に固定する ---
+ * レイアウトは常に 1280×800 の箱として組み、ウィンドウがそれより小さいときだけ
+ * 全体を等倍で縮小する（拡大はしない）。これで、どの画面で開いても見えるものが同じになる。
+ * 縮小は CSS の transform:scale なので、getBoundingClientRect も elementsFromPoint も
+ * 変換後のビューポート座標を返す＝ドラッグ判定はそのままで正しく動く。 */
+const APP_W = 1280, APP_H = 800;
+function fitApp() {
+  const s = Math.min(1, window.innerWidth / APP_W, window.innerHeight / APP_H);
+  document.documentElement.style.setProperty('--app-scale', s);
+}
+window.addEventListener('resize', () => { fitApp(); fitBoard(); renderHand(); });
+fitApp();
 
 /* --- 手札 --- */
 function handHTML(card, i) {
@@ -439,6 +460,13 @@ function panelIdle() {
 }
 
 function panelInfo() {
+  /* 戦闘のオープンフェイズ中に内容を見ているときは、フェイズを終えるボタンを必ず残す
+     （情報を見たせいで手が止まらないようにするため） */
+  if (humanOpening()) {
+    return paint(infoCardHTML(CARD_BY_ID[UI.info.card], UI.info)
+      + '<p class="i-t dim">※ 開くときは、カードの<b>左半分（▶側）</b>を押します。</p>',
+      `<button class="btn ng" data-act="open-end">開かずに終える</button>`, true);
+  }
   /* 表になっている技能カード（自分が操作するレーン・メインステップ）は、ここから閉じられる。
    * 場のカードを押した瞬間に閉じてしまう誤操作を防ぐため、ワンクッション置いている */
   const foot = UI.info.closable
@@ -524,7 +552,7 @@ function panelBattle() {
       <span class="vs-d">防 ${CARD_BY_ID[D.unit] ? CARD_BY_ID[D.unit].n : '—'} <b>${D.def}</b></span>
     </div>`;
   return paint(head + askHTML(`${jpSide(CQCombat.openerSide(M))}の${role}オープンフェイズ`,
-    `場の<b>▶の付いたカード</b>を押すと、その階層を開きます。<br>
+    `▶の付いたカードの<b>左半分（▶側）を押すと開き</b>、<b>右半分（ⓘ側）を押すと中身を確認</b>できます。<br>
      下から上への一方通行です（開いた階層より下の▶は消えます）。クローズはできません。`, 'warn')
     + (UI.report ? reportHTML(UI.report) : ''),
     `<button class="btn ng" data-act="open-end">開かずに終える</button>`, true);
@@ -614,6 +642,7 @@ function doFlip(laneIdx, layer) {
   markLog();
   const r = CQTurn.reverseAction(M, laneIdx, [layer], { cont: true });
   UI.report = null;
+  if (UI.mode === 'info') UI.mode = 'idle';   /* 内容を見たあとに開いたら、結果の表示に戻す */
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
   step();
 }
@@ -716,8 +745,19 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
   if (!el) return;
   if (el.id === 'change-card') { if (canChange()) showChangeConfirm(); return; }
 
-  /* 戦闘中：▶付きのカードを押したら、その階層をそのまま開く */
-  if (UI.mode === 'battle' && el.classList.contains('openable')) {
+  /* 開けるカード（▶が付いている）は左右で操作を分ける。
+     左半分＝開く／右半分＝中身を確認する。開く前に内容を見たい、という要望への対応
+     （2026-08-24 本人の指定）。カードは正方形なので、見えている帯の中央で左右に割る */
+  /* 縮小表示中でも正しく効くよう、必ず getBoundingClientRect（変換後の座標）で判定する */
+  const splitCard = el.classList.contains('split');
+  let wantInfo = false;
+  if (splitCard) {
+    const r = el.getBoundingClientRect();
+    wantInfo = ev.clientX > r.left + r.width / 2;
+  }
+
+  /* 戦闘中：▶付きのカードの左半分を押したら、その階層をそのまま開く */
+  if (humanOpening() && el.classList.contains('openable') && !wantInfo) {
     markLog();
     const r = CQCombat.open(M, +el.dataset.layer);
     if (!r.ok) flash(r.reason);
@@ -728,8 +768,8 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     const i = +el.dataset.lane;
     if (UI.targets.indexOf(i) >= 0) return doAttack(UI.lane, i);
   }
-  /* メインステップ：▶の付いた裏向きカードを押したら、その階層を直接開く */
-  if (el.classList.contains('flippable')) {
+  /* メインステップ：▶の付いた裏向きカードの左半分を押したら、その階層を直接開く */
+  if (el.classList.contains('flippable') && !wantInfo) {
     return doFlip(+el.dataset.lane, +el.dataset.layer);
   }
   if (el.classList.contains('empty-unit')) return;
