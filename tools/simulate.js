@@ -23,14 +23,20 @@ const CQRng = require(path.join(root, 'js/engine/rng.js'));
 const S = require(path.join(root, 'js/engine/state.js'));
 const CQTurn = require(path.join(root, 'js/engine/turn.js'));
 const CQCombat = require(path.join(root, 'js/engine/combat.js'));
+const CQMagic = require(path.join(root, 'js/engine/effects/magic.js'));
 const CQAi = require(path.join(root, 'js/engine/ai.js'));
+const HOOKS = { onMagicOpen: CQMagic.onMagicOpen };
 
 /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚
  * 実装計画M4 v0.12（技能49種＋カース9種）で新たにターン終了時処理・召還特例・
- * 操作権反転を実装した 55, 167, 169, 181, 184, 186, 199 も混ぜてファズの対象にする */
+ * 操作権反転を実装した 55, 167, 169, 181, 184, 186, 199 も混ぜてファズの対象にする。
+ * M4 v0.13（魔法48種）では101〜148の全ＩＤをPOOLに加え、レベル・戦闘中×・強制中×などの
+ * ゲート判定も含めてファズの対象にする */
 const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 47, 61, 63, 65, 66, 71, 20, 22, 55,
   151, 152, 154, 158, 165, 167, 169, 171, 172, 173, 176, 177, 178, 179, 181, 183, 184, 186, 197, 199,
-  101, 104, 117, 143, 180];
+  101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120,
+  121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
+  141, 142, 143, 144, 145, 146, 147, 148, 180];
 function makeDeck(rng) {
   const deck = [];
   while (deck.length < 50) deck.push(POOL[rng.int(0, POOL.length - 1)]);
@@ -77,7 +83,8 @@ function runMatch(seed, maxTurns) {
     cards: CARD_BY_ID, rng: rng,
     selfDeck: makeDeck(rng), enemyDeck: makeDeck(rng),
     first: rng.next() < 0.5 ? 'self' : 'enemy',
-    opponentId: 101
+    opponentId: 101,
+    hooks: HOOKS
   });
   let guard = 0;
   while (!m.winner && m.turn < maxTurns && guard++ < 5000) {

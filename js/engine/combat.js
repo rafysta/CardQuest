@@ -237,12 +237,16 @@
   function onOpen(m, laneIndex, layer, ch) {
     const id = ch.card;
     if (id >= 1 && id <= 100) return reverseSummon(m, laneIndex, layer, ch);
-    // 魔法(101〜150)の発動は M4。無効(190)・抑制(120)によるガードもそちらで扱う
+    // 魔法(101〜150)の発動は js/engine/effects/magic.js（M4 v0.13）。無効(190)・抑制(120)による
+    // ガードもそちらで扱う。押収(118)・潜入(138)・妄執(148)のようにカード自身がこの階層から
+    // 移動・消滅する効果は、hook の戻り値 consumed で知らせてもらいカーソル制御に反映する
+    let consumed = false;
     if (m.hooks && typeof m.hooks.onMagicOpen === 'function') {
       const nullified = m.board.lanes[laneIndex].acc.nullify >= 1;
-      m.hooks.onMagicOpen(m, laneIndex, layer, id, { nullified: nullified });
+      const r = m.hooks.onMagicOpen(m, laneIndex, layer, id, { nullified: nullified });
+      consumed = !!(r && r.consumed);
     }
-    return { consumed: false, result: 'magic' };
+    return { consumed: consumed, result: 'magic' };
   }
 
   /** リバース召還（原作 EV0182 [C]）。潜行ユニットがオープンされて場に出る */
@@ -560,7 +564,7 @@
 
   const api = {
     canAttack, canTarget, attackTargets, declareAttack,
-    canOpenPhase, openableLayers, openerLane, openerSide, open, endOpen,
+    canOpenPhase, openableLayers, openerLane, openerSide, open, endOpen, onOpen,
     destroy, expireMagic, applyPendingCurse,
     canDeckAttack, deckAttack, destroyDeckCard, abortBattle
   };

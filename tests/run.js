@@ -22,6 +22,8 @@ const S = require(path.join(root, 'js/engine/state.js'));
 const CQStats = require(path.join(root, 'js/engine/stats.js'));
 const CQTurn = require(path.join(root, 'js/engine/turn.js'));
 const CQCombat = require(path.join(root, 'js/engine/combat.js'));
+const CQMagic = require(path.join(root, 'js/engine/effects/magic.js'));
+const HOOKS = { onMagicOpen: CQMagic.onMagicOpen };
 
 /* ---- ミニ・テストハーネス ---- */
 let pass = 0, fail = 0; const failures = [];
@@ -399,7 +401,7 @@ function newMatch(seed, opts) {
     cards: CARD_BY_ID, rng: CQRng.create(seed === undefined ? 1 : seed),
     selfDeck: mkDeck(50, [8, 101, 151, 180]),
     enemyDeck: mkDeck(50, [8, 101, 151, 180]),
-    first: 'self'
+    first: 'self', hooks: HOOKS
   }, opts || {}));
 }
 t('初手は6枚、以降は1枚', () => {
@@ -480,7 +482,7 @@ section('turn: メインステップ・リバース');
  * 原理的に成立しない（開いた瞬間にポインタが進み、そのターン中は同じ階層に触れられなくなる）。
  * ここでは「前のターンに開かれてポインタが0に戻っている」状態を直接作って検証する。 */
 function mkBattleBoard() {
-  const m = CQTurn.createMatch({ cards: CARD_BY_ID, rng: CQRng.create(1), selfDeck: [], enemyDeck: [], first: 'self' });
+  const m = CQTurn.createMatch({ cards: CARD_BY_ID, rng: CQRng.create(1), selfDeck: [], enemyDeck: [], first: 'self', hooks: HOOKS });
   m.phase = 'main';
   return m;
 }
@@ -596,7 +598,7 @@ section('combat: 攻撃宣言');
 function mkC(opts) {
   const m = CQTurn.createMatch(Object.assign({
     cards: CARD_BY_ID, rng: CQRng.create(1),
-    selfDeck: mkDeck(50, [8, 180]), enemyDeck: mkDeck(50, [8, 180]), first: 'self'
+    selfDeck: mkDeck(50, [8, 180]), enemyDeck: mkDeck(50, [8, 180]), first: 'self', hooks: HOOKS
   }, opts || {}));
   m.phase = 'main';
   return m;
@@ -1076,6 +1078,457 @@ t('傀儡：メインステップのリバースも新しい操作側だけが�
   eq(CQTurn.reverseAction(m, 0, [2]).ok, false, '元の持ち主はリバースできない');
   m.active = 'enemy';
   eq(CQTurn.reverseAction(m, 0, [2]).ok, true, '新しい操作側はリバースできる');
+});
+
+/* ================= M4 v0.13: 魔法48種 ================= */
+section('M4 v0.13: 魔法101〜110');
+
+t('101 憑依解除：ＣＨ１つを破壊する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(101)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].channels.length, 0, '他ユニットのＣＨが破壊される（自分自身は対象から除外）');
+});
+t('102 侵食：自分の山札から他ユニットのＣＨを埋め尽くす', () => {
+  const m = newMatch(300, { selfDeck: mkDeck(50, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(102)]);
+  m.board.lanes[1] = lane(8, []);
+  const deckBefore = m.players.self.deckCount;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].channels.length, 4, '他ユニットのＣＨが満杯になる');
+  eq(m.players.self.deckCount, deckBefore - 4, '自分の山札を4枚消費');
+});
+t('103 渇望：敵の山札から自分（このレーン）のＣＨを埋める', () => {
+  const m = newMatch(301, { enemyDeck: mkDeck(50, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(103)]);
+  const enemyDeckBefore = m.players.enemy.deckCount;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, 4, '自分のＣＨが満杯になる');
+  eq(m.players.enemy.deckCount, enemyDeckBefore - 3, '敵の山札を3枚消費（103自身が既に1枚使用済み）');
+});
+t('105 歪曲：ＣＨ位置を上下反転する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[1] = lane(8, [down(151), down(105)]);
+  CQTurn.reverseAction(m, 1, [2]);
+  eq(m.board.lanes[1].channels.map(c => c.card), [105, 151], 'ＣＨの並びが反転');
+});
+t('105 歪曲：原作バグ再現（レーン1・ＣＨ6枚のとき最上段が消滅する）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(151), down(151), down(105)]);
+  CQTurn.reverseAction(m, 0, [6]);
+  eq(m.board.lanes[0].channels.length, 5, '6枚が反転後5枚に減る（原作バグ再現）');
+});
+t('107 逃走：ＣＨ数4以下ならユニットを手札に戻す（戦闘中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(107)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq([m.board.lanes[0].unit, m.players.self.hand], [null, [8]], '手札に戻る');
+});
+t('107 逃走：ＣＨ数5以上では戻らない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(151), down(107)]);
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(m.board.lanes[0].unit, 13, 'そのまま残る');
+});
+t('108 強制開放：場のＣＨを全て強制オープンする（戦闘中×強制中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(108)]);
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[0].channels.every(c => c.up), true, '自陣のＣＨが全てオープン');
+  eq(m.board.lanes[3].channels[0].up, true, '敵陣のＣＨもオープン');
+});
+t('109 強制転回：場のＣＨを全て強制リバースする（戦闘中×強制中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151), down(151), down(109)]);
+  m.board.lanes[3] = lane(8, [up(151)]);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[0].channels[0].up, false, '表だったカードが裏になる');
+  eq(m.board.lanes[0].channels[1].up, true, '裏だったカードが表になる');
+  eq(m.board.lanes[3].channels[0].up, false, '敵陣のＣＨも反転する');
+});
+t('強制開放・強制転回は互いを連鎖的に起動しない（原作CE0355）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(109), down(108)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels[0].up, false, '109(強制中×)自身は強制開放で開かない');
+});
+t('110 閉門：自陣のオープン中のＣＨを全て同時にクローズする', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151), down(110)]);
+  m.board.lanes[3] = lane(8, [up(151)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels[0].up, false, '自陣のカードがクローズされる');
+  eq(m.board.lanes[3].channels[0].up, true, '敵陣は影響を受けない');
+});
+
+section('M4 v0.13: 魔法111〜120');
+t('111 変換：手札を全て捨て新たに3枚引く', () => {
+  const m = newMatch(302);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(111)]);
+  m.players.self.hand = [151, 152, 153];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.hand.length, 3, '手札が3枚になる');
+});
+t('112 抽出：手札を3枚得るがドロー毎にＬＰ1点を失う', () => {
+  const m = newMatch(303);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(112)]);
+  const lpBefore = m.players.self.lp;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.lp, lpBefore - 3, 'ＬＰを3点消費');
+});
+t('113 透視：ＣＨ2つの内容を確認できる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(113)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels[0].revealed, true, '裏向きのＣＨが確認される');
+});
+t('114 暗殺：敵マスター手札内のユニットを破壊＋ＬＰ1点', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(114)]);
+  m.players.enemy.hand = [1];
+  const lpBefore = m.players.enemy.lp;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq([m.players.enemy.hand, m.players.enemy.lp], [[], lpBefore - 1], '手札のユニットが破壊されＬＰも減る');
+});
+t('115 流行り病：手札の疫障(155)を表状態で付加する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(115)]);
+  m.players.self.hand = [155];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.some((c) => c.card === 155 && c.up), true, '疫障が表で付加される');
+  eq(m.players.self.hand, [], '手札から消える');
+});
+t('116 解析：レベル4でユニット1体のＣＨを全て確認する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(116)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [4]);
+  const anyRevealed = m.board.lanes[0].channels.some((c) => c.revealed) ||
+    m.board.lanes[1].channels.some((c) => c.revealed);
+  eq(anyRevealed, true, 'いずれかのユニットのＣＨが確認される');
+});
+t('116 解析：レベル4未満では発動しない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(116)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[1].channels[0].revealed, false, '発動レベル不足で効果なし');
+});
+t('118 押収：裏状態のＣＨ１つをこのレーンへ奪う', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(118)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, 2, '奪ったＣＨがこのレーンに追加される');
+  eq(m.board.lanes[1].channels.length, 0, '奪われた側は減る');
+});
+t('119 鎮静：場にある全てのＣＨをクローズする（戦闘中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151), down(119)]);
+  m.board.lanes[3] = lane(8, [up(151)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels[0].up, false, '自陣もクローズ');
+  eq(m.board.lanes[3].channels[0].up, false, '敵陣もクローズ');
+});
+
+section('M4 v0.13: 魔法121〜130');
+t('121 招来：潜行しているユニット1つを自分の場に召還する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(1), down(121)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  const summoned = m.board.lanes[1].unit === 1 || m.board.lanes[2].unit === 1;
+  eq(summoned, true, '潜行ユニットが空きレーンに召還される');
+});
+t('122 予見：山札を確認する（このエンジンでは山札は無順序のため効果はログのみ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(122)]);
+  const before = JSON.stringify(m.players.self.deck);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(JSON.stringify(m.players.self.deck), before, '山札の中身は変化しない');
+});
+t('123 発症：配置されたレベルと同数のＬＰを失う', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(123)]);
+  const lpBefore = m.players.self.lp;
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.players.self.lp, lpBefore - 3, '3階層目で3点のＬＰダメージ');
+});
+t('124 凍結：場にあるユニット1体を硬直させる（戦闘中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(124)]);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.log.some((l) => l.indexOf('凍結：') === 0 && l.indexOf('対象が無い') < 0), true, '硬直させる効果が発動する');
+});
+t('125 移送：最も高いレベルにあるＣＨを他ユニットへ移動する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(125)]);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels.length, 1, '元のレーンから1枚減る');
+  eq(m.board.lanes[1].channels.map((c) => c.card), [151], '移動先に付加される');
+});
+t('126 統合：ＣＨ付加の無いユニット1体をＣＨとして吸収する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(126)]);
+  m.board.lanes[1] = lane(1, []);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].unit, null, '吸収されたユニットは場から消える');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 1), true, 'そのユニットＩＤがＣＨとして付加される');
+});
+t('127 死の棘：手札の腐食(167)を表状態で付加する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(127)]);
+  m.players.self.hand = [167];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.some((c) => c.card === 167 && c.up), true, '腐食が表で付加される');
+});
+t('128 転写：手札の技能カードをこのカードの位置へ転送する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(128)]);
+  m.players.self.hand = [151];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.some((c) => c.card === 151 && !c.up), true, '技能カードが裏で付加される');
+  eq(m.players.self.hand, [], '手札から消える');
+});
+t('129 窃盗：敵マスターの手札1枚を奪う', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(129)]);
+  m.players.enemy.hand = [151];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq([m.players.enemy.hand, m.players.self.hand], [[], [151]], '手札が移動する');
+});
+t('130 漂着：山札から1枚を直に表状態で付加する', () => {
+  const m = newMatch(304);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(130)]);
+  const before = m.board.lanes[0].channels.length;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, before + 1, 'ＣＨが1枚増える');
+  eq(m.board.lanes[0].channels[m.board.lanes[0].channels.length - 1].up, true, '表状態で付加される');
+});
+
+section('M4 v0.13: 魔法131〜140');
+t('131 菊一文字：全ユニットの同レベルのＣＨを全て破壊する（戦闘中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(131)]);
+  m.board.lanes[1] = lane(8, [down(151), down(151)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels.length, 1, '自レーンの2階層目（131自身）も破壊される');
+  eq(m.board.lanes[1].channels.length, 1, '他レーンの2階層目も破壊される');
+});
+t('132 殲滅：レベル5で場の全ユニットを除去する（原作バグ再現：ＬＰダメージ等は発生しない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(151), down(132)]);
+  m.board.lanes[3] = lane(8, []);
+  const lpBefore = m.players.self.lp;
+  CQTurn.reverseAction(m, 0, [5]);
+  eq([m.board.lanes[0].unit, m.board.lanes[3].unit, m.players.self.lp], [null, null, lpBefore], '全ユニット除去・ＬＰダメージ無し');
+});
+t('132 殲滅：レベル5未満では発動しない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(132)]);
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[3].unit, 8, '発動レベル不足で他ユニットは残る');
+});
+t('132 殲滅：戦闘中は発動しない', () => {
+  // 防御側が通常の戦闘判定でも生き残るよう、攻撃力(600)を上回る防御力にしておく
+  const m = duel(13, [down(151), down(151), down(151), down(151), down(132)], 8, [down(180), down(180)]);
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 5);
+  eq(m.board.lanes[3].unit, 8, '戦闘中は不発（通常の戦闘判定でも防御側は生存する）');
+});
+t('133 呪爆：このカードをオープンさせたユニットを破壊する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(133)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].unit, null, 'ユニットごと破壊される');
+});
+t('134 呪念：オープンさせたマスターのＬＰ5点破壊（レベル3）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(134)]);
+  const lpBefore = m.players.self.lp;
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.players.self.lp, lpBefore - 5, 'オープンした側（自分）がＬＰ5点失う');
+});
+t('135 雷撃：防御力550以下のユニット1つを無条件に破壊する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(135)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].unit, null, '対象条件を満たすユニットが破壊される');
+});
+t('137 潜行爆弾：（簡略実装）敵の山札を1枚破壊する', () => {
+  const m = newMatch(305);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(137)]);
+  const before = m.players.enemy.deckCount;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.enemy.deckCount, before - 1, '敵の山札が1枚減る');
+});
+t('138 潜入：レベル3で他ユニットにチャンネルとして潜行する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(138)]);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[0].channels.some((c) => c.card === 138), false, '元のレーンから消える');
+  eq(m.board.lanes[1].channels.some((c) => c.card === 138), true, '別のユニットへ潜行する');
+});
+t('139 爆雷：敵マスターのＬＰを3点減らす（戦闘中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(139)]);
+  const lpBefore = m.players.enemy.lp;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.enemy.lp, lpBefore - 3, '敵のＬＰが3点減る');
+});
+t('140 時の渦：レベル4で手番側がもう1枚ドローする（簡略実装／戦闘中×強制中×）', () => {
+  const m = newMatch(306);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(140)]);
+  const handBefore = m.players.self.hand.length;
+  CQTurn.reverseAction(m, 0, [4]);
+  eq(m.players.self.hand.length, handBefore + 1, '手札が1枚増える');
+});
+
+section('M4 v0.13: 魔法141〜148');
+t('141 思念波：防御力550以下のユニットには不発（原作バグ再現：対象判定が551〜1000限定）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(141)]);
+  m.board.lanes[3] = lane(57, []);                    // 57 ネクロスフィア D500
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].unit, 57, '防御力550は範囲外のため不発');
+});
+t('141 思念波：防御力551〜1000のユニットには成立する（原作バグ再現：レベル制限も機能しない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(141)]);            // レベル6のはずが1階層目でも発動する
+  m.board.lanes[3] = lane(28, []);                    // 28 スネイルリキッド D600
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].unit, null, '防御力551〜1000のユニットは破壊される');
+});
+t('141 思念波：戦闘中は発動しない', () => {
+  // 防御側が通常の戦闘判定でも生き残るよう、攻撃力(600)を上回る防御力にしておく
+  // （28番はＣＨ数0で付加できないため、ここでは8番ピッグマンで代用する）
+  const m = duel(8, [down(141)], 8, [down(180), down(180)]);
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 1);
+  eq(m.board.lanes[3].unit, 8, '戦闘中は不発（通常の戦闘判定でも防御側は生存する）');
+});
+t('142 身転換：戦闘防御時、レベル3でユニット本体が入れ替わる', () => {
+  const m = duel(8, [], 13, [down(151), down(151), down(142)]);
+  CQCombat.declareAttack(m, 0, 3);                    // 攻撃側はＣＨが無いので自動的に防御側フェイズへ
+  CQCombat.open(m, 3);
+  eq([m.board.lanes[0].unit, m.board.lanes[3].unit], [13, 8], 'ユニット本体が入れ替わる');
+});
+t('142 身転換：メインステップのリバースでは発動しない（戦闘防御時限定）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(142)]);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[0].unit, 8, '戦闘外では入れ替わらない');
+});
+t('144 還元：全ＣＨを破壊しその分だけ手札を得る', () => {
+  const m = newMatch(307);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(151), down(144)]);
+  const handBefore = m.players.self.hand.length;
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels.length, 0, 'ＣＨが全て破壊される（自分自身も含む）');
+  eq(m.players.self.hand.length, handBefore + 2, '破壊した枚数ぶん手札を得る');
+});
+t('146 口寄せ：レベル3で山札から1枚を直接手札に得る（簡略実装）', () => {
+  const m = newMatch(308, { selfDeck: mkDeck(30, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(146)]);
+  const before = m.players.self.deckCount;
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.players.self.deckCount, before - 1, '山札が1枚減る');
+  eq(m.players.self.hand.indexOf(180) >= 0, true, '手札に加わる');
+});
+t('147 治癒：手札を全て捨てその枚数と同値のＬＰを回復する（戦闘中×）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(147)]);
+  m.players.self.hand = [151, 152, 153];
+  m.players.self.lp = 5;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq([m.players.self.hand, m.players.self.lp], [[], 8], '手札3枚を捨ててＬＰ+3');
+});
+t('147 治癒：戦闘中は発動しない', () => {
+  const m = duel(8, [down(147)], 8, []);
+  m.players.self.hand = [151];
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 1);
+  eq(m.players.self.hand, [151], '戦闘中は不発');
+});
+t('148 妄執：自爆し任意のユニットに憑依する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(148)]);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].unit, null, '自爆する');
+  eq(m.board.lanes[1].channels.some((c) => c.card === 148 && c.up), true, '別のユニットに憑依する');
+});
+t('148 妄執：原作バグ再現（レーン3(物理インデックス2)は救済チェックが働かない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[2] = lane(8, [up(179), down(148)]);
+  CQTurn.reverseAction(m, 2, [2]);
+  eq(m.board.lanes[2].unit, null, 'レーン3では救済があっても自爆する（バグ再現）');
+});
+t('148 妄執：レーン1では救済があれば自爆しない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(179), down(148)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].unit, 8, 'レーン1では救済が効く');
+});
+
+section('M4 v0.13: 魔法ディスパッチャの共通機構');
+t('継続効果型の魔法（爆殺・増幅・障壁・抑制・遮蔽・偽装・鏡身）はオープン時に例外なく動作する', () => {
+  [104, 106, 117, 120, 136, 143, 145].forEach(function (id) {
+    const m = mkBattleBoard();
+    m.board.lanes[0] = lane(8, [down(id)]);
+    const r = CQTurn.reverseAction(m, 0, [1]);
+    eq(r.ok, true, id + '：オープンできる');
+  });
+});
+t('無効(190)があると魔法は発動しない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(190), down(101)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[1].channels.length, 1, '無効化され他ユニットのＣＨは破壊されない');
+});
+t('連唱(174)があると魔法が2回発動する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(174), down(101)]);
+  m.board.lanes[1] = lane(8, [down(151), down(151), down(151)]);
+  const before = m.board.lanes[0].channels.length + m.board.lanes[1].channels.length;
+  CQTurn.reverseAction(m, 0, [2]);
+  const after = m.board.lanes[0].channels.length + m.board.lanes[1].channels.length;
+  eq(after, before - 2, '2回発動して2枚破壊される');
+});
+t('魔道書(186)は魔法の発動レベルも下げる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [up(186), up(186), down(132)]);   // 3階層目。要求Ｌｖ5-4=1で足りる
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[3].unit, null, '魔道書で要求レベルが下がり殲滅が発動する');
+});
+t('手札上限7枚を超えたら超過分は自動的に捨てられる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(107)]);
+  m.players.self.hand = [151, 152, 153, 154, 155, 156, 157];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.hand.length <= 7, true, '8枚になった分は自動的に捨てられる');
+});
+t('メインステップのリバースでも魔法発動・リバース召還が起きる（オープンが唯一の起動トリガー）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(1)]);              // 潜行しているユニット
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].unit === 1 || m.board.lanes[2].unit === 1, true, 'リバース召還が発生する');
 });
 
 /* ================= 結果 ================= */

@@ -15,9 +15,11 @@
 
   /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚に揃える。
    * 55, 167, 169, 181, 184, 186, 199 はM4 v0.12でターン終了時処理・召還特例・
-   * 操作権反転を実装した効果で、ここでもファズの対象にする */
+   * 操作権反転を実装した効果で、ここでもファズの対象にする。
+   * 101〜148 はM4 v0.13（魔法48種）でファズの対象に追加した */
   const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 55, 151, 152, 158, 165, 167, 169, 181, 184, 186, 199,
-    101, 104, 117, 143, 180];
+    101, 104, 107, 108, 109, 110, 113, 116, 117, 121, 123, 124, 130, 131, 133, 134, 135, 137,
+    139, 141, 142, 143, 144, 148, 180];
   function makeDeck() {
     const deck = [];
     while (deck.length < 50) deck.push(POOL[deck.length % POOL.length]);
@@ -84,7 +86,8 @@
     const m = CQTurn.createMatch({
       cards: CARD_BY_ID, rng,
       selfDeck: makeDeck(), enemyDeck: makeDeck(), first,
-      opponentId: 101                      // フリーユニット戦扱い＝戦利品の記録も確認できる
+      opponentId: 101,                     // フリーユニット戦扱い＝戦利品の記録も確認できる
+      hooks: { onMagicOpen: CQMagic.onMagicOpen }
     });
     let guard = 0;
     while (!m.winner && m.turn < maxTurns && guard++ < 4000) {

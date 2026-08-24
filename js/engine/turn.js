@@ -293,18 +293,38 @@
       if (ch.up && ch.card === 167 && lane.acc.seal === 0) return { ok: false, reason: '腐食は封印がないとクローズできません' };
       ptr = n;
     }
-    // 適用
-    layers.forEach(function (n) {
-      const ch = lane.channels[n - 1];
+    // 適用（下から順に。原作『オープンが唯一の起動トリガー』(仕様書§1.1)のとおり、
+    //   戦闘中のオープンだけでなくメインステップのリバースでも魔法発動・リバース召還が起きる
+    //   （EV0182 ＣＨオープン処理は EV0006 page7 のリバースからも呼ばれる）。
+    //   押収(118)・潜入(138)・妄執(148)のようにカード自身がこの階層から消える効果があるため、
+    //   それが起きた分だけ以降の階層番号を繰り下げて対応する */
+    let shift = 0;
+    for (let i = 0; i < layers.length; i++) {
+      const n = layers[i] - shift;
+      const cur = m.board.lanes[laneIndex];
+      if (!cur || cur.unit == null || n < 1 || n > cur.channels.length) break;   // ユニットが消えていたら打ち切り
+      const ch = cur.channels[n - 1];
+      if (!ch) break;
       ch.up = !ch.up;
-      if (ch.up) ch.revealed = true;                  // オープンした瞬間に内容が判明する（原作準拠）
-      lane.reversePtr = n;
-    });
-    lane.stiff = true;
+      let consumed = false;
+      if (ch.up) {
+        ch.revealed = true;                            // オープンした瞬間に内容が判明する（原作準拠）
+        recalc(m);
+        const eff = combatApi().onOpen(m, laneIndex, n, ch);   // ★M4：魔法発動・リバース召還
+        consumed = !!(eff && eff.consumed);
+        if (consumed) shift += 1;
+      }
+      const after = m.board.lanes[laneIndex];
+      if (!after || after.unit == null) break;         // 呪爆・妄執等でユニットごと消えた（そのレーンはもう無い）
+      after.reversePtr = n;
+      if (checkResult(m)) break;
+    }
+    const finalLane = m.board.lanes[laneIndex];
+    if (finalLane && finalLane.unit != null) finalLane.stiff = true;
     activePlayer(m).actedThisTurn = true;
     recalc(m);
     note(m, jp(side) + ' がレーン' + laneIndex + 'を' + layers.join(',') + '階層リバース');
-    return { ok: true };
+    return { ok: true, result: checkResult(m) };
   }
 
   /* ---- チェンジ（マリガン） --------------------------------------------------- */
