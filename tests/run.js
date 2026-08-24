@@ -474,6 +474,29 @@ t('相手の場にもチャネルできる（原作準拠）', () => {
   const r = CQTurn.channel(m, 0, m.players.enemy.hand.indexOf(101));// 敵が自分（プレイヤー）のレーン0へチャネル
   eq(r.ok, true, '敵→自レーンへのチャネル成立');
   eq(m.board.lanes[0].channels[0].mine, false, '所有者は置いた側（敵）');
+  eq(m.board.lanes[0].stiff, false, '相手のユニットにチャネルしても相手は行動済みにならない（仕様書§4.2）');
+});
+t('チャネルの硬直は「付加された自陣ユニット」だけ（2026-08-24 本人の指摘）', () => {
+  const m = newMatch(7, { selfDeck: mkDeck(50, [8, 101, 151]), enemyDeck: mkDeck(50, [8]) });
+  CQTurn.beginTurn(m);
+  CQTurn.summon(m, 0, m.players.self.hand.indexOf(8));
+  m.board.lanes[0].stiff = false;                                   // 召還硬直をリセットして検証
+  m.board.lanes[3] = lane(8, []);                                   // 敵ユニットを直接立てる
+  const own = CQTurn.channel(m, 0, 0);
+  eq([own.ok, m.board.lanes[0].stiff], [true, true], '自陣ユニットへのチャネルは硬直する');
+  const foe = CQTurn.channel(m, 3, 0);
+  eq([foe.ok, m.board.lanes[3].stiff, m.board.lanes[3].channeled],
+     [true, false, true], '敵ユニットへのチャネルは硬直しない（channeled印だけ付く）');
+});
+t('メインステップでは同じレーンに2回チャネルできない（敵レーン含む）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[3] = lane(8, []);
+  m.players.self.hand.push(180, 180);
+  m.players.self.handCount = m.players.self.hand.length;
+  const r1 = CQTurn.channel(m, 3, 0);
+  eq([r1.ok, m.board.lanes[3].stiff], [true, false], '1回目：成立・敵は硬直しない');
+  const r2 = CQTurn.channel(m, 3, 0);
+  eq(r2.ok, false, '2回目：同ターン同レーンは拒否');
 });
 
 section('turn: メインステップ・リバース');

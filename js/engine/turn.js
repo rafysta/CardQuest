@@ -227,7 +227,11 @@
     const acc = laneAcceptsChannel(m, laneIndex);
     if (!acc.ok) return acc;
     const lane = acc.lane;
+    // 硬直するのは「付加された自陣ユニット」だけ（仕様書§4.2。傀儡の反転は操作権で判定）。
+    // 相手のユニットへのチャネルで相手を行動不能にできてはいけない（2026-08-24 本人の指摘）
+    const targetIsOwn = S.controlSide(lane, laneIndex) === side;
     if (m.phase === 'main' && lane.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
+    if (m.phase === 'main' && lane.channeled) return { ok: false, reason: 'そのユニットにはこのターン既にチャネリングしています' };
     // 閉鎖(184)・カース98：チャネリング自体ができなくなる（押し込みも不可）。
     // 遮蔽(136)は cap=count にする点は同じだが押し込みは禁止しない（非対称。原作の確定事項#8）
     if (lane.acc.closedSkill >= 1) return { ok: false, reason: '閉鎖：チャネリングできません' };
@@ -242,7 +246,7 @@
       p.hand.splice(handIndex, 1);
       const removed = lane.channels[layer - 1];
       lane.channels[layer - 1] = { card: id, up: false, mine: side === 'self', revealed: false };
-      lane.stiff = true;
+      if (targetIsOwn) lane.stiff = true;             // 硬直は自陣ユニットだけ（仕様書§4.2）
       lane.channeled = true;                          // 原作 SW583〜：このターンはアタックできない
       p.actedThisTurn = true;
       syncHandCount(m);
@@ -255,7 +259,7 @@
     p.hand.splice(handIndex, 1);
     lane.channels.push({ card: id, up: false, mine: side === 'self', revealed: false });
     lane.count += 1;
-    lane.stiff = true;                                // 付加されたレーンのユニットは硬直（原作準拠）
+    if (targetIsOwn) lane.stiff = true;               // 硬直は「付加された自陣ユニット」だけ（仕様書§4.2）
     lane.channeled = true;                            // 原作 SW583〜：このターンはアタックできない
     p.actedThisTurn = true;
     syncHandCount(m);

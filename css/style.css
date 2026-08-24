@@ -279,11 +279,12 @@ img.curse-art{
   background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:14px;
 }
 .i-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
-/* 正方形（イラストが1024×1024の正方形なので、箱も正方形にして全体を見せる） */
+/* 正方形（イラストが1024×1024の正方形なので、箱も正方形にして全体を見せる）。
+ * 大きさは控えめにして、ほとんどのカードで情報パネルがスクロールなしで収まるようにする */
 .i-art{
-  width:100%;aspect-ratio:1/1;border-radius:10px;overflow:hidden;margin-bottom:10px;
+  width:150px;aspect-ratio:1/1;border-radius:10px;overflow:hidden;margin:0 auto 10px;
   display:flex;align-items:center;justify-content:center;
-  font-size:44px;font-weight:800;color:#ffffff55;border:2px solid #ffffff33;
+  font-size:34px;font-weight:800;color:#ffffff55;border:2px solid #ffffff33;
 }
 .i-art img{width:100%;height:100%;object-fit:cover}
 .i-art.U{background:linear-gradient(150deg,var(--u-1),var(--u-2))}
@@ -357,6 +358,7 @@ img.curse-art{
 /* 画面の高さが足りない端末では、右パネルを一回り小さくして
    確認の内容がスクロールせずに収まるようにする */
 @media (max-height:700px){
+  .i-art{width:120px}
   .c-art{width:48px;height:48px;flex:0 0 48px;font-size:16px}
   .c-nm{font-size:18px}
   .c-ef{font-size:14px;-webkit-line-clamp:2}
@@ -394,6 +396,11 @@ img.curse-art{
   font-size:17px;font-weight:800;line-height:1.35;
 }
 .act-btn:active{background:#24406e}
+
+/* 場のカードはドラッグ・タップで操作するため、ブラウザ標準のタッチスクロールに
+ * ジェスチャを奪われないようにする（奪われると pointercancel が起きて
+ * ドラッグ中のカードが浮いたまま固まる。Galaxy Tab 実機で発生した不具合） */
+#board .card{touch-action:none}
 
 /* 場のレーンの状態表示 */
 .lane.sel{outline:3px solid var(--own-c);outline-offset:4px;border-radius:10px}

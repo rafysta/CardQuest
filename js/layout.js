@@ -77,7 +77,6 @@ const UI = {
   info: null,     /* 表示中のカード */
   lane: null,     /* 選択中のレーン（アタック元・リバース対象） */
   layers: [],     /* リバースで選んだ階層 */
-  chip: null,     /* オープンフェイズで選んでいる階層 */
   pending: null,  /* 確認待ちの操作 */
   report: null    /* 直前に起きたこと（相手の手番・戦闘の経過） */
 };
@@ -121,7 +120,7 @@ function newMatch() {
     hooks: { onMagicOpen: CQMagic.onMagicOpen }   /* M4 v0.13：魔法48種の発動処理 */
   });
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
-  UI.chip = null; UI.pending = null; UI.report = null;
+  UI.pending = null; UI.report = null;
   step();
 }
 
@@ -154,7 +153,7 @@ function step() {
   if (lines.length) UI.report = lines;
   if (M.winner) UI.mode = 'over';
   else if (M.combat && !isAuto(CQCombat.openerSide(M))) {
-    if (UI.mode !== 'battle') { UI.mode = 'battle'; UI.chip = null; }
+    if (UI.mode !== 'battle') UI.mode = 'battle';
   } else if (UI.mode === 'battle' || UI.mode === 'over') UI.mode = 'idle';
   renderAll();
 }
@@ -512,39 +511,23 @@ function panelAttack() {
     ngBtn('やめる'), true);
 }
 
-/* --- 戦闘：オープンフェイズ --- */
+/* --- 戦闘：オープンフェイズ ---
+ * 開く操作は場の▶付きカードを直接押す（選択ＵＩはパネルに置かない。2026-08-24 本人の指定）。
+ * パネルは対戦カード・いまどちらのフェイズか・「開かずに終える」ボタンだけを出す */
 function panelBattle() {
   const c = M.combat;
-  const i = CQCombat.openerLane(M);
-  const ln = M.board.lanes[i];
   const A = M.board.lanes[c.attacker], D = M.board.lanes[c.defender];
   const role = c.opener === 'attacker' ? '攻撃側' : '防御側';
-  const layers = CQCombat.openableLayers(M);
   const head = `<div class="vs">
       <span class="vs-a">攻 ${CARD_BY_ID[A.unit] ? CARD_BY_ID[A.unit].n : '—'} <b>${A.atk}</b></span>
       <span class="vs-x">▶</span>
       <span class="vs-d">防 ${CARD_BY_ID[D.unit] ? CARD_BY_ID[D.unit].n : '—'} <b>${D.def}</b></span>
     </div>`;
-  let chips = '<div class="lay-row">';
-  for (let k = 1; k <= ln.channels.length; k++) {
-    const ok = layers.indexOf(k) >= 0;
-    chips += `<button class="lay-chip ${UI.chip === k ? 'on' : ''} ${ok ? '' : 'off'}"
-      ${ok ? `data-act="chip" data-layer="${k}"` : 'disabled'}>${k}</button>`;
-  }
-  chips += '</div>';
-  let detail = '<p class="i-t dim">開く階層を選んでください。クローズはできません。下から上への一方通行です。</p>';
-  let ok = '';
-  if (UI.chip) {
-    const ch = ln.channels[UI.chip - 1];
-    const known = chKnown(ch);
-    detail = known
-      ? miniCardHTML(CARD_BY_ID[ch.card])
-      : `<p class="i-t">${UI.chip} 階層目：相手が置いた裏向きのカードです。開くまで内容は分かりません。</p>`;
-    ok = `<button class="btn ok" data-act="open">${UI.chip} 階層目を開く</button>`;
-  }
   return paint(head + askHTML(`${jpSide(CQCombat.openerSide(M))}の${role}オープンフェイズ`,
-    `${chips}${detail}`, 'warn') + (UI.report ? reportHTML(UI.report) : ''),
-    ok + `<button class="btn ng" data-act="open-end">開かずに終える</button>`, true);
+    `場の<b>▶の付いたカード</b>を押すと、その階層を開きます。<br>
+     下から上への一方通行です（開いた階層より下の▶は消えます）。クローズはできません。`, 'warn')
+    + (UI.report ? reportHTML(UI.report) : ''),
+    `<button class="btn ng" data-act="open-end">開かずに終える</button>`, true);
 }
 
 /* ================= 確認 ================= */
@@ -653,7 +636,7 @@ function panelAct(act, data) {
   switch (act) {
     case 'ok': return doPending();
     case 'cancel':
-      UI.pending = null; UI.mode = 'idle'; UI.lane = null; UI.layers = []; UI.chip = null;
+      UI.pending = null; UI.mode = 'idle'; UI.lane = null; UI.layers = [];
       return renderAll();
     case 'new': return newMatch();
     case 'mode':
@@ -668,17 +651,8 @@ function panelAct(act, data) {
       return doPending();
     case 'close-ch':                                  /* 表の技能を閉じる（情報パネルのボタン） */
       return doFlip(+data.lane, +data.layer);
-    case 'chip': UI.chip = +data.layer; return renderPanel();
-    case 'open': {
-      markLog();
-      const r = CQCombat.open(M, UI.chip);
-      UI.chip = null;
-      if (!r.ok) flash(r.reason);
-      return step();
-    }
     case 'open-end':
       markLog();
-      UI.chip = null;
       CQCombat.endOpen(M);
       return step();
     case 'end-place':
@@ -736,22 +710,18 @@ function showCardInfo(el) {
 let drag = null;
 
 document.getElementById('screen-battle').addEventListener('pointerdown', (ev) => {
+  /* 前のドラッグが何らかの理由で残っていたら、まず片付ける（保険） */
+  if (drag) { clearDragVisuals(drag); drag = null; }
   const el = ev.target.closest('.card');
   if (!el) return;
   if (el.id === 'change-card') { if (canChange()) showChangeConfirm(); return; }
 
-  /* 戦闘中：開ける階層は、1度目のタップで選択（内容の下見）、同じカードをもう一度タップで開く */
+  /* 戦闘中：▶付きのカードを押したら、その階層をそのまま開く */
   if (UI.mode === 'battle' && el.classList.contains('openable')) {
-    const k = +el.dataset.layer;
-    if (UI.chip === k) {
-      markLog();
-      const r = CQCombat.open(M, k);
-      UI.chip = null;
-      if (!r.ok) flash(r.reason);
-      return step();
-    }
-    UI.chip = k;
-    return renderPanel();
+    markLog();
+    const r = CQCombat.open(M, +el.dataset.layer);
+    if (!r.ok) flash(r.reason);
+    return step();
   }
   /* 攻撃対象を選んでいる最中（行動メニュー経由）：対象を押したら即攻撃 */
   if (UI.mode === 'attack' && el.dataset.lane !== undefined) {
@@ -874,14 +844,27 @@ function chUnder(x, y, laneIdx) {
   return null;
 }
 
-document.addEventListener('pointerup', (ev) => {
-  if (!drag) return;
-  const d = drag; drag = null;
+/** ドラッグの見た目をすべて片付ける（光っていたレーン・階層・浮いているカード）。
+ * pointercancel（ＯＳにジェスチャを奪われた等）でも必ず呼ばれるので、
+ * カードが浮いたまま残ることはない */
+function clearDragVisuals(d) {
   document.querySelectorAll('.lane.droppable,.lane.over,.lane.target').forEach((l) =>
     l.classList.remove('droppable', 'over', 'target'));
   document.querySelectorAll('.card.ch.push-over').forEach((c) => c.classList.remove('push-over'));
-  if (d.ghost) d.ghost.remove();
-  d.el.classList.remove('dragging');
+  document.querySelectorAll('.ghost').forEach((g) => g.remove());   // 迷子のゴーストも含めて全部消す
+  if (d && d.el) d.el.classList.remove('dragging');
+}
+
+document.addEventListener('pointercancel', () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  clearDragVisuals(d);
+});
+
+document.addEventListener('pointerup', (ev) => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  clearDragVisuals(d);
 
   if (d.kind === 'unit') {
     if (!d.moved) {                            /* タップ＝行動メニュー */
