@@ -167,8 +167,16 @@
 
   /* ---- 配置ステップ ---------------------------------------------------------- */
 
-  /** 手札のユニットカードを自陣の空きレーンに召還する。召還Ｌｖ2以上は手札から直接出せない
-   * （原作カードバトル仕様書§3.1。魔道書・光臨による軽減はM4で対応） */
+  /** 場のどこかに光臨(199)／アッシュメイカー(55)固有能力があるか（陣営を問わない。
+   * 『能力値計算とチャンネル』確定事項#11 の V821..V826 は6レーン全体を見ている） */
+  function anyAdvent(m) {
+    return m.board.lanes.some(function (ln) { return ln.unit != null && ln.acc && ln.acc.advent >= 1; });
+  }
+
+  /** 手札のユニットカードを自陣の空きレーンに召還する。召還Ｌｖ2以上は手札から直接出せない。
+   * ただし光臨(199)があれば召還Ｌｖ3〜6のユニットに限り直接召還できる
+   * （召還Ｌｖ2はテキストと違い光臨でも直接召還できない＝原作の食い違いのまま。魔道書はメインステップの
+   * リバース召還にのみ効くため、この直接召還には効かない） */
   function summon(m, laneIndex, handIndex) {
     if (m.phase !== 'placement') return { ok: false, reason: '配置ステップではありません' };
     const side = m.active, p = activePlayer(m);
@@ -180,7 +188,9 @@
     const card = cardOf(m, id);
     if (!card || card.t !== 'U') return { ok: false, reason: 'ユニットカードではありません' };
     const us = S.unitStats(card);
-    if (us.lv > 1) return { ok: false, reason: '召還レベルが足りません（手札から直接召還できるのは召還Lv1のみ）' };
+    recalc(m);
+    const bypass = us.lv >= 3 && us.lv <= 6 && anyAdvent(m);
+    if (us.lv > 1 && !bypass) return { ok: false, reason: '召還レベルが足りません（手札から直接召還できるのは召還Lv1のみ）' };
     p.hand.splice(handIndex, 1);
     m.board.lanes[laneIndex] = S.makeLane(id, [], m.cards);
     m.board.lanes[laneIndex].stiff = true;           // 召還したユニットは硬直
@@ -214,6 +224,9 @@
     if (!acc.ok) return acc;
     const lane = acc.lane;
     if (m.phase === 'main' && lane.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
+    // 閉鎖(184)・カース98：チャネリング自体ができなくなる（押し込みも不可）。
+    // 遮蔽(136)は cap=count にする点は同じだが押し込みは禁止しない（非対称。原作の確定事項#8）
+    if (lane.acc.closedSkill >= 1) return { ok: false, reason: '閉鎖：チャネリングできません' };
     const id = p.hand[handIndex];
     if (id == null) return { ok: false, reason: '手札の指定が不正です' };
 
@@ -259,14 +272,14 @@
   function reverseAction(m, laneIndex, layers) {
     if (m.phase !== 'main') return { ok: false, reason: 'メインステップではありません' };
     const side = m.active;
-    const own = S.lanesOf(side);
-    if (own.indexOf(laneIndex) < 0) return { ok: false, reason: '自陣のユニットだけがリバースできます' };
+    if (laneIndex < 0 || laneIndex >= 6) return { ok: false, reason: '不正なレーンです' };
     const lane = m.board.lanes[laneIndex];
     if (lane.unit == null) return { ok: false, reason: 'ユニットが居ません' };
+    recalc(m);                                              // flipped（傀儡）・acc を最新化してから判定
+    // 傀儡(169)・カース92で操作権が反転していると、いまの操作側だけがリバースできる（M4）
+    if (S.controlSide(lane, laneIndex) !== side) return { ok: false, reason: '自陣のユニットだけがリバースできます' };
     if (lane.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
     if (!layers || !layers.length) return { ok: false, reason: '階層の指定がありません' };
-
-    recalc(m);
     if (lane.acc.lock >= 1) return { ok: false, reason: '固定／石化でリバースできません' };
 
     // 検証（全部通らなければ何も変更しない）
@@ -329,6 +342,32 @@
     recalc(m);
     // 表向き魔法カード(101〜150)の消滅（＋爆殺の自爆・放出）。停滞(151)があるレーンは残る
     combatApi().expireMagic(m);
+
+    // 腐食(167)・カース94/95（マッドシックル／デストレーダー由来）：付いているユニットの持ち主の
+    // ターン終了時に自滅する（通常攻撃ではないので戦利品・憑依は発生しない。救済があれば無効化される）
+    S.lanesOf(side).forEach(function (i) {
+      const ln = m.board.lanes[i];
+      if (ln.unit != null && (ln.acc.rot >= 1 || ln.acc.doom >= 1)) {
+        note(m, jp(side) + ' の ' + (m.cards[ln.unit] ? m.cards[ln.unit].n : ('#' + ln.unit)) + ' がターン終了時に自滅');
+        combatApi().destroy(m, i, { normalAttack: false });
+      }
+    });
+    if (checkResult(m)) { syncHandCount(m); return { ok: true, result: m.winner }; }
+
+    // 魂の門(181)：そのレーンにターン終了時、デッキから直に1枚をＣＨ付加する（空きがあれば）
+    S.lanesOf(side).forEach(function (i) {
+      const ln = m.board.lanes[i];
+      if (!ln || ln.unit == null || ln.acc.soulGate < 1) return;
+      recalc(m);
+      if (ln.cap <= ln.count) return;                 // 空きが無ければ得られない
+      const id = draw(m.rng, p);
+      if (id == null) return;                         // 山札切れ（敗北判定はこの後のチェックで拾う）
+      p.hand.pop();                                    // draw() は手札に積むので、そのまま外へ出す
+      ln.channels.push({ card: id, up: false, mine: side === 'self', revealed: false });
+      ln.count = ln.channels.length;
+      note(m, jp(side) + ' の魂の門：デッキから1枚付加');
+    });
+    recalc(m);
 
     // 未行動かつ手札5枚以下なら1枚補充
     if (!p.actedThisTurn && p.hand.length <= 5) {

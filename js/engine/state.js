@@ -22,6 +22,23 @@
   /** その陣営のレーン番号の配列 */
   function lanesOf(side) { return side === 'self' ? [0, 1, 2] : [3, 4, 5]; }
 
+  /** 傀儡(169)・カース92（傀儡化）で操作権が反転しているレーンの、実際の操作側（原作 SW568〜573）。
+   * 持ち主・被弾側もこれと同じ側に反転する（`03_combat` §7.3／`destroy()` の ownerSide 参照）。
+   * 物理的な場所（lane 0〜5）は動かさず、"どちらが操作できるか" だけを反転させる実装方針
+   * （実装計画M4）。 */
+  function controlSide(lane, laneIndex) {
+    const phys = sideOf(laneIndex);
+    return lane.flipped ? otherSide(phys) : phys;
+  }
+  /** side が操作できるレーン番号の配列（ユニットが居るレーンのみ。傀儡の反転を考慮） */
+  function controlledLanesOf(lanes, side) {
+    const res = [];
+    for (let i = 0; i < lanes.length; i++) {
+      if (lanes[i].unit != null && controlSide(lanes[i], i) === side) res.push(i);
+    }
+    return res;
+  }
+
   /** ユニットの素の数値（マスターズソウル(64)は固定値を持たないため既定値で埋める） */
   const MS_DEFAULT = { a: 200, d: 200, ch: 2, lv: 1 };
   function unitStats(card, override) {
@@ -104,7 +121,7 @@
     return makeBoard(lanes, (G.hand || []).length, G.enemyHand || 0);
   }
 
-  const api = { LANES, LAYERS, sideOf, otherSide, lanesOf,
+  const api = { LANES, LAYERS, sideOf, otherSide, lanesOf, controlSide, controlledLanesOf,
                 unitStats, emptyLane, makeLane, makeBoard, boardFromUI };
   global.CQState = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

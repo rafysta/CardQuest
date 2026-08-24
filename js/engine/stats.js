@@ -314,6 +314,13 @@
       if (ln.acc.resist >= 1 && ln.acc.fusion >= 1) ln.acc.fusion = 0;
     });
 
+    // (10b) 傀儡(169)・カース92（傀儡化）：表向きで付いていると操作権が反転する（M4）。
+    //   物理的な場所は動かさず、S.controlSide()/controlledLanesOf() が this を参照して
+    //   「誰が操作できるか」を解決する。持ち主・被弾側の反転は combat.js の destroy() 側で扱う
+    lanes.forEach(function (ln) {
+      ln.flipped = ln.unit != null && ln.acc.puppet >= 1;
+    });
+
     // (11) 陣営集計（霊陣）・(12) ユニット数など
     board.sideAgg = {};
     ['self', 'enemy'].forEach(function (side) {

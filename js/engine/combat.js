@@ -48,34 +48,38 @@
 
   /* ================= ① 攻撃宣言 ================= */
 
-  /** 攻撃側としての適格性（原作 EV0006 page7 → SW357） */
+  /** 攻撃側としての適格性（原作 EV0006 page7 → SW357）。
+   * 傀儡(169)・カース92で操作権が反転しているユニットは、物理的な場所に関わらず
+   * いまの操作側（S.controlSide）だけが動かせる（M4） */
   function canAttack(m, laneIndex) {
     if (m.winner) return { ok: false, reason: '対局は終了しています' };
     if (m.phase !== 'main') return { ok: false, reason: 'メインステップではありません' };
-    if (S.lanesOf(m.active).indexOf(laneIndex) < 0) return { ok: false, reason: '自陣のユニットだけが攻撃できます' };
+    if (laneIndex < 0 || laneIndex >= 6) return { ok: false, reason: '不正なレーンです' };
     const ln = m.board.lanes[laneIndex];
     if (ln.unit == null) return { ok: false, reason: 'ユニットが居ません' };
+    recalc(m);                                              // flipped（傀儡）・acc を最新化してから判定
+    if (S.controlSide(ln, laneIndex) !== m.active) return { ok: false, reason: '自陣のユニットだけが攻撃できます' };
     if (ln.channeled) return { ok: false, reason: 'このターンにチャネリングしたユニットは攻撃できません' };
     if (ln.stiff && !ln.extraAttack) return { ok: false, reason: 'そのユニットは行動済みです' };
-    recalc(m);
     if (ln.acc.vapor >= 1) return { ok: false, reason: '気化しているユニットは攻撃できません' };
     return { ok: true };
   }
 
-  /** 防御側としての適格性（原作 EV0006 page7 → SW358）。追跡は制限をすべて無視する */
+  /** 防御側としての適格性（原作 EV0006 page7 → SW358）。追跡は制限をすべて無視する。
+   * 対象になりうるのは「相手側が操作しているレーン」（傀儡の反転を考慮。M4） */
   function canTarget(m, atkLane, defLane) {
     const a = canAttack(m, atkLane);
     if (!a.ok) return a;
     const foeSide = other(m.active);
-    if (S.lanesOf(foeSide).indexOf(defLane) < 0) return { ok: false, reason: '相手のレーンではありません' };
+    if (defLane < 0 || defLane >= 6) return { ok: false, reason: '相手のレーンではありません' };
     const D = m.board.lanes[defLane];
     if (D.unit == null) return { ok: false, reason: 'そのレーンにユニットは居ません' };
+    if (S.controlSide(D, defLane) !== foeSide) return { ok: false, reason: '相手のレーンではありません' };
     const A = m.board.lanes[atkLane];
     recalc(m);
     if (A.acc.pursuit >= 1) return { ok: true };                       // 追跡：制限を無視
     if (D.acc.vapor >= 1) return { ok: false, reason: '気化しているユニットは攻撃対象になりません' };
-    const foes = S.lanesOf(foeSide).map(function (i) { return m.board.lanes[i]; })
-      .filter(function (l) { return l.unit != null; });
+    const foes = S.controlledLanesOf(m.board.lanes, foeSide).map(function (i) { return m.board.lanes[i]; });
     const hidden = foes.filter(function (l) { return l.acc.hide >= 1; }).length;
     if (D.acc.hide >= 1 && foes.length > hidden)
       return { ok: false, reason: '隠遁：隠遁していないユニットが居る間は狙えません' };
@@ -85,13 +89,14 @@
     return { ok: true };
   }
 
-  /** 攻撃できる相手レーンの一覧（ＵＩ・ＡＩ用） */
+  /** 攻撃できる相手レーンの一覧（ＵＩ・ＡＩ用）。全6レーンを走査する
+   * （傀儡で操作権が反転していると、相手のユニットが物理的には自陣側に居ることがあるため） */
   function attackTargets(m, atkLane) {
     const res = [];
     if (!canAttack(m, atkLane).ok) return res;
-    S.lanesOf(other(m.active)).forEach(function (i) {
+    for (let i = 0; i < 6; i++) {
       if (canTarget(m, atkLane, i).ok) res.push(i);
-    });
+    }
     return res;
   }
 
@@ -261,8 +266,10 @@
       note(m, '融合：' + nameOf(m, id) + ' は潜行したまま');
       return { consumed: false, result: 'fusion' };
     }
-    // (5) 召還レベル：配置階層 >= 召還レベル で成功
-    const lv = S.unitStats(m.cards[id]).lv;
+    // (5) 召還レベル：配置階層 >= 召還レベル で成功。
+    //     魔道書(186)はこのレーンに付いている枚数×2ぶん要求レベルを下げる（メインステップ中のみ有効。
+    //     『能力値計算とチャンネル』確定事項#12）
+    const lv = S.unitStats(m.cards[id]).lv - ln.acc.tome;
     if (layer < lv) {
       drop();
       note(m, nameOf(m, id) + ' は召還レベルが足りず破壊された');
@@ -504,8 +511,7 @@
     const a = canAttack(m, laneIndex);
     if (!a.ok) return a;
     const foeSide = other(m.active);
-    const foes = S.lanesOf(foeSide).map(function (i) { return m.board.lanes[i]; })
-      .filter(function (l) { return l.unit != null; });
+    const foes = S.controlledLanesOf(m.board.lanes, foeSide).map(function (i) { return m.board.lanes[i]; });
     const targetable = foes.filter(function (l) { return l.acc.vapor === 0; }).length;
     if (m.board.lanes[laneIndex].acc.leap >= 1) {
       if (foes.length <= 2) return { ok: true, byLeap: true };

@@ -937,6 +937,147 @@ t('デッキ攻撃で山札が尽きると敗北する', () => {
   eq([r.result, m.winner], ['self', 'self'], '山札切れで勝利');
 });
 
+/* ================= M4 v0.12: 技能49種＋カース9種の残り ================= */
+/* 集計（アキュムレータへの加算）と能力値計算・戦闘判定への反映は既にＭ1〜Ｍ3の過程で
+ * ほぼ全種実装済みだった。ここで追加するのは「オープンが唯一のトリガ」の原則から外れる
+ * 効果（ターン終了時自滅・召還レベルの特例・押し込みの禁止・操作権の反転）。 */
+
+section('M4: 閉鎖(184)・カース98');
+t('閉鎖があるとチャネリングできない（押し込みも不可）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(184), down(180)]);            // ＣＨ4のうち2枚使用・184は表
+  m.players.self.hand = [151];
+  const r = CQTurn.channel(m, 0, 0);
+  eq(r.ok, false, '空きがあっても閉鎖でチャネリング不可');
+});
+t('閉鎖で飽和扱いになっても押し込みには倒れない（明示的に拒否される）', () => {
+  const m = mkBattleBoard();
+  m.phase = 'placement';
+  m.board.lanes[0] = lane(8, [up(184), down(180), down(180), down(180)]);  // ちょうど4枚（cap相当）
+  m.players.self.hand = [151];
+  const r = CQTurn.channel(m, 0, 0, { layer: 2 });
+  eq(r.ok, false, '押し込みも拒否');
+});
+
+section('M4: 光臨(199)・魔道書(186)');
+t('光臨が無いと召還Ｌｖ3以上のユニットは手札から直接出せない', () => {
+  const m = newMatch(80, { selfDeck: mkDeck(50, [8]) });
+  CQTurn.beginTurn(m);
+  m.players.self.hand.push(13);                                 // 13 ニドヘッグ＝召還Ｌｖ3
+  const r = CQTurn.summon(m, 1, m.players.self.hand.indexOf(13));
+  eq(r.ok, false, '通常はＬｖ3を直接召還できない');
+});
+t('光臨（アッシュメイカーの固有能力）があれば召還Ｌｖ3〜6を直接召還できる', () => {
+  const m = newMatch(81, { selfDeck: mkDeck(50, [8]) });
+  CQTurn.beginTurn(m);
+  m.board.lanes[2] = lane(55, []);                              // 55 アッシュメイカー＝光臨
+  m.players.self.hand.push(13);
+  const r = CQTurn.summon(m, 1, m.players.self.hand.indexOf(13));
+  eq([r.ok, m.board.lanes[1].unit], [true, 13], '光臨で直接召還できる');
+});
+t('魔道書：レーンに付いている枚数×2ぶん、リバース召還の要求レベルが下がる', () => {
+  // 10 ヨルムンガンド＝召還Ｌｖ5。魔道書2枚（表）で要求Ｌｖ5-4=1まで下がり、3階層目でも成功する
+  const m = duel(8, [up(186), up(186), down(10)], 8, [down(180)]);
+  CQCombat.declareAttack(m, 0, 3);
+  const r = CQCombat.open(m, 3);
+  eq([r.effect.result, m.board.lanes[1].unit], ['summon', 10], '魔道書2枚でＬｖ1相当まで下がり召還成功');
+});
+t('魔道書が無ければ同じ階層でも召還レベル不足で破壊される', () => {
+  const m = duel(8, [down(180), down(180), down(10)], 8, [down(180)]);
+  CQCombat.declareAttack(m, 0, 3);
+  const r = CQCombat.open(m, 3);
+  eq(r.effect.result, 'level', '魔道書が無いと破壊される');
+});
+
+section('M4: 腐食(167)・カース94/95（ターン終了時自滅）');
+t('腐食：ターン終了時に自滅する（通常攻撃ではないので戦利品も憑依も発生しない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(167)]);                        // 8 ピッグマン＋腐食
+  m.players.self.actedThisTurn = true;                          // 空デッキでの自動補充を避ける
+  const lpBefore = m.players.self.lp;
+  CQTurn.endTurn(m);
+  eq([m.board.lanes[0].unit, m.players.self.lp, m.loot], [null, lpBefore - 4, []], '自滅・戦利品なし');
+});
+t('カース94/95（マッドシックル／デストレーダー由来）もターン終了時に自滅する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(94)]);
+  m.players.self.actedThisTurn = true;
+  CQTurn.endTurn(m);
+  eq(m.board.lanes[0].unit, null, 'カース94で自滅');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(8, [up(95)]);
+  m2.players.self.actedThisTurn = true;
+  CQTurn.endTurn(m2);
+  eq(m2.board.lanes[0].unit, null, 'カース95で自滅');
+});
+t('救済があれば腐食のターン終了時自滅も無効化される', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(167), up(179)]);               // 腐食＋救済
+  m.players.self.actedThisTurn = true;
+  CQTurn.endTurn(m);
+  eq(m.board.lanes[0].unit, 8, '救済で生存');
+});
+
+section('M4: 魂の門(181)');
+t('魂の門：ターン終了時にデッキから直にＣＨ付加を得る（空きがあれば）', () => {
+  const m = CQTurn.createMatch({ cards: CARD_BY_ID, rng: CQRng.create(90),
+    selfDeck: mkDeck(10, [180]), enemyDeck: [], first: 'self' });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [up(181)]);                        // ＣＨ4のうち1枚使用
+  m.players.self.actedThisTurn = true;
+  const deckBefore = m.players.self.deckCount;
+  CQTurn.endTurn(m);
+  eq(m.board.lanes[0].channels.length, 2, 'ＣＨが1枚増える');
+  eq(m.players.self.deckCount, deckBefore - 1, '山札を1枚消費');
+});
+t('魂の門：空きが無ければ得られない', () => {
+  const m = CQTurn.createMatch({ cards: CARD_BY_ID, rng: CQRng.create(91),
+    selfDeck: mkDeck(10, [180]), enemyDeck: [], first: 'self' });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [up(181), down(180), down(180), down(180)]);  // 飽和
+  m.players.self.actedThisTurn = true;
+  const deckBefore = m.players.self.deckCount;
+  CQTurn.endTurn(m);
+  eq([m.board.lanes[0].channels.length, m.players.self.deckCount], [4, deckBefore], '変化なし');
+});
+
+section('M4: 傀儡(169)・カース92（操作権の反転）');
+t('傀儡：物理的には自陣のユニットでも、操作権は相手に移る', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(169)]);                        // 傀儡が付いた自陣ユニット
+  m.board.lanes[1] = lane(8, []);                                // 通常の自陣ユニット
+  eq(CQCombat.canAttack(m, 0).ok, false, '元の持ち主はもう動かせない');
+  eq(CQCombat.canAttack(m, 1).ok, true, '傀儡されていないユニットは通常どおり');
+  m.active = 'enemy';
+  eq(CQCombat.canAttack(m, 0).ok, true, '操作権を得た側が動かせる');
+});
+t('傀儡：新しい操作側の視点では、傀儡された自軍ユニットが攻撃対象になる', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(169)]);
+  m.board.lanes[1] = lane(8, []);
+  eq(CQCombat.attackTargets(m, 1), [0], '傀儡された自軍ユニットが対象に含まれる');
+});
+t('傀儡：破壊時のＬＰダメージは、操作権を得た側が受ける', () => {
+  const m = mkC();
+  m.board.lanes[1] = lane(8, []);                                // 攻撃側：自分（操作権そのまま）
+  m.board.lanes[0] = lane(8, [up(169)]);                         // 防御側：物理的には自陣だが操作権は敵
+  const r = CQCombat.declareAttack(m, 1, 0);
+  eq([r.ok, m.players.enemy.lp, m.players.self.lp], [true, 6, 10], '被弾は操作側（敵）');
+});
+t('カース92（傀儡化）も同様に操作権を反転させる', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(92)]);
+  m.active = 'enemy';
+  eq(CQCombat.canAttack(m, 0).ok, true, 'カース92でも操作権が移る');
+});
+t('傀儡：メインステップのリバースも新しい操作側だけができる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(169), down(151)]);
+  eq(CQTurn.reverseAction(m, 0, [2]).ok, false, '元の持ち主はリバースできない');
+  m.active = 'enemy';
+  eq(CQTurn.reverseAction(m, 0, [2]).ok, true, '新しい操作側はリバースできる');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }
