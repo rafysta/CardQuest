@@ -205,8 +205,10 @@
   }
 
   /** 指定した階層をオープンする。カーソルより下の階層は選べない（下から上への一方通行）。
-   * 開いた瞬間に魔法（M4でフック）とリバース召還が起動する。 */
-  function open(m, layer) {
+   * 開いた瞬間に魔法（M4でフック）とリバース召還が起動する。
+   * opts.choice … 対話的な対象選択に対応した魔法（101憑依解除など）向けに、レイアウト側が
+   * 事前に選んでおいた対象 {lane, idx} を渡せる（2026-08-24 本人の指定）。 */
+  function open(m, layer, opts) {
     if (!m.combat || (m.combat.phase !== 'attackerOpen' && m.combat.phase !== 'defenderOpen'))
       return { ok: false, reason: 'オープンフェイズではありません' };
     if (openableLayers(m).indexOf(layer) < 0) return { ok: false, reason: 'その階層は開けません' };
@@ -220,7 +222,7 @@
     note(m, jp(openerSide(m)) + ' が ' + layer + '階層目の ' + nameOf(m, ch.card) + ' をオープン');
     recalc(m);
 
-    const eff = onOpen(m, laneIndex, layer, ch);
+    const eff = onOpen(m, laneIndex, layer, ch, opts);
 
     // 階層が1枚減ったときはカーソルを進めない（上のカードが1段落ちてくるので相殺される）
     if (!eff.consumed) c.cursor = layer + 1;
@@ -236,16 +238,26 @@
   }
 
   /** オープンによる割り込み処理（原作 EV0182 ＣＨオープン処理） */
-  function onOpen(m, laneIndex, layer, ch) {
+  function onOpen(m, laneIndex, layer, ch, opts) {
     const id = ch.card;
-    if (id >= 1 && id <= 100) return reverseSummon(m, laneIndex, layer, ch);
+    if (id >= 1 && id <= 100) {
+      // ユニット固有能力「開：」型（M4 v0.14）：リバース召還より前に解決し、無効・抑制を迂回する
+      // （カードバトル仕様書§10.2）。js/engine/effects/units.js の B_HANDLERS に無いＩＤ
+      // （通常ユニット・カース）は onUnitOpen() が即 {consumed:false} を返すだけで実質ノーオペ
+      if (m.hooks && typeof m.hooks.onUnitOpen === 'function') {
+        const r = m.hooks.onUnitOpen(m, laneIndex, layer, id) || {};
+        if (r.consumed) return { consumed: true, result: 'unitAbility' };
+      }
+      return reverseSummon(m, laneIndex, layer, ch);
+    }
     // 魔法(101〜150)の発動は js/engine/effects/magic.js（M4 v0.13）。無効(190)・抑制(120)による
     // ガードもそちらで扱う。押収(118)・潜入(138)・妄執(148)のようにカード自身がこの階層から
     // 移動・消滅する効果は、hook の戻り値 consumed で知らせてもらいカーソル制御に反映する
     let consumed = false;
     if (m.hooks && typeof m.hooks.onMagicOpen === 'function') {
       const nullified = m.board.lanes[laneIndex].acc.nullify >= 1;
-      const r = m.hooks.onMagicOpen(m, laneIndex, layer, id, { nullified: nullified });
+      const r = m.hooks.onMagicOpen(m, laneIndex, layer, id,
+        { nullified: nullified, choice: opts && opts.choice });
       consumed = !!(r && r.consumed);
     }
     return { consumed: consumed, result: 'magic' };

@@ -17,6 +17,10 @@
  * プレイヤーが選ぶが、本実装ではまず「合法な対象からエンジンが選ぶ」（m.rng 経由）
  * 形で全カードを機能させることを優先した。対話的な対象選択ＵＩは今後の課題として
  * CardQuest_開発メモ.md に記載する。
+ * （2026-08-24 追記）101憑依解除だけは本人の指定で対話的な対象選択に対応した。
+ * 呼び出し元が opts.choice = {lane, idx} を渡すと、その対象が合法なら優先して使う
+ * （不正・未指定・連唱2回目で対象が既に無い場合は従来どおり m.rng で自動選択）。
+ * 他のカードも同じ仕組み（ctx.choice）で今後拡張できる。
  *
  * 明確にバグと分析されているカード（105歪曲・132殲滅・141思念波・148妄執）は、
  * 実装計画の既定方針（『明確なバグは直すが、個々のカードの原作特有の食い違いは
@@ -118,9 +122,17 @@
 
   function h101(m, ctx) {                                     // 憑依解除：ＣＨ１つを破壊
     // 発動中の自分自身は対象から除く（連唱で2回発動したときに自壊して不整合になるのを避ける）
-    const t = pick(m, allChannels(m, function (ch, lane, idx) {
+    const pool = allChannels(m, function (ch, lane, idx) {
       return !(lane === ctx.laneIndex && idx === ctx.layer - 1);
-    }));
+    });
+    // 本人操作時は破壊対象を選べる（2026-08-24 本人の指定）。ctx.choice はレイアウト側が
+    // 発動前に選んでおいた {lane, idx}。連唱で2回目が発動するときは1回目の対象が既に
+    // 破壊済みで pool に無いので、自動的に pick() へフォールバックする
+    let t = null;
+    if (ctx.choice) {
+      t = pool.find(function (c) { return c.lane === ctx.choice.lane && c.idx === ctx.choice.idx; }) || null;
+    }
+    if (!t) t = pick(m, pool);
     if (!t) { note(m, '憑依解除：対象が無い'); return; }
     const removed = dropChannelAt(m, t.lane, t.idx);
     recalc(m);
@@ -619,7 +631,7 @@
       if (!ln || ln.unit == null) break;
       const ch = ln.channels[layer - 1];
       if (!ch || ch.card !== cardId) break;               // 既に自ら移動・消滅していたら2回目は発動しない
-      const r = handler(m, { laneIndex: laneIndex, layer: layer, cardId: cardId, opener: opener, caster: caster }) || {};
+      const r = handler(m, { laneIndex: laneIndex, layer: layer, cardId: cardId, opener: opener, caster: caster, choice: o.choice }) || {};
       if (r.consumed) consumed = true;
       if (Turn.checkResult(m)) break;
       if (consumed) break;

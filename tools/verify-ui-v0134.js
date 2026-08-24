@@ -38,6 +38,18 @@ const URL = 'http://localhost:8321/index.html';
       new MutationObserver(scan).observe(document.documentElement,
         { subtree: true, attributes: true, childList: true });
       setInterval(scan, 40);
+      // 憑依解除(101)が乱数で出て「破壊する対象を選ぶ」ＵＩ（2026-08-24 追加）が
+      // 出た場合、このファズ用タップだけでは選べず先に進めなくなるため、
+      // 出たら自動で先頭候補をタップして進める（本来は人が選ぶ操作）
+      setInterval(() => {
+        if (typeof UI === 'undefined' || UI.mode !== 'pick-destroy') return;
+        const el = document.querySelector('#board .card.ch.pick');
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent('pointerdown', {
+          bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + 14
+        }));
+      }, 80);
     });
   });
   await page.goto(URL);

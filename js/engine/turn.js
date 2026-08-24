@@ -114,6 +114,11 @@
     return (typeof require === 'function' && typeof window === 'undefined')
       ? require('./combat.js') : global.CQCombat;
   }
+  /** ユニット固有能力モジュール（M4 v0.14）。同じく呼ぶ瞬間に解決する */
+  function unitsApi() {
+    return (typeof require === 'function' && typeof window === 'undefined')
+      ? require('./effects/units.js') : global.CQUnits;
+  }
   function note(m, msg) { m.log.push(msg); }
 
   /** カードオブジェクトを引く（マスターズソウルは呼び出し側が opts.msEquip を渡すこと） */
@@ -334,7 +339,7 @@
       if (ch.up) {
         ch.revealed = true;                            // オープンした瞬間に内容が判明する（原作準拠）
         recalc(m);
-        const eff = combatApi().onOpen(m, laneIndex, n, ch);   // ★M4：魔法発動・リバース召還
+        const eff = combatApi().onOpen(m, laneIndex, n, ch, opts);   // ★M4：魔法発動・リバース召還
         consumed = !!(eff && eff.consumed);
         if (consumed) shift += 1;
       }
@@ -366,6 +371,41 @@
 
   /** 手札をすべて捨てて同じ枚数を引き直す。実装計画の house rule：毎バトル1回・LP1消費・
    * 自分の最初のターンの配置ステップでのみ（原作のアイテム制は廃止し常設化） */
+  /* ---- メインステップ：特殊行動（Ｃ型ユニット固有能力。M4 v0.14） ------------------------
+   * 『カードバトル仕様書』§10.1：自陣のユニット本体を選んで実行する4つ目の主行動
+   * （リバース／アタック／チャネルと同格）。Ｃ型固有能力（14体のみ）を持つユニットだけが使える。
+   * 条件：硬直していない・そのターンまだリバース／チャネリングしていない。
+   * 実行すると対象の有無に関わらず必ず硬直する（＝1ユニット1ターン1回。原作準拠）。 */
+
+  /** そのレーンがいま特殊行動を実行できるか */
+  function canSpecialAction(m, laneIndex) {
+    if (m.phase !== 'main') return { ok: false, reason: 'メインステップではありません' };
+    const lane = m.board.lanes[laneIndex];
+    if (!lane || lane.unit == null) return { ok: false, reason: 'ユニットが居ません' };
+    if (!unitsApi().C_TYPE[lane.unit]) return { ok: false, reason: 'このユニットに特殊行動はありません' };
+    if (S.controlSide(lane, laneIndex) !== m.active) return { ok: false, reason: '自陣のユニットだけが行動できます' };
+    if (lane.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
+    if (lane.channeled) return { ok: false, reason: 'このターンにチャネリングしたユニットは特殊行動できません' };
+    if (lane.acc && lane.acc.lock >= 1) return { ok: false, reason: '固定／石化で行動できません' };
+    return { ok: true };
+  }
+
+  /** 特殊行動を実行する。対象が居なくても行動は消費される（仕様書§10.1）。 */
+  function specialAction(m, laneIndex) {
+    const chk = canSpecialAction(m, laneIndex);
+    if (!chk.ok) return chk;
+    finalizeReverse(m, null);                          // 別の行動を始めた＝継続中のリバースを確定
+    recalc(m);
+    const lane = m.board.lanes[laneIndex];
+    const side = S.controlSide(lane, laneIndex);
+    unitsApi().doSpecialAction(m, laneIndex, side);
+    const after = m.board.lanes[laneIndex];
+    if (after && after.unit != null) after.stiff = true;   // 対象が無くても行動を消費（硬直）する
+    activePlayer(m).actedThisTurn = true;
+    recalc(m);
+    return { ok: true, result: checkResult(m) };
+  }
+
   function change(m) {
     if (m.phase !== 'placement') return { ok: false, reason: 'いまは使えません' };
     const side = m.active, p = activePlayer(m);
@@ -457,6 +497,7 @@
     HAND_CAP, FIRST_DRAW,
     createDeck, draw, createPlayer, createMatch,
     beginTurn, discardCard, summon, channel, endPlacement, reverseAction, finalizeReverse,
+    canSpecialAction, specialAction,
     change, endTurn,
     checkResult
   };

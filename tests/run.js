@@ -23,7 +23,8 @@ const CQStats = require(path.join(root, 'js/engine/stats.js'));
 const CQTurn = require(path.join(root, 'js/engine/turn.js'));
 const CQCombat = require(path.join(root, 'js/engine/combat.js'));
 const CQMagic = require(path.join(root, 'js/engine/effects/magic.js'));
-const HOOKS = { onMagicOpen: CQMagic.onMagicOpen };
+const CQUnits = require(path.join(root, 'js/engine/effects/units.js'));
+const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
 /* ---- ミニ・テストハーネス ---- */
 let pass = 0, fail = 0; const failures = [];
@@ -876,6 +877,15 @@ t('オープンは下から上への一方通行（飛ばすのは可・戻る�
   eq(CQCombat.open(m, 1).ok, false, '1階層目には戻れない');
   eq(CQCombat.openableLayers(m), [3], '残るのは3階層目だけ');
 });
+t('CQCombat.open：opts.choiceで憑依解除(101)の破壊対象を指定できる（2026-08-24 対話的選択）', () => {
+  const m = duel(8, [down(101)], 1, [down(151), down(152)]);
+  CQCombat.declareAttack(m, 0, 3);
+  eq(CQCombat.openerLane(m), 0, '攻撃側（レーン0）から開く');
+  const r = CQCombat.open(m, 1, { choice: { lane: 3, idx: 1 } });
+  eq(r.ok, true, 'オープンできる');
+  eq(m.board.lanes[3].channels.length, 1, '候補2枚のうち1枚だけ破壊される');
+  eq(m.board.lanes[3].channels[0].card, 151, '指定した方（idx1＝152）が破壊され、151が残る');
+});
 t('オープンフェイズでクローズはできない（表のカードは選べない）', () => {
   const m = duel(8, [up(151), down(180)], 8, []);
   CQCombat.declareAttack(m, 0, 3);
@@ -1180,6 +1190,22 @@ t('101 憑依解除：ＣＨ１つを破壊する', () => {
   m.board.lanes[1] = lane(8, [down(151)]);
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.board.lanes[1].channels.length, 0, '他ユニットのＣＨが破壊される（自分自身は対象から除外）');
+});
+t('101 憑依解除：opts.choiceで指定した対象を優先して破壊する（2026-08-24 対話的選択）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(101)]);
+  m.board.lanes[1] = lane(8, [down(151), down(151)]);      // 候補が2枚（idx 0, 1）
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 1, idx: 1 } });
+  eq(m.board.lanes[1].channels.length, 1, '候補2枚のうち1枚だけ破壊される');
+  eq(m.board.lanes[1].channels[0].card, 151, '指定した方（idx1）が破壊され、idx0が残る');
+});
+t('101 憑依解除：choiceが不正な対象（既に無い等）なら自動選択にフォールバックする', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(101)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  const r = CQTurn.reverseAction(m, 0, [1], { choice: { lane: 9, idx: 9 } });
+  eq(r.ok, true, 'エラーにならない');
+  eq(m.board.lanes[1].channels.length, 0, '不正な指定は無視して合法な対象が自動で破壊される');
 });
 t('102 侵食：自分の山札から他ユニットのＣＨを埋め尽くす', () => {
   const m = newMatch(300, { selfDeck: mkDeck(50, [180]) });
@@ -1620,6 +1646,214 @@ t('メインステップのリバースでも魔法発動・リバース召還�
   m.board.lanes[0] = lane(8, [down(1)]);              // 潜行しているユニット
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.board.lanes[1].unit === 1 || m.board.lanes[2].unit === 1, true, 'リバース召還が発生する');
+});
+
+section('M4 v0.14: ユニット固有能力「開：」型（10体）');
+t('1 ミルファイター：開：クローズ×１', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151)]);
+  m.board.lanes[1] = lane(8, [down(1)]);
+  CQTurn.reverseAction(m, 1, [1]);
+  eq(m.board.lanes[0].channels[0].up, false, '技能ＣＨがクローズされる');
+});
+t('16 レッドレックス：開：Ａ６００火弾（Ｄ600以下の敵ユニットを破壊）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(16)]);
+  m.board.lanes[3] = lane(8, []);                     // Ｄ450＜＝600
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].unit, null, '敵ユニットが破壊される');
+});
+t('23 アンフィビアス：開：手札２枚入手', () => {
+  const m = newMatch(500, { selfDeck: mkDeck(50, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(23)]);
+  const before = m.players.self.hand.length;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.hand.length, before + 2, '手札が2枚増える');
+});
+t('24 シニスターセラフ：開：ＣＨ×１破壊（自分自身は対象から除く）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(24)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].channels.length, 0, '他ユニットのＣＨが破壊される');
+});
+t('25 スケープゴート：開：摩り替り（簡略実装：手札に分身を得る）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(25)]);
+  const before = m.players.self.hand.length;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.hand.length, before + 1, '手札が1枚増える');
+  eq(m.players.self.hand[m.players.self.hand.length - 1], 25, '増えたのは25自身の分身');
+});
+t('27 メガゾエア：開：クローズ×１', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151)]);
+  m.board.lanes[1] = lane(8, [down(27)]);
+  CQTurn.reverseAction(m, 1, [1]);
+  eq(m.board.lanes[0].channels[0].up, false, '技能ＣＨがクローズされる');
+});
+t('29 ステルスゴブリン：開：敵手札×１奪取', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(29)]);
+  m.players.enemy.hand = [180];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.enemy.hand.length, 0, '相手の手札が減る');
+  eq(m.players.self.hand.indexOf(180) >= 0, true, '自分の手札に加わる');
+});
+t('30 イビルアイ：開：呪爆能力（ホストのレーンごと破壊される）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(30)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].unit, null, '呪爆でレーンが破壊される');
+});
+t('31 ドライアード：開：ＬＰ＋１回復', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(31)]);
+  m.players.self.lp -= 5;
+  const before = m.players.self.lp;
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.lp, before + 1, 'ＬＰが1回復する');
+});
+t('40 スピアバード：開：ＣＨ×１確認', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(40)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].channels[0].revealed, true, '裏向きのＣＨが確認される');
+});
+
+section('M4 v0.14: ユニット固有能力「特：」型（14体）');
+t('特殊行動：Ｃ型を持たないユニットは実行できない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, []);
+  eq(CQTurn.canSpecialAction(m, 0).ok, false, '通常ユニットは不可');
+});
+t('特殊行動：硬直・チャネリング済み・敵陣・固定石化では実行できない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(3, []);
+  m.board.lanes[0].stiff = true;
+  eq(CQTurn.canSpecialAction(m, 0).ok, false, '硬直中は不可');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(3, []);
+  m2.board.lanes[0].channeled = true;
+  eq(CQTurn.canSpecialAction(m2, 0).ok, false, 'このターンにチャネリングしたユニットは不可');
+  const m3 = mkBattleBoard();
+  m3.board.lanes[3] = lane(3, []);
+  eq(CQTurn.canSpecialAction(m3, 3).ok, false, '敵陣のユニットは不可（自陣のみ）');
+});
+t('3 ダーククラウド：特：「石化」付加', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(3, []);
+  m.board.lanes[3] = lane(8, []);
+  const r = CQTurn.specialAction(m, 0);
+  eq(r.ok, true, '実行できる');
+  eq(m.board.lanes[3].channels.some(c => c.card === 168), true, '石化(168)が付加される');
+  eq(m.board.lanes[0].stiff, true, '実行後は硬直する');
+});
+t('6 ヴェノムスピナー：特：「疫障」付加', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(6, []);
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[3].channels.some(c => c.card === 155), true, '疫障(155)が付加される');
+});
+t('9 ディゾルバー：特：ＬＰ消費ＣＨ１破壊', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(9, []);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  const lpBefore = m.players.self.lp;
+  CQTurn.specialAction(m, 0);
+  eq(m.players.self.lp, lpBefore - 1, 'ＬＰを1点消費');
+  eq(m.board.lanes[1].channels.length, 0, 'ＣＨが破壊される');
+});
+t('10 ヨルムンガンド：特：Ａ５５０雷撃', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(10, []);
+  m.board.lanes[3] = lane(8, []);                     // Ｄ450＜＝550
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[3].unit, null, '敵ユニットが破壊される');
+});
+t('32 キャノンタートル：特：Ａ５５０雷撃', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(32, []);
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[3].unit, null, '敵ユニットが破壊される');
+});
+t('34 サイコダイバー：特：潜入能力（自分が他ユニットの裏向きＣＨとして潜行する）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(34, []);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[0].unit, null, '元のレーンは空になる');
+  eq(m.board.lanes[1].channels.some(c => c.card === 34 && c.up === false), true, '潜行先へ裏向きで加わる');
+});
+t('35 ティンバータンク：特：自己ＣＨシャッフル', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(35, [down(151), down(152), down(153), down(154)]);
+  const before = m.board.lanes[0].channels.map(c => c.card).slice().sort();
+  CQTurn.specialAction(m, 0);
+  const after = m.board.lanes[0].channels.map(c => c.card).slice().sort();
+  eq(after, before, 'ＣＨの中身（多重集合）は変わらない');
+});
+t('36 ヘルフライアー：特：Ａ５５０烈風', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(36, []);
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[3].unit, null, '敵ユニットが破壊される');
+});
+t('38 デモングローブ：特：手札＋１入手', () => {
+  const m = newMatch(501, { selfDeck: mkDeck(50, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(38, []);
+  const before = m.players.self.hand.length;
+  CQTurn.specialAction(m, 0);
+  eq(m.players.self.hand.length, before + 1, '手札が1枚増える');
+});
+t('44 ブレインサッカー：特：クローズ×１', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(44, []);
+  m.board.lanes[1] = lane(8, [up(151)]);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[1].channels[0].up, false, '技能ＣＨがクローズされる');
+});
+t('45 デザートニードル：特：「腐食」付加', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(45, []);
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[3].channels.some(c => c.card === 167), true, '腐食(167)が付加される');
+});
+t('48 スカウター：特：ＣＨ×１確認', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(48, []);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[1].channels[0].revealed, true, '裏向きのＣＨが確認される');
+});
+t('49 シャドウハンズ：特：ＣＨ×１確認', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(49, []);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[1].channels[0].revealed, true, '裏向きのＣＨが確認される');
+});
+t('70 ポルターガイスト：特：妄執・憑依：D-150（自爆して他ユニットにカース96を付ける）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(70, []);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[0].unit, null, '自爆してレーンが空になる');
+  eq(m.board.lanes[1].channels.some(c => c.card === 96), true, 'カース96（防御力-150）が憑依する');
+});
+t('特殊行動は対象が無くても行動を消費する（仕様書§10.1）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(3, []);                     // 石化を付ける敵ユニットが盤面に無い
+  const r = CQTurn.specialAction(m, 0);
+  eq(r.ok, true, '対象が無くても失敗しない');
+  eq(m.board.lanes[0].stiff, true, '対象が無くても硬直する（行動を消費）');
 });
 
 /* ================= 結果 ================= */

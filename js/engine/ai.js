@@ -69,9 +69,16 @@
         return true;
       }
       if (Combat.canDeckAttack(m, i).ok) { Combat.deckAttack(m, i); return true; }
+      // 特殊行動（Ｃ型固有能力。M4 v0.14）：持っていれば半々でリバースより先に試す
+      if (Turn.canSpecialAction(m, i).ok && m.rng.next() < 0.5) {
+        if (Turn.specialAction(m, i).ok) return true;
+      }
       const lane = m.board.lanes[i];
       if (!lane.stiff && lane.reversePtr < lane.channels.length) {
         if (Turn.reverseAction(m, i, [lane.reversePtr + 1]).ok) return true;
+      }
+      if (Turn.canSpecialAction(m, i).ok) {
+        if (Turn.specialAction(m, i).ok) return true;
       }
     }
     return false;

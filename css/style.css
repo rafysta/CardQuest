@@ -453,6 +453,14 @@ img.curse-art{
 /* 押し込み先の階層（一杯のレーンへドラッグ中、ポインタの下のカード） */
 .card.ch.push-over{box-shadow:0 0 0 3px var(--accent),0 0 14px var(--accent);z-index:115}
 
+/* 憑依解除など「破壊する対象を選ぶ」ときに押せるカード（2026-08-24 本人の指定） */
+.card.ch.pick{box-shadow:0 0 0 3px #f87171,0 0 14px #f8717188;cursor:pointer;
+  animation:cq-pick-pulse 1s ease-in-out infinite}
+@keyframes cq-pick-pulse{
+  0%,100%{box-shadow:0 0 0 3px #f87171,0 0 10px #f8717166}
+  50%{box-shadow:0 0 0 4px #fca5a5,0 0 18px #f87171cc}
+}
+
 /* ユニットの状態バッジ（行動済み・連続攻撃） */
 .st-tag{
   position:absolute;right:4px;bottom:30px;z-index:6;font-size:12px;font-weight:800;

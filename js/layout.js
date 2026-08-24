@@ -57,12 +57,15 @@ document.querySelectorAll('.tab').forEach((b) => {
 /* 見本デッキ（50枚）。M7でデッキ編集画面と繋ぐまでは両陣営ともこれを使う。
  * 能力値に効く技能と、フラグ型の魔法（爆殺・障壁・遮蔽・偽装・鏡身）を中心にしつつ、
  * v0.12（実装計画M4）で発動処理を追加した 167/169/181/184/186/199、
- * v0.13で発動処理を追加した魔法カードの一部も混ぜてある。 */
+ * v0.13で発動処理を追加した魔法カードの一部も混ぜてある。
+ * v0.14で発動処理を追加したユニット固有能力の一部（1開：クローズ・3特：石化付加・
+ * 9特：ＬＰ消費ＣＨ破壊・31開：ＬＰ回復・70特：妄執憑依）も、通常プレイで触れられるよう
+ * 重複ぶんと差し替えて混ぜてある。 */
 const SAMPLE_DECK = [
   /* ユニット25枚（10 ヨルムンガンドと17 アバドーンは召還Ｌｖが高いので、
      チャネルして上の階層で開く＝リバース召還でしか出せない。ただし場に199光臨があれば
      手札から直接も出せる） */
-  8, 8, 1, 1, 2, 5, 7, 7, 19, 20, 22, 26, 28, 46, 47, 58, 61, 63, 65, 66, 67, 71, 73, 10, 17,
+  8, 8, 1, 3, 2, 5, 7, 9, 19, 20, 22, 31, 70, 46, 47, 58, 61, 63, 65, 66, 67, 71, 73, 10, 17,
   /* 技能16枚 */
   151, 152, 157, 158, 165, 167, 169, 171, 172, 173, 177, 178, 179, 181, 183, 199,
   /* 魔法9枚（v0.13で発動処理を実装。101憑依解除・110閉門・113透視・130漂着は瞬間発動、
@@ -73,12 +76,14 @@ const SAMPLE_DECK = [
 let M = null;                 /* エンジンの対戦状態。これが唯一の真実 */
 let foeAuto = true;           /* 相手を自動で動かすか */
 const UI = {
-  mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over */
+  mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-destroy */
   info: null,     /* 表示中のカード */
   lane: null,     /* 選択中のレーン（アタック元・リバース対象） */
   layers: [],     /* リバースで選んだ階層 */
   pending: null,  /* 確認待ちの操作 */
-  report: null    /* 直前に起きたこと（相手の手番・戦闘の経過） */
+  report: null,   /* 直前に起きたこと（相手の手番・戦闘の経過） */
+  destroyTargets: null,  /* pick-destroy中：選べる対象 [{lane, idx}]（2026-08-24 憑依解除の対話的選択） */
+  pendingDestroy: null   /* pick-destroy中：対象を選んだら呼ぶ関数 (target) => void */
 };
 
 function otherSide(s) { return s === 'self' ? 'enemy' : 'self'; }
@@ -110,6 +115,20 @@ function chKnown(ch) {
   return ch.up || ch.revealed || (ch.mine === (v === 'self'));
 }
 
+/** 憑依解除(101)の破壊候補（発動元自身のＣＨを除く、場にある全ユニットのＣＨ）。
+ * js/engine/effects/magic.js の h101 と同じ絞り込み（2026-08-24 本人の指定：対話的選択） */
+function destroyCandidates(exceptLane, exceptIdx) {
+  const res = [];
+  M.board.lanes.forEach((ln, i) => {
+    if (ln.unit == null) return;
+    ln.channels.forEach((ch, j) => {
+      if (i === exceptLane && j === exceptIdx) return;
+      res.push({ lane: i, idx: j });
+    });
+  });
+  return res;
+}
+
 function newMatch() {
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
   M = CQTurn.createMatch({
@@ -119,7 +138,10 @@ function newMatch() {
     enemyDeck: SAMPLE_DECK.slice(),
     first: 'self',
     opponentId: 101,                /* フリーユニット戦扱い＝戦利品が記録される */
-    hooks: { onMagicOpen: CQMagic.onMagicOpen }   /* M4 v0.13：魔法48種の発動処理 */
+    hooks: {
+      onMagicOpen: CQMagic.onMagicOpen,           /* M4 v0.13：魔法48種の発動処理 */
+      onUnitOpen: CQUnits.onUnitOpen              /* M4 v0.14：ユニット固有能力「開：」型の発動処理 */
+    }
   });
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
@@ -401,6 +423,10 @@ function chHTML(i, k) {
     && allowedLayers(i).indexOf(k) >= 0;
   const flip = canFlipHere && !ch.up;
   const closable = canFlipHere && ch.up;
+  /* 憑依解除(101)などの発動で「破壊する対象を選ぶ」最中なら、選べるＣＨを光らせる
+     （2026-08-24 本人の指定：対話的な対象選択） */
+  const pickable = UI.mode === 'pick-destroy' && UI.destroyTargets
+    && UI.destroyTargets.some((t) => t.lane === i && t.idx === k - 1);
   const attr = `data-lane="${i}" data-layer="${k}" data-card="${card.id}"
     data-own="${own ? 1 : 0}" data-known="${known ? 1 : 0}" data-st="${ch.st || ''}"
     ${closable ? 'data-closable="1"' : ''}`;
@@ -410,12 +436,13 @@ function chHTML(i, k) {
   const mark = split ? '<span class="cur">▶</span>' : '';
   const info = split ? '<span class="inf">ⓘ</span>' : '';
   const splitCls = split ? 'split' : '';
+  const pickCls = pickable ? 'pick' : '';
   if (!ch.up) {
     const nm = known ? `<span class="nm">${card.n}</span>` : '<span class="nm hid">？</span>';
-    return `<div class="card ch back ${oc} ${open ? 'openable' : ''} ${flip ? 'flippable' : ''} ${splitCls}" ${attr} ${bottom}>
+    return `<div class="card ch back ${oc} ${open ? 'openable' : ''} ${flip ? 'flippable' : ''} ${splitCls} ${pickCls}" ${attr} ${bottom}>
       <div class="strip">${mark}${nm}${badge}${info}</div></div>`;
   }
-  return `<div class="card ch ${card.t} ${oc} ${pos ? 'possess' : ''} ${splitCls}" ${attr} ${bottom}>
+  return `<div class="card ch ${card.t} ${oc} ${pos ? 'possess' : ''} ${splitCls} ${pickCls}" ${attr} ${bottom}>
     <div class="strip">${mark}<span class="nm">${card.n}</span>${badge}${info}</div>
     <div class="art">${artInner(card)}</div></div>`;
 }
@@ -667,6 +694,7 @@ function renderPanel() {
     case 'battle':    return panelBattle();
     case 'unit':      return panelUnit();
     case 'attack':    return panelAttack();
+    case 'pick-destroy': return panelPickDestroy();
     case 'confirm':   return;                       /* 確認画面は出したまま */
     case 'info':      return panelInfo();
     default:          return panelIdle();
@@ -718,7 +746,11 @@ function panelOver() {
 
 /* --- メインステップ：ユニットを選んだときの行動メニュー --- */
 function panelUnit() {
-  const i = UI.lane, ln = M.board.lanes[i], card = CARD_BY_ID[ln.unit];
+  const i = UI.lane, ln = M.board.lanes[i];
+  // 情報パネルを開いたあとに、そのユニットが戦闘や魔法で破壊されていることがある
+  // （演出の途中描画のレース。panelBattle の同種のガードと同じ理由。2026-08-24 に発見・修正）
+  if (!ln || ln.unit == null) { UI.mode = 'idle'; UI.lane = null; return panelIdle(); }
+  const card = CARD_BY_ID[ln.unit];
   const atk = CQCombat.canAttack(M, i);
   const targets = atk.ok ? CQCombat.attackTargets(M, i) : [];
   const deck = CQCombat.canDeckAttack(M, i);
@@ -730,6 +762,15 @@ function panelUnit() {
   if (deck.ok) btns += `<button class="act-row" data-act="deck-attack">デッキ攻撃<span class="sub">相手のＬＰ −1 と山札1枚を破壊</span></button>`;
   if (rev.ok) btns += `<div class="act-row off">リバース：▶の付いた裏向きカードを直接押すと開きます</div>`;
   else btns += `<div class="act-row off">リバース：${rev.reason}</div>`;
+  // 特殊行動（Ｃ型ユニット固有能力。M4 v0.14）：Ｃ型を持つユニットだけボタンを出す
+  const spec = CQTurn.canSpecialAction(M, i);
+  if (CQUnits.C_TYPE[ln.unit]) {
+    if (spec.ok) {
+      btns += `<button class="act-row" data-act="special-action">特殊行動<span class="sub">${card.e || ''}</span></button>`;
+    } else {
+      btns += `<div class="act-row off">特殊行動：${spec.reason}</div>`;
+    }
+  }
   return paint(miniCardHTML(card)
     + `<div class="i-kv now"><span>攻撃力 <b>${ln.atk}</b></span><span>防御力 <b>${ln.def}</b></span>
        <span>ＣＨ ${ln.count}／${ln.cap}</span></div>`
@@ -759,11 +800,20 @@ function allowedLayers(i) {
 
 function panelAttack() {
   const i = UI.lane, ln = M.board.lanes[i];
+  // 同上（panelUnit）：攻撃対象を選んでいる間にこのユニット自身が破壊されていることがある
+  if (!ln || ln.unit == null) { UI.mode = 'idle'; UI.lane = null; UI.targets = null; return panelIdle(); }
   return paint(miniCardHTML(CARD_BY_ID[ln.unit])
     + askHTML('攻撃する相手を選んでください',
       `黄色い枠の付いた相手のモンスターを押します。<br>
        あなたの攻撃力 <b>${ln.atk}</b> が相手の防御力以上なら成功です（同値も成功）。`, 'warn'),
     ngBtn('やめる'), true);
+}
+
+/** 憑依解除(101)：破壊する対象を選んでいる最中のパネル（2026-08-24 本人の指定） */
+function panelPickDestroy() {
+  return paint(miniCardHTML(CARD_BY_ID[101])
+    + askHTML('破壊するカードを選んでください',
+      '赤く光っているＣＨカードを押すと、それを破壊します。', 'warn'), '', true);
 }
 
 /* --- 戦闘：オープンフェイズ ---
@@ -871,14 +921,31 @@ function doAttack(atkLane, defLane) {
 }
 
 /** 場のカードを1階層だけリバースする（直接クリック用。原作の SW583「行動継続中」に対応：
- * 同じレーンなら続けて上の階層も開け、別の行動を始めるか最上段まで開くと確定して硬直する） */
-function doFlip(laneIdx, layer) {
+ * 同じレーンなら続けて上の階層も開け、別の行動を始めるか最上段まで開くと確定して硬直する）
+ * choice … 憑依解除(101)で対話的に選んだ破壊対象 {lane, idx}（省略時はエンジンが自動選択） */
+function doFlip(laneIdx, layer, choice) {
   markLog(); markFx();
-  const r = CQTurn.reverseAction(M, laneIdx, [layer], { cont: true });
+  const r = CQTurn.reverseAction(M, laneIdx, [layer], choice ? { cont: true, choice } : { cont: true });
   UI.report = null;
   if (UI.mode === 'info') UI.mode = 'idle';   /* 内容を見たあとに開いたら、結果の表示に戻す */
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
   step();
+}
+
+/** 開こうとしている階層が憑依解除(101)で、かつ自分にはその中身が見えている（＝自分の
+ * カードなので事前に判る）とき、破壊対象を選ばせるモードに入る。呼べる状況でなければ
+ * false を返す（呼び出し元はそのまま通常どおり開く処理を続ける）。
+ * （2026-08-24 本人の指定：起動すると破壊するカードを1つ選んで破壊する） */
+function tryStartDestroyPick(laneIdx, layer, ch, resume) {
+  if (!ch || ch.card !== 101 || !chKnown(ch)) return false;
+  const targets = destroyCandidates(laneIdx, layer - 1);
+  if (targets.length <= 1) return false;               /* 候補が0〜1枚なら選ぶ意味が無い */
+  UI.destroyTargets = targets;
+  UI.pendingDestroy = resume;
+  UI.mode = 'pick-destroy';
+  flash('憑依解除：破壊するカードを選んでください');
+  renderAll();
+  return true;
 }
 
 function doPending() {
@@ -890,6 +957,7 @@ function doPending() {
   if (p.kind === 'change') r = CQTurn.change(M);
   else if (p.kind === 'discard') r = CQTurn.discardCard(M, p.handIdx);
   else if (p.kind === 'deck-attack') r = CQCombat.deckAttack(M, p.lane);
+  else if (p.kind === 'special-action') r = CQTurn.specialAction(M, p.lane);
   UI.mode = 'idle'; UI.lane = null; UI.layers = []; UI.report = null;
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
   step();
@@ -912,6 +980,9 @@ function panelAct(act, data) {
       return renderAll();
     case 'deck-attack':
       UI.pending = { kind: 'deck-attack', lane: UI.lane };
+      return doPending();
+    case 'special-action':                              /* Ｃ型ユニット固有能力（M4 v0.14） */
+      UI.pending = { kind: 'special-action', lane: UI.lane };
       return doPending();
     case 'close-ch':                                  /* 表の技能を閉じる（情報パネルのボタン） */
       return doFlip(+data.lane, +data.layer);
@@ -992,10 +1063,32 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     wantInfo = ev.clientX > r.left + r.width / 2;
   }
 
+  /* 憑依解除(101)：破壊する対象を選んでいる最中。光っているＣＨを押したら確定する
+     （2026-08-24 本人の指定）。それ以外を押しても何も起きない（選ぶまで先に進めない） */
+  if (UI.mode === 'pick-destroy') {
+    if (el.classList.contains('pick') && el.dataset.lane !== undefined && el.dataset.layer !== undefined) {
+      const target = { lane: +el.dataset.lane, idx: +el.dataset.layer - 1 };
+      const resume = UI.pendingDestroy;
+      UI.mode = 'idle'; UI.destroyTargets = null; UI.pendingDestroy = null;
+      if (resume) resume(target);
+    } else {
+      flash('赤く光っているカードから破壊する対象を選んでください');
+    }
+    return;
+  }
   /* 戦闘中：▶付きのカードの左半分を押したら、その階層をそのまま開く */
   if (humanOpening() && el.classList.contains('openable') && !wantInfo) {
+    const layer = +el.dataset.layer;
+    const laneIdx = CQCombat.openerLane(M);
+    const ch = M.board.lanes[laneIdx].channels[layer - 1];
+    if (tryStartDestroyPick(laneIdx, layer, ch, (choice) => {
+      markLog(); markFx();
+      const r = CQCombat.open(M, layer, { choice });
+      if (!r.ok) flash(r.reason);
+      step();
+    })) return;
     markLog(); markFx();
-    const r = CQCombat.open(M, +el.dataset.layer);
+    const r = CQCombat.open(M, layer);
     if (!r.ok) flash(r.reason);
     return step();
   }
@@ -1006,7 +1099,10 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
   }
   /* メインステップ：▶の付いた裏向きカードの左半分を押したら、その階層を直接開く */
   if (el.classList.contains('flippable') && !wantInfo) {
-    return doFlip(+el.dataset.lane, +el.dataset.layer);
+    const laneIdx = +el.dataset.lane, layer = +el.dataset.layer;
+    const ch = M.board.lanes[laneIdx].channels[layer - 1];
+    if (tryStartDestroyPick(laneIdx, layer, ch, (choice) => doFlip(laneIdx, layer, choice))) return;
+    return doFlip(laneIdx, layer);
   }
   if (el.classList.contains('empty-unit')) return;
 

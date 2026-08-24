@@ -24,8 +24,9 @@ const S = require(path.join(root, 'js/engine/state.js'));
 const CQTurn = require(path.join(root, 'js/engine/turn.js'));
 const CQCombat = require(path.join(root, 'js/engine/combat.js'));
 const CQMagic = require(path.join(root, 'js/engine/effects/magic.js'));
+const CQUnits = require(path.join(root, 'js/engine/effects/units.js'));
 const CQAi = require(path.join(root, 'js/engine/ai.js'));
-const HOOKS = { onMagicOpen: CQMagic.onMagicOpen };
+const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
 /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚
  * 実装計画M4 v0.12（技能49種＋カース9種）で新たにターン終了時処理・召還特例・
@@ -36,7 +37,10 @@ const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 47, 61, 63, 65, 66, 71, 20, 22, 55,
   151, 152, 154, 158, 165, 167, 169, 171, 172, 173, 176, 177, 178, 179, 181, 183, 184, 186, 197, 199,
   101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120,
   121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
-  141, 142, 143, 144, 145, 146, 147, 148, 180];
+  141, 142, 143, 144, 145, 146, 147, 148, 180,
+  /* M4 v0.14：ユニット固有能力73種のうちB型（開：10体）・C型（特：14体）をファズの対象にする */
+  1, 16, 23, 24, 25, 27, 29, 30, 31, 40,
+  3, 6, 9, 10, 32, 34, 35, 36, 38, 44, 45, 48, 49, 70];
 function makeDeck(rng) {
   const deck = [];
   while (deck.length < 50) deck.push(POOL[rng.int(0, POOL.length - 1)]);
