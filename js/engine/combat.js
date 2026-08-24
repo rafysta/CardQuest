@@ -60,6 +60,7 @@
     recalc(m);                                              // flipped（傀儡）・acc を最新化してから判定
     if (S.controlSide(ln, laneIndex) !== m.active) return { ok: false, reason: '自陣のユニットだけが攻撃できます' };
     if (ln.channeled) return { ok: false, reason: 'このターンにチャネリングしたユニットは攻撃できません' };
+    if (m.reversing === laneIndex) return { ok: false, reason: 'リバースしたユニットはこのターン攻撃できません' };  // 原作 SW322
     if (ln.stiff && !ln.extraAttack) return { ok: false, reason: 'そのユニットは行動済みです' };
     if (ln.acc.vapor >= 1) return { ok: false, reason: '気化しているユニットは攻撃できません' };
     return { ok: true };
@@ -121,6 +122,7 @@
   function declareAttack(m, atkLane, defLane) {
     const chk = canTarget(m, atkLane, defLane);
     if (!chk.ok) return chk;
+    Turn.finalizeReverse(m, null);     // 別レーンでリバース継続中なら、攻撃を始めた時点で確定（硬直）
     const A = m.board.lanes[atkLane], D = m.board.lanes[defLane];
     const pierce = A.acc.pierce >= 1;
 
@@ -529,6 +531,7 @@
   function deckAttack(m, laneIndex) {
     const chk = canDeckAttack(m, laneIndex);
     if (!chk.ok) return chk;
+    Turn.finalizeReverse(m, null);     // 別レーンでリバース継続中なら、攻撃を始めた時点で確定（硬直）
     const ln = m.board.lanes[laneIndex], foeSide = other(m.active);
     damage(m, foeSide, 1);
     if (ln.unit === 22) heal(m, m.active, 1);             // ビッグモスキート

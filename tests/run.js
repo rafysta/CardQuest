@@ -544,6 +544,74 @@ t('メインのチャネルは押し込み不可・対象が行動済みなら�
   eq(push.ok, false, 'メインステップは押し込み不可');
 });
 
+section('turn: リバースの行動継続（opts.cont＝原作 SW583）');
+t('cont：1階層ずつ開ける。硬直せず、同じレーンの上の階層を続けられる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(151)]);
+  const r1 = CQTurn.reverseAction(m, 0, [1], { cont: true });
+  eq([r1.ok, m.board.lanes[0].stiff, m.reversing], [true, false, 0], '1階層目：硬直せず継続中');
+  const r2 = CQTurn.reverseAction(m, 0, [2], { cont: true });
+  eq([r2.ok, m.board.lanes[0].channels[1].up, m.board.lanes[0].stiff], [true, true, false], '2階層目も続けて開ける');
+});
+t('cont：最上段まで開き切ると行動終了（硬直）＝原作 EV0048', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151)]);
+  CQTurn.reverseAction(m, 0, [1], { cont: true });
+  CQTurn.reverseAction(m, 0, [2], { cont: true });
+  eq([m.board.lanes[0].stiff, m.reversing], [true, null], '最上段到達で硬直・継続解除');
+});
+t('cont：リバース継続中のユニットはアタック・デッキ攻撃できない（原作 SW322）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151)]);
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [1], { cont: true });
+  eq(CQCombat.canAttack(m, 0).ok, false, '継続中はアタック不可');
+  eq(CQCombat.canDeckAttack(m, 0).ok, false, '継続中はデッキ攻撃不可');
+});
+t('cont：別のレーンの行動を始めると継続中のレーンは確定（硬直）する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151)]);
+  m.board.lanes[1] = lane(8, [down(151), down(151)]);
+  CQTurn.reverseAction(m, 0, [1], { cont: true });
+  CQTurn.reverseAction(m, 1, [1], { cont: true });                  // 別レーンのリバース開始
+  eq([m.board.lanes[0].stiff, m.reversing], [true, 1], 'レーン0は硬直、レーン1が継続中');
+  const more = CQTurn.reverseAction(m, 0, [2], { cont: true });
+  eq(more.ok, false, '確定したレーン0はもう続けられない');
+});
+t('cont：継続中に別レーンへアタックすると確定（硬直）する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151)]);
+  m.board.lanes[1] = lane(20, []);                                  // 攻撃役（素の攻高め）
+  m.board.lanes[3] = lane(28, []);                                  // 敵（スネイルリキッド：防0）
+  CQTurn.reverseAction(m, 0, [1], { cont: true });
+  const r = CQCombat.declareAttack(m, 1, 3);
+  eq(r.ok, true, 'レーン1の攻撃は成立');
+  eq([m.board.lanes[0].stiff, m.reversing], [true, null], '攻撃開始でレーン0は確定・硬直');
+});
+t('cont：継続中のレーンへのチャネルは「行動済み」として拒否される', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1], { cont: false });                 // ←contなし＝即硬直（従来動作の確認込み）
+  eq(m.board.lanes[0].stiff, true, 'contなしの従来モードは1回で硬直');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(8, [down(151), down(151)]);
+  m2.players.self.hand.push(180);                                   // チャネルする手札を直接持たせる
+  m2.players.self.handCount = m2.players.self.hand.length;
+  CQTurn.reverseAction(m2, 0, [1], { cont: true });
+  eq(m2.reversing, 0, '継続中');
+  const ch = CQTurn.channel(m2, 0, 0);                              // 継続中のレーン自身へチャネル
+  eq(ch.ok, false, '継続中のレーンへのチャネルは拒否（確定→行動済み）');
+  eq(m2.board.lanes[0].stiff, true, '確定して硬直');
+});
+t('cont：ターン終了で継続中の印は消える', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151)]);
+  m.players.self.actedThisTurn = true;
+  CQTurn.reverseAction(m, 0, [1], { cont: true });
+  CQTurn.endTurn(m);
+  eq(m.reversing, null, 'ターン終了で解除');
+});
+
 section('turn: チェンジ・ターン終了');
 t('チェンジは自分の最初のターンのみ、LP1消費', () => {
   const m = newMatch(13);

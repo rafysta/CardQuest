@@ -88,6 +88,7 @@
       winner: null,
       opponentId: opts.opponentId === undefined ? 0 : opts.opponentId,  // 原作 V340。101以上＝フリーユニット＝戦利品あり
       combat: null,            // 戦闘中の状態（js/engine/combat.js が持つ）
+      reversing: null,         // リバース行動を継続中のレーン番号（原作 SW583。reverseAction の opts.cont）
       pendingCurse: null,      // 憑依の予約（戦闘終了時に付着する）
       loot: [],                // 戦利品（通常攻撃で倒した敵ユニットのID。最大7）
       lastBattle: null,        // 直前の戦闘結果
@@ -214,6 +215,9 @@
   function channel(m, laneIndex, handIndex, opts) {
     const o = opts || {};
     if (m.phase !== 'placement' && m.phase !== 'main') return { ok: false, reason: 'いまはチャネルできません' };
+    // リバース継続中のレーン自身にチャネルしようとしたら、まず継続を確定（硬直）させる
+    // →このあとの stiff チェックで正しく拒否される（1ユニット1ターン1行動）
+    if (m.reversing === laneIndex) finalizeReverse(m, null);
     const side = m.active, p = activePlayer(m);
     if (m.phase === 'main') {
       const own = S.lanesOf(side);
@@ -234,6 +238,7 @@
       if (m.phase !== 'placement') return { ok: false, reason: '満杯です（押し込みは配置ステップのみ）' };
       const layer = o.layer;
       if (!(layer >= 1 && layer <= lane.channels.length)) return { ok: false, reason: '押し込む階層の指定が不正です' };
+      finalizeReverse(m, null);                       // 別の行動を始めた＝継続中のリバースを確定
       p.hand.splice(handIndex, 1);
       const removed = lane.channels[layer - 1];
       lane.channels[layer - 1] = { card: id, up: false, mine: side === 'self', revealed: false };
@@ -246,6 +251,7 @@
       return { ok: true, pushedOut: removed };
     }
 
+    finalizeReverse(m, null);                         // 別の行動を始めた＝継続中のリバースを確定
     p.hand.splice(handIndex, 1);
     lane.channels.push({ card: id, up: false, mine: side === 'self', revealed: false });
     lane.count += 1;
@@ -267,9 +273,28 @@
 
   /* ---- メインステップ：リバース ---------------------------------------------- */
 
-  /** 1体のユニットについて、指定した階層を下から順に開閉する（1回の呼び出し＝1行動＝即硬直）。
-   * layers は昇順の階層番号配列（例 [1,2]）。全部まとめて検証してから適用する。 */
-  function reverseAction(m, laneIndex, layers) {
+  /** リバース行動の「継続中」を確定させる（＝そのユニットを硬直させる）。
+   * 原作の SW583（行動継続中）は、カーソルを別のレーンに動かした瞬間に行動確定＝硬直になる
+   * （チュートリアル「リバース行動中にカーソルを隣のレーンに移動させてしまうと、
+   *   その時点で行動を終了した事になってしまうぞ」）。このＵＩにはカーソルが無いので、
+   * 「別の行動（チャネル・アタック・デッキ攻撃・別レーンのリバース）を始めた時点」を
+   * カーソル移動の代わりにしている。exceptLane のレーンだけは確定させない（同レーンの続き用） */
+  function finalizeReverse(m, exceptLane) {
+    if (m.reversing == null || m.reversing === exceptLane) return;
+    const ln = m.board.lanes[m.reversing];
+    if (ln && ln.unit != null) ln.stiff = true;
+    m.reversing = null;
+  }
+
+  /** 1体のユニットについて、指定した階層を下から順に開閉する。
+   * layers は昇順の階層番号配列（例 [1,2]）。全部まとめて検証してから適用する。
+   * opts.cont を渡すと「行動継続中」モード：硬直させずに m.reversing に記録し、
+   * 同じレーンへの続きのリバース（より上の階層）を後から追加できる（原作 SW583 の
+   * 1階層ずつのリバース操作に対応。ＵＩの直接クリック用）。継続中のレーンは
+   * アタック・デッキ攻撃ができず（原作 SW322 リバース済み→アタック不可）、
+   * 最上段まで開き切るか、別の行動を始めると確定して硬直する（原作 EV0048）。
+   * opts なし＝従来どおり1回の呼び出しで行動確定（即硬直）。 */
+  function reverseAction(m, laneIndex, layers, opts) {
     if (m.phase !== 'main') return { ok: false, reason: 'メインステップではありません' };
     const side = m.active;
     if (laneIndex < 0 || laneIndex >= 6) return { ok: false, reason: '不正なレーンです' };
@@ -293,6 +318,8 @@
       if (ch.up && ch.card === 167 && lane.acc.seal === 0) return { ok: false, reason: '腐食は封印がないとクローズできません' };
       ptr = n;
     }
+    // 検証が通ってから：別のレーンでリバース継続中なら、そのレーンを確定（硬直）させる
+    finalizeReverse(m, laneIndex);
     // 適用（下から順に。原作『オープンが唯一の起動トリガー』(仕様書§1.1)のとおり、
     //   戦闘中のオープンだけでなくメインステップのリバースでも魔法発動・リバース召還が起きる
     //   （EV0182 ＣＨオープン処理は EV0006 page7 のリバースからも呼ばれる）。
@@ -320,7 +347,15 @@
       if (checkResult(m)) break;
     }
     const finalLane = m.board.lanes[laneIndex];
-    if (finalLane && finalLane.unit != null) finalLane.stiff = true;
+    if (opts && opts.cont && !m.winner
+        && finalLane && finalLane.unit != null
+        && finalLane.reversePtr < finalLane.channels.length) {
+      m.reversing = laneIndex;        // 行動継続中（原作 SW583）：まだ上の階層を続けられる
+    } else {
+      // 従来モード、または最上段まで到達＝行動終了（原作 EV0048：硬直）
+      if (finalLane && finalLane.unit != null) finalLane.stiff = true;
+      m.reversing = null;
+    }
     activePlayer(m).actedThisTurn = true;
     recalc(m);
     note(m, jp(side) + ' がレーン' + laneIndex + 'を' + layers.join(',') + '階層リバース');
@@ -359,6 +394,7 @@
     if (m.phase !== 'main') return { ok: false, reason: 'メインステップではありません' };
     const side = m.active, p = activePlayer(m);
 
+    m.reversing = null;               // リバース継続中の印を消す（硬直は下でどのみち解除される）
     recalc(m);
     // 表向き魔法カード(101〜150)の消滅（＋爆殺の自爆・放出）。停滞(151)があるレーンは残る
     combatApi().expireMagic(m);
@@ -420,7 +456,8 @@
   const api = {
     HAND_CAP, FIRST_DRAW,
     createDeck, draw, createPlayer, createMatch,
-    beginTurn, discardCard, summon, channel, endPlacement, reverseAction, change, endTurn,
+    beginTurn, discardCard, summon, channel, endPlacement, reverseAction, finalizeReverse,
+    change, endTurn,
     checkResult
   };
   global.CQTurn = api;

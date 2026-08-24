@@ -406,6 +406,12 @@ img.curse-art{
 .card.ch.openable{box-shadow:0 0 0 3px var(--accent),0 3px 8px rgba(0,0,0,.6)}
 .card.ch .strip .cur{color:var(--accent);font-size:14px;margin-right:2px}
 
+/* メインステップで直接押して開けるカード（▶付き）。戦闘中の openable より控えめな光り方 */
+.card.ch.flippable{box-shadow:0 0 0 2px #d4a94088,0 3px 8px rgba(0,0,0,.6);cursor:pointer}
+
+/* 押し込み先の階層（一杯のレーンへドラッグ中、ポインタの下のカード） */
+.card.ch.push-over{box-shadow:0 0 0 3px var(--accent),0 0 14px var(--accent);z-index:115}
+
 /* ユニットの状態バッジ（行動済み・連続攻撃） */
 .st-tag{
   position:absolute;right:4px;bottom:30px;z-index:6;font-size:12px;font-weight:800;

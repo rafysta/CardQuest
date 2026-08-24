@@ -231,12 +231,22 @@ function chHTML(i, k) {
   const badge = `${pos ? '<span class="ow ps">憑</span>' : ''}<span class="ow">${own ? '自' : '敵'}</span>`;
   const open = UI.mode === 'battle' && CQCombat.openerLane(M) === i
     && CQCombat.openableLayers(M).indexOf(k) >= 0;
+  /* メインステップ：直接押してリバースできるか（裏なら押した瞬間に開く。
+     表の技能は誤タップでの閉じ事故を防ぐため、押すと情報パネルに「閉じる」ボタンが出る） */
+  const ln = M.board.lanes[i];
+  const canFlipHere = !M.combat && !M.winner && humanSide() === M.active && M.phase === 'main'
+    && CQState.controlSide(ln, i) === M.active && !ln.stiff
+    && !(ln.acc && ln.acc.lock >= 1)
+    && allowedLayers(i).indexOf(k) >= 0;
+  const flip = canFlipHere && !ch.up;
+  const closable = canFlipHere && ch.up;
   const attr = `data-lane="${i}" data-layer="${k}" data-card="${card.id}"
-    data-own="${own ? 1 : 0}" data-known="${known ? 1 : 0}" data-st="${ch.st || ''}"`;
-  const mark = open ? '<span class="cur">▶</span>' : '';
+    data-own="${own ? 1 : 0}" data-known="${known ? 1 : 0}" data-st="${ch.st || ''}"
+    ${closable ? 'data-closable="1"' : ''}`;
+  const mark = (open || flip) ? '<span class="cur">▶</span>' : '';
   if (!ch.up) {
     const nm = known ? `<span class="nm">${card.n}</span>` : '<span class="nm hid">？</span>';
-    return `<div class="card ch back ${oc} ${open ? 'openable' : ''}" ${attr} ${bottom}>
+    return `<div class="card ch back ${oc} ${open ? 'openable' : ''} ${flip ? 'flippable' : ''}" ${attr} ${bottom}>
       <div class="strip">${mark}${nm}${badge}</div></div>`;
   }
   return `<div class="card ch ${card.t} ${oc} ${pos ? 'possess' : ''}" ${attr} ${bottom}>
@@ -411,7 +421,6 @@ function renderPanel() {
     case 'battle':    return panelBattle();
     case 'unit':      return panelUnit();
     case 'attack':    return panelAttack();
-    case 'reverse':   return panelReverse();
     case 'confirm':   return;                       /* 確認画面は出したまま */
     case 'info':      return panelInfo();
     default:          return panelIdle();
@@ -424,12 +433,20 @@ function panelIdle() {
       `手札は7枚までです。捨てるカードを1枚選んでください（下の手札を押します）。`, 'warn'));
   }
   if (UI.report) return paint(reportHTML(UI.report));
-  paint('<div class="i-lead">カードを押すと内容が出ます。<br>手札は場までドラッグすると出せます。</div>'
+  paint('<div class="i-lead">手札は場までドラッグすると出せます。<br>'
+    + '自分のモンスターを敵にドラッグすると攻撃、<br>'
+    + '▶の付いた裏向きカードは押すと開きます。</div>'
     + (M.loot.length ? `<div class="i-loot">戦利品：${M.loot.map((id) => CARD_BY_ID[id].n).join('・')}</div>` : ''));
 }
 
 function panelInfo() {
-  paint(infoCardHTML(CARD_BY_ID[UI.info.card], UI.info));
+  /* 表になっている技能カード（自分が操作するレーン・メインステップ）は、ここから閉じられる。
+   * 場のカードを押した瞬間に閉じてしまう誤操作を防ぐため、ワンクッション置いている */
+  const foot = UI.info.closable
+    ? `<button class="btn ng" data-act="close-ch" data-lane="${UI.info.lane}"
+        data-layer="${UI.info.layer}">この技能を閉じる（リバース）</button>`
+    : '';
+  paint(infoCardHTML(CARD_BY_ID[UI.info.card], UI.info), foot, !!foot);
 }
 
 function panelOver() {
@@ -453,11 +470,11 @@ function panelUnit() {
   const deck = CQCombat.canDeckAttack(M, i);
   const rev = canReverse(i);
   let btns = '';
-  if (targets.length) btns += `<button class="act-row" data-act="attack">アタック<span class="sub">${targets.length}体を狙えます</span></button>`;
+  if (targets.length) btns += `<button class="act-row" data-act="attack">アタック<span class="sub">このモンスターを敵にドラッグしても攻撃できます</span></button>`;
   else if (atk.ok) btns += `<div class="act-row off">アタック：狙える相手が居ません</div>`;
   else btns += `<div class="act-row off">アタック：${atk.reason}</div>`;
   if (deck.ok) btns += `<button class="act-row" data-act="deck-attack">デッキ攻撃<span class="sub">相手のＬＰ −1 と山札1枚を破壊</span></button>`;
-  if (rev.ok) btns += `<button class="act-row" data-act="reverse">リバース<span class="sub">チャネルを開け閉めする</span></button>`;
+  if (rev.ok) btns += `<div class="act-row off">リバース：▶の付いた裏向きカードを直接押すと開きます</div>`;
   else btns += `<div class="act-row off">リバース：${rev.reason}</div>`;
   return paint(miniCardHTML(card)
     + `<div class="i-kv now"><span>攻撃力 <b>${ln.atk}</b></span><span>防御力 <b>${ln.def}</b></span>
@@ -493,32 +510,6 @@ function panelAttack() {
       `黄色い枠の付いた相手のモンスターを押します。<br>
        あなたの攻撃力 <b>${ln.atk}</b> が相手の防御力以上なら成功です（同値も成功）。`, 'warn'),
     ngBtn('やめる'), true);
-}
-
-function panelReverse() {
-  const i = UI.lane, ln = M.board.lanes[i];
-  const allow = allowedLayers(i);
-  let chips = '<div class="lay-row">';
-  for (let k = 1; k <= ln.channels.length; k++) {
-    const ch = ln.channels[k - 1];
-    const on = UI.layers.indexOf(k) >= 0;
-    const ok = allow.indexOf(k) >= 0;
-    chips += `<button class="lay-chip ${on ? 'on' : ''} ${ok ? '' : 'off'}"
-       ${ok ? `data-act="layer" data-layer="${k}"` : 'disabled'}>${k}</button>`;
-  }
-  chips += '</div>';
-  const list = ln.channels.map((ch, k) => {
-    const nm = chKnown(ch) ? CARD_BY_ID[ch.card].n : '？（相手が置いた裏向き）';
-    const mk = UI.layers.indexOf(k + 1) >= 0 ? (ch.up ? '→ 閉じる' : '→ 開く') : '';
-    return `<li class="${UI.layers.indexOf(k + 1) >= 0 ? 'on' : ''}">
-      <b>${k + 1}</b> ${nm}<span class="fu">${ch.up ? '表' : '裏'}</span>
-      <span class="mk">${mk}</span></li>`;
-  }).join('');
-  return paint(miniCardHTML(CARD_BY_ID[ln.unit])
-    + askHTML('開閉する階層を選んでください',
-      `下から上への一方通行です（飛ばすのは可・戻るのは不可）。<br>
-       クローズできるのは技能カードだけです。` + chips + `<ul class="ch-list">${list}</ul>`, 'warn'),
-    (UI.layers.length ? okBtn('リバースする') : '') + ngBtn('やめる'), true);
 }
 
 /* --- 戦闘：オープンフェイズ --- */
@@ -563,14 +554,11 @@ function paintNG(card, ng) {
   paint(miniCardHTML(card) + askHTML('この場所には置けません', ng, 'ng'),
     ngBtn('閉じる'), true);
 }
-function paintConfirm(card, what, extra, warn) {
-  UI.mode = 'confirm';
-  paint(miniCardHTML(card) + askHTML('この操作でよろしいですか？', what + (extra || ''), warn ? 'warn' : ''),
-    okBtn() + ngBtn(), true);
-}
 
-/** 手札のカードをレーンに落としたとき */
-function showDropConfirm(handIdx, laneIdx) {
+/** 手札のカードをレーンに落としたとき（確認なしで即実行。誤操作の抑止はドラッグという
+ * 動作そのものと、置ける場所だけを光らせる表示で行う）。
+ * pushLayer … チャネルが一杯のレーンで、特定の階層のカードに重ねて離した場合の階層番号 */
+function doDrop(handIdx, laneIdx, pushLayer) {
   const side = M.active;
   const card = CARD_BY_ID[M.players[side].hand[handIdx]];
   const ln = M.board.lanes[laneIdx];
@@ -579,48 +567,32 @@ function showDropConfirm(handIdx, laneIdx) {
   if (ln.unit == null) {
     if (!mine) return paintNG(card, 'モンスターを相手の場に直接召還することはできません。相手の場に関われるのは、相手のユニットへのチャネルだけです。');
     if (card.t !== 'U') return paintNG(card, 'ここは空き枠です。魔法と技能はモンスターの上にしか置けません。');
-    if (M.phase !== 'placement') return paintNG(card, '召還できるのは配置ステップだけです。');
-    if (CQState.unitStats(card).lv > 1) return paintNG(card, `召還Ｌｖ${card.lv}のモンスターは手札から直接は出せません。ユニットにチャネルして、${card.lv}階層目以上で開くと出てきます（リバース召還）。`);
-    UI.pending = { kind: 'summon', handIdx, lane: laneIdx };
-    return paintConfirm(card, `<b>${laneIdx + 1}番目の枠</b> に召還します<span class="i-note">※ 召還したターンは行動できません（硬直）</span>`);
+    markLog();
+    const r = CQTurn.summon(M, laneIdx, handIdx);
+    if (!r.ok) {
+      if (/召還レベル/.test(r.reason || '')) {
+        return paintNG(card, `召還Ｌｖ${card.lv}のモンスターは手札から直接は出せません。ユニットにチャネルして、${card.lv}階層目以上で開くと出てきます（リバース召還）。場に光臨(199)があれば直接も出せます。`);
+      }
+      return paintNG(card, r.reason || 'その操作はできません');
+    }
+    return step();
   }
 
   const host = CARD_BY_ID[ln.unit];
-  const where = `${mine ? '自分の場' : '相手の場'}の <b>${host.n}</b>`;
-  if (M.phase === 'main' && ln.stiff) return paintNG(card, 'そのモンスターはこのターンもう行動済みです。');
-  if (M.phase !== 'placement' && M.phase !== 'main') return paintNG(card, 'いまはチャネルできません。');
-  const note = card.t === 'U'
-    ? `<span class="i-note">※ 表になると、置いた人の場の空きレーンへ召還されます（召還Ｌｖ${card.lv}以上の階層が必要。空き無しなら破壊）</span>`
-    : '';
-  if (ln.count < ln.cap) {
-    const k = ln.count + 1;
-    UI.pending = { kind: 'channel', handIdx, lane: laneIdx };
-    return paintConfirm(card, `${where} の ${k} 階層目に裏向きでチャネルします${note}`);
-  }
-  if (!ln.channels.length) {
+  const full = ln.count >= ln.cap;
+  if (full && !ln.channels.length) {
     return paintNG(card, `${host.n} はチャネルできる枠がありません（ＣＨ数 ${ln.cap}）。`);
   }
-  if (M.phase !== 'placement') return paintNG(card, 'チャネルが一杯です。押し込みができるのは配置ステップだけです。');
-  UI.pending = { kind: 'push', handIdx, lane: laneIdx, layer: 1 };
-  paintConfirm(card, `${where} は一杯です。押し込む階層を選んでください。`,
-    layerPickHTML(laneIdx, 1) + note, true);
+  if (full && M.phase !== 'placement') return paintNG(card, 'チャネルが一杯です。押し込みができるのは配置ステップだけです。');
+  if (full && pushLayer == null) {
+    return paintNG(card, `${host.n} のチャネルは一杯です。押し込むときは、<b>入れ替えたい階層のカードに直接重ねて</b>離してください。その階層のカードを捨てて入れ替えます。`);
+  }
+  markLog();
+  const r = CQTurn.channel(M, laneIdx, handIdx, full ? { layer: pushLayer } : undefined);
+  if (!r.ok) return paintNG(card, r.reason || 'その操作はできません');
+  step();
 }
 function S_lanesOf(side) { return CQState.lanesOf(side); }
-
-function layerName(laneIdx, k) {
-  const ch = M.board.lanes[laneIdx].channels[k - 1];
-  if (!chKnown(ch)) return '<span class="lc back">相手が置いた裏向きのカード</span>';
-  return `<span class="lc">${ch.mine ? '自分の' : '相手の'}『${CARD_BY_ID[ch.card].n}』${ch.up ? '' : '（裏）'}</span>`;
-}
-function layerPickHTML(laneIdx, sel) {
-  const n = M.board.lanes[laneIdx].channels.length;
-  let h = '<div class="lay-row">';
-  for (let k = 1; k <= n; k++) {
-    h += `<button class="lay-chip ${k === sel ? 'on' : ''}" data-act="push-layer" data-layer="${k}">${k}</button>`;
-  }
-  return h + `</div><div class="lay-now" id="lay-now">
-    <b>${sel}</b> 階層目の ${layerName(laneIdx, sel)} を捨てて入れ替えます</div>`;
-}
 
 function showChangeConfirm() {
   UI.pending = { kind: 'change' };
@@ -642,24 +614,26 @@ function showDiscardConfirm(handIdx) {
     '手札は7枚までです。捨てたカードは戻りません。', 'warn'), okBtn('捨てる') + ngBtn(), true);
 }
 
-function showAttackConfirm(defLane) {
-  const A = M.board.lanes[UI.lane], D = M.board.lanes[defLane];
-  UI.pending = { kind: 'attack', lane: UI.lane, target: defLane };
-  UI.mode = 'confirm';
-  const win = A.atk >= D.def;
-  paint(`<div class="vs">
-      <span class="vs-a">攻 ${CARD_BY_ID[A.unit].n} <b>${A.atk}</b></span>
-      <span class="vs-x">▶</span>
-      <span class="vs-d">防 ${CARD_BY_ID[D.unit].n} <b>${D.def}</b></span>
-    </div>`
-    + askHTML('この相手に攻撃しますか？',
-      `いまの数値なら <b>${win ? '成功' : '失敗'}</b> です。<br>
-       ただしこのあと、攻撃側→防御側の順にチャネルを開けるので数値は変わります。
-       <span class="i-note">※ 攻撃したユニットはこのターン行動済みになります</span>`, 'warn'),
-    okBtn('攻撃する') + ngBtn(), true);
+/* ================= 操作の実行 ================= */
+
+/** アタックを即実行する（確認なし。狙える相手だけが光っているので誤爆しにくい） */
+function doAttack(atkLane, defLane) {
+  markLog();
+  const r = CQCombat.declareAttack(M, atkLane, defLane);
+  UI.mode = 'idle'; UI.lane = null; UI.targets = null; UI.report = null;
+  if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
+  step();
 }
 
-/* ================= 操作の実行 ================= */
+/** 場のカードを1階層だけリバースする（直接クリック用。原作の SW583「行動継続中」に対応：
+ * 同じレーンなら続けて上の階層も開け、別の行動を始めるか最上段まで開くと確定して硬直する） */
+function doFlip(laneIdx, layer) {
+  markLog();
+  const r = CQTurn.reverseAction(M, laneIdx, [layer], { cont: true });
+  UI.report = null;
+  if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
+  step();
+}
 
 function doPending() {
   markLog();
@@ -667,13 +641,8 @@ function doPending() {
   UI.pending = null;
   if (!p) return;
   let r = { ok: true };
-  if (p.kind === 'summon') r = CQTurn.summon(M, p.lane, p.handIdx);
-  else if (p.kind === 'channel') r = CQTurn.channel(M, p.lane, p.handIdx);
-  else if (p.kind === 'push') r = CQTurn.channel(M, p.lane, p.handIdx, { layer: p.layer });
-  else if (p.kind === 'change') r = CQTurn.change(M);
+  if (p.kind === 'change') r = CQTurn.change(M);
   else if (p.kind === 'discard') r = CQTurn.discardCard(M, p.handIdx);
-  else if (p.kind === 'reverse') r = CQTurn.reverseAction(M, p.lane, p.layers);
-  else if (p.kind === 'attack') r = CQCombat.declareAttack(M, p.lane, p.target);
   else if (p.kind === 'deck-attack') r = CQCombat.deckAttack(M, p.lane);
   UI.mode = 'idle'; UI.lane = null; UI.layers = []; UI.report = null;
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
@@ -697,26 +666,8 @@ function panelAct(act, data) {
     case 'deck-attack':
       UI.pending = { kind: 'deck-attack', lane: UI.lane };
       return doPending();
-    case 'reverse':
-      UI.mode = 'reverse'; UI.layers = [];
-      return renderAll();
-    case 'layer': {
-      const k = +data.layer;
-      const at = UI.layers.indexOf(k);
-      if (at >= 0) UI.layers.splice(at, 1); else UI.layers.push(k);
-      UI.layers.sort((a, b) => a - b);
-      return renderPanel();
-    }
-    case 'push-layer': {
-      if (!UI.pending) return;
-      UI.pending.layer = +data.layer;
-      const el = document.getElementById('info-fix');
-      el.querySelectorAll('.lay-chip').forEach((x) => x.classList.remove('on'));
-      el.querySelector(`.lay-chip[data-layer="${data.layer}"]`).classList.add('on');
-      document.getElementById('lay-now').innerHTML =
-        `<b>${UI.pending.layer}</b> 階層目の ${layerName(UI.pending.lane, UI.pending.layer)} を捨てて入れ替えます`;
-      return;
-    }
+    case 'close-ch':                                  /* 表の技能を閉じる（情報パネルのボタン） */
+      return doFlip(+data.lane, +data.layer);
     case 'chip': UI.chip = +data.layer; return renderPanel();
     case 'open': {
       markLog();
@@ -742,16 +693,9 @@ function panelAct(act, data) {
   }
 }
 
-/* リバース確定は ok ボタン経由。層が選ばれた状態で押されたときだけ実行する */
-function commitReverse() {
-  UI.pending = { kind: 'reverse', lane: UI.lane, layers: UI.layers.slice() };
-  doPending();
-}
-
 document.getElementById('info-fix').addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-act]');
   if (!b || b.disabled) return;
-  if (b.dataset.act === 'ok' && UI.mode === 'reverse') return commitReverse();
   panelAct(b.dataset.act, b.dataset);
 });
 document.getElementById('turnbox').addEventListener('click', (ev) => {
@@ -782,7 +726,9 @@ function showCardInfo(el) {
     unit: el.classList.contains('unit'),
     pup: d.pup === '1',
     st: d.st || '',
-    lane: d.lane === undefined ? null : +d.lane
+    lane: d.lane === undefined ? null : +d.lane,
+    layer: d.layer === undefined ? null : +d.layer,
+    closable: d.closable === '1'
   };
   renderPanel();
 }
@@ -794,15 +740,27 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
   if (!el) return;
   if (el.id === 'change-card') { if (canChange()) showChangeConfirm(); return; }
 
-  /* 戦闘中：開ける階層を押したら、それを選ぶ */
+  /* 戦闘中：開ける階層は、1度目のタップで選択（内容の下見）、同じカードをもう一度タップで開く */
   if (UI.mode === 'battle' && el.classList.contains('openable')) {
-    UI.chip = +el.dataset.layer;
+    const k = +el.dataset.layer;
+    if (UI.chip === k) {
+      markLog();
+      const r = CQCombat.open(M, k);
+      UI.chip = null;
+      if (!r.ok) flash(r.reason);
+      return step();
+    }
+    UI.chip = k;
     return renderPanel();
   }
-  /* 攻撃対象を選んでいる最中 */
+  /* 攻撃対象を選んでいる最中（行動メニュー経由）：対象を押したら即攻撃 */
   if (UI.mode === 'attack' && el.dataset.lane !== undefined) {
     const i = +el.dataset.lane;
-    if (UI.targets.indexOf(i) >= 0) return showAttackConfirm(i);
+    if (UI.targets.indexOf(i) >= 0) return doAttack(UI.lane, i);
+  }
+  /* メインステップ：▶の付いた裏向きカードを押したら、その階層を直接開く */
+  if (el.classList.contains('flippable')) {
+    return doFlip(+el.dataset.lane, +el.dataset.layer);
   }
   if (el.classList.contains('empty-unit')) return;
 
@@ -810,17 +768,20 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     if (humanSide() !== M.active || M.combat) { showCardInfo(el); return; }
     if (M.phase === 'discard') { showDiscardConfirm(+el.dataset.hand); return; }
     ev.preventDefault();                       /* 画像ドラッグ・テキスト選択を止める */
-    drag = { el, id: +el.dataset.card, idx: +el.dataset.hand,
+    drag = { kind: 'hand', el, id: +el.dataset.card, idx: +el.dataset.hand,
              x0: ev.clientX, y0: ev.clientY, moved: false, ghost: null };
     try { el.setPointerCapture(ev.pointerId); } catch (e) { /* 無視 */ }
     return;
   }
-  /* 自陣のユニットを押したら、メインステップなら行動メニュー */
+  /* 自分が操作するユニット：ドラッグで攻撃、タップで行動メニュー（傀儡で奪ったユニットも含む） */
   if (el.classList.contains('unit') && !M.combat && humanSide() === M.active
-      && M.phase === 'main' && CQState.lanesOf(M.active).indexOf(+el.dataset.lane) >= 0) {
-    UI.lane = +el.dataset.lane;
-    UI.mode = 'unit';
-    return renderAll();
+      && M.phase === 'main'
+      && CQState.controlledLanesOf(M.board.lanes, M.active).indexOf(+el.dataset.lane) >= 0) {
+    ev.preventDefault();
+    drag = { kind: 'unit', el, lane: +el.dataset.lane,
+             x0: ev.clientX, y0: ev.clientY, moved: false, ghost: null, targets: null };
+    try { el.setPointerCapture(ev.pointerId); } catch (e) { /* 無視 */ }
+    return;
   }
   showCardInfo(el);
 });
@@ -831,29 +792,68 @@ document.addEventListener('pointermove', (ev) => {
   if (!drag.moved && Math.hypot(dx, dy) < 10) return;
   if (!drag.moved) {
     drag.moved = true;
-    const c = CARD_BY_ID[drag.id];
-    const g = document.createElement('div');
-    g.className = 'ghost card ' + c.t;
-    g.innerHTML = `<div class="art">${artInner(c)}</div>
-      <div class="topline"><span class="nm">${c.n}</span></div>`;
-    document.body.appendChild(g);
-    drag.ghost = g;
-    drag.el.classList.add('dragging');
-    /* 置ける場所だけを光らせる */
-    document.querySelectorAll('.lane').forEach((l) => {
-      const i = +l.dataset.lane, ln = M.board.lanes[i];
-      const mine = CQState.lanesOf(M.active).indexOf(i) >= 0;
-      const ok = ln.unit != null
-        ? (M.phase === 'placement' || !ln.stiff)
-        : (mine && c.t === 'U' && M.phase === 'placement' && CQState.unitStats(c).lv <= 1);
-      if (ok) l.classList.add('droppable');
-    });
+    if (drag.kind === 'unit') {
+      /* ユニットのドラッグ＝アタック。狙える相手をここで確定して光らせる */
+      const atk = CQCombat.canAttack(M, drag.lane);
+      const targets = atk.ok ? CQCombat.attackTargets(M, drag.lane) : [];
+      if (!targets.length) {
+        flash(atk.ok ? 'アタック：狙える相手が居ません' : 'アタック：' + atk.reason);
+        drag = null;
+        return;
+      }
+      drag.targets = targets;
+      const c = CARD_BY_ID[M.board.lanes[drag.lane].unit];
+      const g = document.createElement('div');
+      g.className = 'ghost card ' + c.t;
+      g.innerHTML = `<div class="art">${artInner(c)}</div>
+        <div class="topline"><span class="nm">${c.n}</span></div>`;
+      document.body.appendChild(g);
+      drag.ghost = g;
+      drag.el.classList.add('dragging');
+      targets.forEach((i) => {
+        const l = document.querySelector(`.lane[data-lane="${i}"]`);
+        if (l) l.classList.add('target');
+      });
+    } else {
+      const c = CARD_BY_ID[drag.id];
+      const g = document.createElement('div');
+      g.className = 'ghost card ' + c.t;
+      g.innerHTML = `<div class="art">${artInner(c)}</div>
+        <div class="topline"><span class="nm">${c.n}</span></div>`;
+      document.body.appendChild(g);
+      drag.ghost = g;
+      drag.el.classList.add('dragging');
+      /* 置ける場所だけを光らせる */
+      document.querySelectorAll('.lane').forEach((l) => {
+        const i = +l.dataset.lane, ln = M.board.lanes[i];
+        const mine = CQState.lanesOf(M.active).indexOf(i) >= 0;
+        const full = ln.unit != null && ln.count >= ln.cap;
+        const ok = ln.unit != null
+          ? (full ? (M.phase === 'placement' && ln.channels.length > 0)
+                  : (M.phase === 'placement' || !ln.stiff))
+          : (mine && c.t === 'U' && M.phase === 'placement');
+        if (ok) l.classList.add('droppable');
+      });
+    }
   }
   drag.ghost.style.left = ev.clientX + 'px';
   drag.ghost.style.top = ev.clientY + 'px';
   const lane = laneUnder(ev.clientX, ev.clientY);
   document.querySelectorAll('.lane.over').forEach((l) => l.classList.remove('over'));
-  if (lane) lane.classList.add('over');
+  document.querySelectorAll('.card.ch.push-over').forEach((c) => c.classList.remove('push-over'));
+  if (!lane) return;
+  if (drag.kind === 'unit') {
+    if (drag.targets.indexOf(+lane.dataset.lane) >= 0) lane.classList.add('over');
+    return;
+  }
+  if (!lane.classList.contains('droppable')) return;
+  lane.classList.add('over');
+  /* チャネルが一杯のレーン：ポインタの下の階層カードを光らせる（そこに押し込む） */
+  const i = +lane.dataset.lane, ln = M.board.lanes[i];
+  if (ln.unit != null && ln.count >= ln.cap && M.phase === 'placement') {
+    const chEl = chUnder(ev.clientX, ev.clientY, i);
+    if (chEl) chEl.classList.add('push-over');
+  }
 });
 
 function laneUnder(x, y) {
@@ -864,17 +864,48 @@ function laneUnder(x, y) {
   }
   return null;
 }
+/** そのレーンのチャネリングカードのうち、ポインタの真下にあるもの（押し込み先の指定用） */
+function chUnder(x, y, laneIdx) {
+  const els = document.elementsFromPoint(x, y);
+  for (const e of els) {
+    const c = e.closest && e.closest('.card.ch');
+    if (c && +c.dataset.lane === laneIdx) return c;
+  }
+  return null;
+}
 
 document.addEventListener('pointerup', (ev) => {
   if (!drag) return;
   const d = drag; drag = null;
-  document.querySelectorAll('.lane.droppable,.lane.over').forEach((l) =>
-    l.classList.remove('droppable', 'over'));
+  document.querySelectorAll('.lane.droppable,.lane.over,.lane.target').forEach((l) =>
+    l.classList.remove('droppable', 'over', 'target'));
+  document.querySelectorAll('.card.ch.push-over').forEach((c) => c.classList.remove('push-over'));
   if (d.ghost) d.ghost.remove();
   d.el.classList.remove('dragging');
+
+  if (d.kind === 'unit') {
+    if (!d.moved) {                            /* タップ＝行動メニュー */
+      UI.lane = d.lane;
+      UI.mode = 'unit';
+      return renderAll();
+    }
+    const lane = laneUnder(ev.clientX, ev.clientY);
+    if (lane && d.targets && d.targets.indexOf(+lane.dataset.lane) >= 0) {
+      return doAttack(d.lane, +lane.dataset.lane);
+    }
+    return renderAll();                        /* 対象以外で離した＝キャンセル */
+  }
+
   if (!d.moved) { showCardInfo(d.el); return; }
   const lane = laneUnder(ev.clientX, ev.clientY);
-  if (lane) showDropConfirm(d.idx, +lane.dataset.lane);
+  if (!lane) return;
+  const i = +lane.dataset.lane, ln = M.board.lanes[i];
+  let pushLayer = null;
+  if (ln.unit != null && ln.count >= ln.cap) {
+    const chEl = chUnder(ev.clientX, ev.clientY, i);
+    if (chEl) pushLayer = +chEl.dataset.layer;
+  }
+  doDrop(d.idx, i, pushLayer);
 });
 
 /* 対戦開始 */
