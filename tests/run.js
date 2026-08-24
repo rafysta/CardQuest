@@ -488,15 +488,15 @@ t('チャネルの硬直は「付加された自陣ユニット」だけ（2026-
   eq([foe.ok, m.board.lanes[3].stiff, m.board.lanes[3].channeled],
      [true, false, true], '敵ユニットへのチャネルは硬直しない（channeled印だけ付く）');
 });
-t('メインステップでは同じレーンに2回チャネルできない（敵レーン含む）', () => {
+t('メインステップではチャネルできない（配置は配置ステップ限定＝2026-08-24 本人の指定）', () => {
   const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, []);
   m.board.lanes[3] = lane(8, []);
   m.players.self.hand.push(180, 180);
   m.players.self.handCount = m.players.self.hand.length;
-  const r1 = CQTurn.channel(m, 3, 0);
-  eq([r1.ok, m.board.lanes[3].stiff], [true, false], '1回目：成立・敵は硬直しない');
-  const r2 = CQTurn.channel(m, 3, 0);
-  eq(r2.ok, false, '2回目：同ターン同レーンは拒否');
+  eq(CQTurn.channel(m, 0, 0).ok, false, '自陣レーンへのチャネルも拒否');
+  eq(CQTurn.channel(m, 3, 0).ok, false, '敵レーンへのチャネルも拒否');
+  eq(m.players.self.hand.length, 2, '手札は減らない');
 });
 
 section('turn: メインステップ・リバース');
@@ -568,13 +568,13 @@ t('メインのチャネルは押し込み不可・対象が行動済みなら�
 });
 
 section('turn: リバースの行動継続（opts.cont＝原作 SW583）');
-t('cont：1階層ずつ開ける。硬直せず、同じレーンの上の階層を続けられる', () => {
+t('cont：1階層開いた瞬間に硬直する（2026-08-24 本人の指定）。同じレーンの上の階層は続けて開ける', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(151), down(151), down(151)]);
   const r1 = CQTurn.reverseAction(m, 0, [1], { cont: true });
-  eq([r1.ok, m.board.lanes[0].stiff, m.reversing], [true, false, 0], '1階層目：硬直せず継続中');
+  eq([r1.ok, m.board.lanes[0].stiff, m.reversing], [true, true, 0], '1階層目：即硬直・継続中');
   const r2 = CQTurn.reverseAction(m, 0, [2], { cont: true });
-  eq([r2.ok, m.board.lanes[0].channels[1].up, m.board.lanes[0].stiff], [true, true, false], '2階層目も続けて開ける');
+  eq([r2.ok, m.board.lanes[0].channels[1].up, m.reversing], [true, true, 0], '硬直していても2階層目を続けて開ける');
 });
 t('cont：最上段まで開き切ると行動終了（硬直）＝原作 EV0048', () => {
   const m = mkBattleBoard();
@@ -611,10 +611,10 @@ t('cont：継続中に別レーンへアタックすると確定（硬直）す�
   eq(r.ok, true, 'レーン1の攻撃は成立');
   eq([m.board.lanes[0].stiff, m.reversing], [true, null], '攻撃開始でレーン0は確定・硬直');
 });
-t('cont：継続中のレーンへのチャネルは「行動済み」として拒否される', () => {
+t('cont：継続中のレーンへのチャネルも拒否される（メインステップは配置不可）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(151)]);
-  CQTurn.reverseAction(m, 0, [1], { cont: false });                 // ←contなし＝即硬直（従来動作の確認込み）
+  CQTurn.reverseAction(m, 0, [1], { cont: false });                 // ←contなし＝従来どおり1回で硬直
   eq(m.board.lanes[0].stiff, true, 'contなしの従来モードは1回で硬直');
   const m2 = mkBattleBoard();
   m2.board.lanes[0] = lane(8, [down(151), down(151)]);
@@ -623,8 +623,8 @@ t('cont：継続中のレーンへのチャネルは「行動済み」として�
   CQTurn.reverseAction(m2, 0, [1], { cont: true });
   eq(m2.reversing, 0, '継続中');
   const ch = CQTurn.channel(m2, 0, 0);                              // 継続中のレーン自身へチャネル
-  eq(ch.ok, false, '継続中のレーンへのチャネルは拒否（確定→行動済み）');
-  eq(m2.board.lanes[0].stiff, true, '確定して硬直');
+  eq(ch.ok, false, 'メインステップのチャネルは拒否');
+  eq(m2.board.lanes[0].stiff, true, 'リバースした時点で硬直している');
 });
 t('cont：ターン終了で継続中の印は消える', () => {
   const m = mkBattleBoard();

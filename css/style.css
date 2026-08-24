@@ -587,3 +587,41 @@ td.nm{font-weight:800}
 .sim-result .dn{color:#ff8585}
 .sim-log{background:#060a13;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
   max-height:52vh;overflow:auto;font-size:13px;line-height:1.6;white-space:pre-wrap;color:#c7d2e8}
+
+/* ================= v0.13.4：戦闘の当事者表示と動きの演出 ================= */
+
+/* 戦闘中は当事者の2レーン以外を暗くして、戦っているカードだけが浮かび上がるようにする */
+.lane.dimmed{filter:brightness(.38) saturate(.55);transition:filter .25s}
+/* 攻撃している側・受けている側の両方を黄色い点線で囲む（受け手だけだった従来の直し） */
+.lane.fighting{background:#ffffff10;border-radius:10px;
+  outline:3px dashed var(--accent);outline-offset:4px}
+/* ユニットに出す「攻撃／防御」の札 */
+.fight-tag{
+  position:absolute;left:4px;bottom:30px;z-index:6;font-size:12px;font-weight:800;
+  padding:2px 7px;border-radius:6px;background:#000b;border:1px solid;letter-spacing:.1em;
+}
+.fight-tag.atk{border-color:#ff8585;color:#ff9b9b}
+.fight-tag.def{border-color:#7db4ff;color:#9cc5ff}
+
+/* オープンフェイズを終えるボタン（右下）。目に付くよう黄色い枠にする */
+.act-btn.warn{border-color:var(--accent);color:var(--accent)}
+
+/* ---- 動きの演出（エンジンの差分から js/layout.js の animateFx が付ける） ---- */
+@keyframes cq-in-top{from{transform:translateY(-70px);opacity:0}to{transform:none;opacity:1}}
+@keyframes cq-in-left{from{transform:translateX(-80px);opacity:0}to{transform:none;opacity:1}}
+@keyframes cq-flip{from{transform:perspective(600px) rotateY(88deg)}to{transform:none}}
+@keyframes cq-deal{from{transform:translateY(-150px);opacity:0}to{transform:none;opacity:1}}
+@keyframes cq-out{to{transform:translateX(100px) rotate(9deg);opacity:0}}
+#board .card.an-in{animation:cq-in-top .3s ease-out backwards}
+#board .card.an-in-left{animation:cq-in-left .3s ease-out backwards}
+#board .card.an-flip{animation:cq-flip .3s ease-out backwards}
+#board .card.an-out{animation:cq-out .28s ease-in forwards}
+.hand-card.an-deal{animation:cq-deal .3s ease-out backwards}
+
+/* ---- ユニット破壊：カードが粉々に割れて飛び散る（shatterEffect が生成） ---- */
+.cq-shard-box{position:fixed;z-index:600;pointer-events:none}
+.cq-shard{position:absolute;overflow:hidden}
+.cq-shard>.card{box-shadow:none;border-radius:0}
+@keyframes cq-shard-fly{
+  to{transform:translate(var(--sx),var(--sy)) rotate(var(--sr));opacity:0}
+}

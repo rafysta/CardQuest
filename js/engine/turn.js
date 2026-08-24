@@ -210,28 +210,20 @@
     return { ok: true, lane: lane, full: lane.count >= lane.cap };
   }
 
-  /** 手札のカードをレーンに付加する（裏向き）。配置ステップは押し込み可、メインステップは不可。
+  /** 手札のカードをレーンに付加する（裏向き）。押し込みも含めて配置ステップ限定。
+   * （原作はメインステップでもチャネルできるが、2026-08-24 本人の指定で
+   *   「カードを置けるのは配置ステップだけ」に変更した。意図的な原作からの変更点）
    * meIsMine: このチャネルの所有者は誰か（呼び出し側の陣営）。原作は「置いた人」が所有者になる */
   function channel(m, laneIndex, handIndex, opts) {
     const o = opts || {};
-    if (m.phase !== 'placement' && m.phase !== 'main') return { ok: false, reason: 'いまはチャネルできません' };
-    // リバース継続中のレーン自身にチャネルしようとしたら、まず継続を確定（硬直）させる
-    // →このあとの stiff チェックで正しく拒否される（1ユニット1ターン1行動）
-    if (m.reversing === laneIndex) finalizeReverse(m, null);
+    if (m.phase !== 'placement') return { ok: false, reason: 'カードを置けるのは配置ステップだけです' };
     const side = m.active, p = activePlayer(m);
-    if (m.phase === 'main') {
-      const own = S.lanesOf(side);
-      // メインステップのチャネルは自陣・敵陣どちらのレーンも対象にできる（原作準拠）が、
-      // 「1ユニット1ターン1行動」を対象レーン自身の硬直で管理する
-    }
     const acc = laneAcceptsChannel(m, laneIndex);
     if (!acc.ok) return acc;
     const lane = acc.lane;
     // 硬直するのは「付加された自陣ユニット」だけ（仕様書§4.2。傀儡の反転は操作権で判定）。
     // 相手のユニットへのチャネルで相手を行動不能にできてはいけない（2026-08-24 本人の指摘）
     const targetIsOwn = S.controlSide(lane, laneIndex) === side;
-    if (m.phase === 'main' && lane.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
-    if (m.phase === 'main' && lane.channeled) return { ok: false, reason: 'そのユニットにはこのターン既にチャネリングしています' };
     // 閉鎖(184)・カース98：チャネリング自体ができなくなる（押し込みも不可）。
     // 遮蔽(136)は cap=count にする点は同じだが押し込みは禁止しない（非対称。原作の確定事項#8）
     if (lane.acc.closedSkill >= 1) return { ok: false, reason: '閉鎖：チャネリングできません' };
@@ -239,7 +231,6 @@
     if (id == null) return { ok: false, reason: '手札の指定が不正です' };
 
     if (acc.full) {
-      if (m.phase !== 'placement') return { ok: false, reason: '満杯です（押し込みは配置ステップのみ）' };
       const layer = o.layer;
       if (!(layer >= 1 && layer <= lane.channels.length)) return { ok: false, reason: '押し込む階層の指定が不正です' };
       finalizeReverse(m, null);                       // 別の行動を始めた＝継続中のリバースを確定
@@ -307,7 +298,9 @@
     recalc(m);                                              // flipped（傀儡）・acc を最新化してから判定
     // 傀儡(169)・カース92で操作権が反転していると、いまの操作側だけがリバースできる（M4）
     if (S.controlSide(lane, laneIndex) !== side) return { ok: false, reason: '自陣のユニットだけがリバースできます' };
-    if (lane.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
+    // 継続モードでは1階層目を開いた時点で硬直させる（2026-08-24 本人の指定）ため、
+    // 「継続中のレーン自身」だけは硬直していても続きのリバースを許す（原作 SW583 の継続に相当）
+    if (lane.stiff && m.reversing !== laneIndex) return { ok: false, reason: 'そのユニットは行動済みです' };
     if (!layers || !layers.length) return { ok: false, reason: '階層の指定がありません' };
     if (lane.acc.lock >= 1) return { ok: false, reason: '固定／石化でリバースできません' };
 
@@ -351,13 +344,16 @@
       if (checkResult(m)) break;
     }
     const finalLane = m.board.lanes[laneIndex];
+    // リバースしたユニットはその瞬間に硬直する（2026-08-24 本人の指定。従来は継続確定まで
+    // 硬直を遅らせていたが、画面上で「動けなくなった」ことがすぐ分かるように変更）。
+    // 継続モード中の同じレーンだけは、硬直していても上の階層を続けて開ける（上の stiff 判定参照）
+    if (finalLane && finalLane.unit != null) finalLane.stiff = true;
     if (opts && opts.cont && !m.winner
         && finalLane && finalLane.unit != null
         && finalLane.reversePtr < finalLane.channels.length) {
       m.reversing = laneIndex;        // 行動継続中（原作 SW583）：まだ上の階層を続けられる
     } else {
-      // 従来モード、または最上段まで到達＝行動終了（原作 EV0048：硬直）
-      if (finalLane && finalLane.unit != null) finalLane.stiff = true;
+      // 従来モード、または最上段まで到達＝行動終了（原作 EV0048）
       m.reversing = null;
     }
     activePlayer(m).actedThisTurn = true;

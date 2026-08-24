@@ -130,25 +130,179 @@ function newMatch() {
 let logMark = null;
 function markLog() { if (logMark === null) logMark = M.log.length; }
 
-/** 人の入力が要るところまで進める。UIの操作は必ず最後にこれを呼ぶ */
+/* ================= 動きの演出（v0.13.4） =================
+ * エンジンの状態変化を「操作前後の差分」から検出し、CSSアニメーションで見せる。
+ *   ・手札の配布＝上からスライドイン（1枚ずつ順に）
+ *   ・召還・チャネル＝上からスライドイン（相手の手番は1手ずつ間を置いて見せる）
+ *   ・押し込み＝出ていくカードが右へ飛び、入るカードは左からスライドイン
+ *   ・オープン／クローズ＝めくり（相手の戦闘オープンも1枚ずつ）
+ *   ・ユニット破壊＝カードが粉々に割れて飛び散る
+ * 演出中は busy が立ち、盤面・手札・パネルの操作を受け付けない（短時間なので待てばよい）。
+ * エンジンには一切手を入れず、画面側だけで完結させる。乱数も見た目専用なので Math.random でよい。 */
+const FX = { step: 460, deal: 90, out: 280 };
+let busy = false;
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function snapFx() {
+  return {
+    lanes: M.board.lanes.map((ln) => ({
+      unit: ln.unit,
+      chs: ln.channels.map((c) => ({ card: c.card, up: !!c.up }))
+    })),
+    hand: M.players[handSide()].hand.length,
+    handSide: handSide()
+  };
+}
+let FXPREV = null;
+/** 人の操作の直前に呼ぶ（直後の step() が差分を演出する） */
+function markFx() { FXPREV = snapFx(); }
+
+/** ユニット破壊の演出：いま見えているカードを16片に割って飛散させる */
+function shatterEffect(el) {
+  return new Promise((res) => {
+    const r = el.getBoundingClientRect();
+    if (!(r.width > 0)) { res(); return; }
+    const box = document.createElement('div');
+    box.className = 'cq-shard-box';
+    box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+    box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
+    const N = 4, w = r.width / N, h = r.height / N;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const p = document.createElement('div');
+      p.className = 'cq-shard';
+      p.style.left = (x * w) + 'px'; p.style.top = (y * h) + 'px';
+      p.style.width = w + 'px'; p.style.height = h + 'px';
+      const c = el.cloneNode(true);                       /* 破片＝カードの複製を切り抜いたもの */
+      c.style.position = 'absolute'; c.style.margin = '0';
+      c.style.left = (-x * w) + 'px'; c.style.top = (-y * h) + 'px';
+      c.style.width = r.width + 'px'; c.style.height = r.height + 'px';
+      p.appendChild(c);
+      p.style.setProperty('--sx', ((x - (N - 1) / 2) * (26 + Math.random() * 30)) + 'px');
+      p.style.setProperty('--sy', (((y - (N - 1) / 2) * 16) + 60 + Math.random() * 70) + 'px');
+      p.style.setProperty('--sr', ((Math.random() * 140) - 70) + 'deg');
+      p.style.animation = 'cq-shard-fly ' + (0.5 + Math.random() * 0.22) + 's ease-in forwards';
+      p.style.animationDelay = (Math.random() * 0.06) + 's';
+      box.appendChild(p);
+    }
+    el.style.visibility = 'hidden';                        /* 本体は隠す（破片が本体の代わり） */
+    document.body.appendChild(box);
+    setTimeout(res, 640);                                  /* 演出の山が過ぎたら次へ進む */
+    setTimeout(() => box.remove(), 900);                   /* 破片の後始末は裏で */
+  });
+}
+
+/** 差分を検出して演出しつつ再描画する。
+ * 戻り値＝演出が落ち着くまでに待つべきミリ秒（見える変化が無ければ 0） */
+async function animateFx(prev) {
+  if (!prev) { renderAll(); return 0; }
+  let wait = 0;
+  const lanes = M.board.lanes;
+  /* --- 再描画の前：古いDOMのまま行う演出（破壊の飛散・押し出されるカード） --- */
+  const pre = [];
+  let hadOut = false;
+  for (let i = 0; i < 6; i++) {
+    const pv = prev.lanes[i], now = lanes[i];
+    if (pv.unit != null && now.unit !== pv.unit) {
+      const el = document.querySelector('#board .card.unit[data-lane="' + i + '"]');
+      if (el) { pre.push(shatterEffect(el)); wait = Math.max(wait, 340); }
+    } else if (pv.unit != null && now.unit != null && pv.chs.length === now.channels.length) {
+      for (let k = 1; k <= now.channels.length; k++) {
+        if (pv.chs[k - 1] && pv.chs[k - 1].card !== now.channels[k - 1].card) {
+          const el = document.querySelector('#board .card.ch[data-lane="' + i + '"][data-layer="' + k + '"]');
+          if (el) { el.classList.add('an-out'); wait = Math.max(wait, 340); hadOut = true; }
+        }
+      }
+    }
+  }
+  if (pre.length) await Promise.all(pre);
+  else if (hadOut) await sleep(FX.out);
+  renderAll();
+  /* --- 再描画の後：新しく現れた・めくられたカードに演出クラスを付ける --- */
+  for (let i = 0; i < 6; i++) {
+    const pv = prev.lanes[i], now = lanes[i];
+    if (now.unit == null) continue;
+    if (pv.unit !== now.unit) {                            /* 召還・リバース召還 */
+      const el = document.querySelector('#board .card.unit[data-lane="' + i + '"]');
+      if (el) { el.classList.add('an-in'); wait = Math.max(wait, 340); }
+      continue;
+    }
+    for (let k = 1; k <= now.channels.length; k++) {
+      const el = document.querySelector('#board .card.ch[data-lane="' + i + '"][data-layer="' + k + '"]');
+      if (!el) continue;
+      const p = pv.chs[k - 1], c = now.channels[k - 1];
+      if (!p) { el.classList.add('an-in'); wait = Math.max(wait, 340); continue; }   /* 新しく積まれた */
+      if (p.card !== c.card) {                                                       /* 入れ替わった */
+        el.classList.add(pv.chs.length === now.channels.length ? 'an-in-left' : 'an-in');
+        wait = Math.max(wait, 340); continue;
+      }
+      if (p.up !== !!c.up) { el.classList.add('an-flip'); wait = Math.max(wait, 340); }  /* めくられた */
+    }
+  }
+  /* --- 手札の配布（同じ側の手札が増えたときだけ。1枚ずつ順に） --- */
+  if (prev.handSide === handSide()) {
+    const n = M.players[handSide()].hand.length;
+    for (let i = prev.hand; i < n; i++) {
+      const el = document.querySelector('#hand .hand-card[data-hand="' + i + '"]');
+      if (el) {
+        el.classList.add('an-deal');
+        el.style.animationDelay = ((i - prev.hand) * FX.deal) + 'ms';
+        wait = Math.max(wait, (i - prev.hand) * FX.deal + 340);   /* 最後の1枚が収まるまで */
+      }
+    }
+  }
+  return wait;
+}
+
+/** エンジンを1手動かして、その差分を演出する（相手の自動手番・自動オープン用） */
+async function fxAct(fn) {
+  const prev = snapFx();
+  const ret = fn();
+  const w = await animateFx(prev);
+  if (w) await sleep(Math.max(w, FX.step));   /* 1手ごとに少し間を置いて、動きが目で追えるようにする */
+  return ret;
+}
+
+/** 人の入力が要るところまで進める。UIの操作は必ず最後にこれを呼ぶ。
+ * 相手の手番と戦闘のオープンは1手ずつ、間（FX.step）を置いて見せる */
+let stepQueued = false;
 function step() {
+  if (busy) { stepQueued = true; return; }
+  busy = true;
+  runStep()
+    .catch((e) => { console.error(e); })
+    .then(() => {
+      busy = false;
+      if (stepQueued) { stepQueued = false; step(); }
+    });
+}
+
+async function runStep() {
   const mark = logMark === null ? M.log.length : logMark;
   logMark = null;
+  const pv = FXPREV; FXPREV = null;
+  if (pv) { const w = await animateFx(pv); if (w) await sleep(w); }   /* 人の操作直後の変化をまず見せる */
   let guard = 0;
   while (M && !M.winner && guard++ < 500) {
     if (M.combat) {                                   /* 戦闘中のオープンフェイズ */
       if (!isAuto(CQCombat.openerSide(M))) break;
-      CQAi.openStep(M);
+      await fxAct(() => CQAi.openStep(M));            /* 相手のオープンは1枚ずつめくって見せる */
       continue;
     }
     if (isAuto(M.active)) {                           /* 相手の手番（自動） */
-      if (M.phase === 'draw') { CQTurn.beginTurn(M); continue; }
+      if (M.phase === 'draw') { CQTurn.beginTurn(M); renderAll(); continue; }
       if (M.phase === 'discard') { CQAi.discardStep(M); continue; }
-      if (M.phase === 'placement') { CQAi.playPlacement(M); CQTurn.endPlacement(M); continue; }
-      if (M.phase === 'main') { if (CQAi.mainStep(M)) continue; CQTurn.endTurn(M); continue; }
+      if (M.phase === 'placement') {                  /* 1枚ずつ場に出して見せる */
+        let n = 0;
+        while (n++ < 4 && M.phase === 'placement') {
+          if (!(await fxAct(() => CQAi.placementStep(M)))) break;
+        }
+        if (M.phase === 'placement') CQTurn.endPlacement(M);
+        continue;
+      }
+      if (M.phase === 'main') { if (await fxAct(() => CQAi.mainStep(M))) continue; CQTurn.endTurn(M); continue; }
       break;
     }
-    if (M.phase === 'draw') { CQTurn.beginTurn(M); continue; }   /* 人の手番：ドローは自動 */
+    if (M.phase === 'draw') { await fxAct(() => CQTurn.beginTurn(M)); continue; }   /* 人の手番：ドローは自動＋配布演出 */
     break;
   }
   const lines = M.log.slice(mark);
@@ -209,6 +363,9 @@ function unitHTML(i) {
   const tags = [];
   if (ln.stiff && !ln.extraAttack) tags.push('<div class="st-tag">行動済</div>');
   if (ln.extraAttack) tags.push('<div class="st-tag go">連続</div>');
+  /* 戦闘の当事者には「攻撃／防御」の札を出す（どちらが攻めているかを明示） */
+  if (M.combat && M.combat.attacker === i) tags.push('<div class="fight-tag atk">攻撃</div>');
+  else if (M.combat && M.combat.defender === i) tags.push('<div class="fight-tag def">防御</div>');
   return `<div class="card unit ${card.t} ${own ? 'own' : 'foe'} ${pup ? 'pup' : ''}"
       data-lane="${i}" data-card="${card.id}" data-own="${own ? 1 : 0}" data-pup="${pup ? 1 : 0}">
     <div class="art">${artInner(card)}</div>
@@ -237,8 +394,9 @@ function chHTML(i, k) {
   /* メインステップ：直接押してリバースできるか（裏なら押した瞬間に開く。
      表の技能は誤タップでの閉じ事故を防ぐため、押すと情報パネルに「閉じる」ボタンが出る） */
   const ln = M.board.lanes[i];
+  /* リバースは開いた瞬間に硬直するが、継続中（M.reversing）のレーンだけは続きを開ける */
   const canFlipHere = !M.combat && !M.winner && humanSide() === M.active && M.phase === 'main'
-    && CQState.controlSide(ln, i) === M.active && !ln.stiff
+    && CQState.controlSide(ln, i) === M.active && (!ln.stiff || M.reversing === i)
     && !(ln.acc && ln.acc.lock >= 1)
     && allowedLayers(i).indexOf(k) >= 0;
   const flip = canFlipHere && !ch.up;
@@ -268,8 +426,14 @@ function laneHTML(i) {
   const cls = [];
   if (UI.lane === i) cls.push('sel');
   if (UI.mode === 'attack' && UI.targets && UI.targets.indexOf(i) >= 0) cls.push('target');
-  if (M.combat && (M.combat.attacker === i || M.combat.defender === i)) cls.push('fighting');
-  if (M.combat && CQCombat.openerLane(M) === i) cls.push('opening');
+  /* 戦闘中：当事者の2レーンを黄色い点線で囲み、それ以外は暗くして
+     「どのカードとどのカードが戦っているか」を一目で分かるようにする（2026-08-24 本人の要望） */
+  if (M.combat) {
+    if (M.combat.attacker === i) cls.push('fighting', 'atk');
+    else if (M.combat.defender === i) cls.push('fighting', 'def');
+    else cls.push('dimmed');
+    if (CQCombat.openerLane(M) === i) cls.push('opening');
+  }
   let inner = '';
   if (ln.unit != null) {
     const max = Math.max(ln.cap, ln.channels.length);
@@ -363,7 +527,16 @@ function renderHand() {
   const acts = document.getElementById('acts');
   let b = '';
   if (M.winner) b = '<button class="act-btn" data-act="new">もう一度<br>対戦する</button>';
-  else if (M.combat) b = '';
+  else if (M.combat) {
+    /* オープンフェイズを終えるボタンは、他のステップの「配置を終える」と同じ右下に置く。
+     * 防御側は既に1枚以上開いていることもあるので「開かずに終える」ではなく「迎撃を終える」
+     * （2026-08-24 本人の指定） */
+    if (humanOpening()) {
+      b = M.combat.opener === 'defender'
+        ? '<button class="act-btn warn" data-act="open-end">迎撃を<br>終える</button>'
+        : '<button class="act-btn warn" data-act="open-end">オープンを<br>終える</button>';
+    }
+  }
   else if (humanSide() === M.active) {
     if (M.phase === 'placement') b = '<button class="act-btn" data-act="end-place">配置を<br>終える</button>';
     else if (M.phase === 'main') b = '<button class="act-btn" data-act="end-turn">ターンを<br>終了する</button>';
@@ -463,9 +636,10 @@ function panelInfo() {
   /* 戦闘のオープンフェイズ中に内容を見ているときは、フェイズを終えるボタンを必ず残す
      （情報を見たせいで手が止まらないようにするため） */
   if (humanOpening()) {
+    const endLabel = M.combat.opener === 'defender' ? '迎撃を終える' : 'オープンを終える';
     return paint(infoCardHTML(CARD_BY_ID[UI.info.card], UI.info)
       + '<p class="i-t dim">※ 開くときは、カードの<b>左半分（▶側）</b>を押します。</p>',
-      `<button class="btn ng" data-act="open-end">開かずに終える</button>`, true);
+      `<p class="i-hint">終えるときは右下の「${endLabel}」ボタンを押します</p>`);
   }
   /* 表になっている技能カード（自分が操作するレーン・メインステップ）は、ここから閉じられる。
    * 場のカードを押した瞬間に閉じてしまう誤操作を防ぐため、ワンクッション置いている */
@@ -512,7 +686,7 @@ function panelUnit() {
 
 function canReverse(i) {
   const ln = M.board.lanes[i];
-  if (ln.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
+  if (ln.stiff && M.reversing !== i) return { ok: false, reason: 'そのユニットは行動済みです' };
   if (!ln.channels.length) return { ok: false, reason: 'チャネルがありません' };
   if (ln.acc && ln.acc.lock >= 1) return { ok: false, reason: '固定・石化で開閉できません' };
   if (!allowedLayers(i).length) return { ok: false, reason: 'このターンはもう開閉できません' };
@@ -541,11 +715,15 @@ function panelAttack() {
 
 /* --- 戦闘：オープンフェイズ ---
  * 開く操作は場の▶付きカードを直接押す（選択ＵＩはパネルに置かない。2026-08-24 本人の指定）。
- * パネルは対戦カード・いまどちらのフェイズか・「開かずに終える」ボタンだけを出す */
+ * フェイズを終えるボタンは右下（「配置を終える」と同じ場所）に出す（2026-08-24 本人の指定）。
+ * パネルは対戦カードといまどちらのフェイズかの説明だけ */
 function panelBattle() {
   const c = M.combat;
+  /* 演出の途中描画では、UI.mode がまだ 'battle' のまま戦闘が終わっていることがある */
+  if (!c) return panelIdle();
   const A = M.board.lanes[c.attacker], D = M.board.lanes[c.defender];
   const role = c.opener === 'attacker' ? '攻撃側' : '防御側';
+  const endLabel = c.opener === 'defender' ? '迎撃を終える' : 'オープンを終える';
   const head = `<div class="vs">
       <span class="vs-a">攻 ${CARD_BY_ID[A.unit] ? CARD_BY_ID[A.unit].n : '—'} <b>${A.atk}</b></span>
       <span class="vs-x">▶</span>
@@ -553,9 +731,9 @@ function panelBattle() {
     </div>`;
   return paint(head + askHTML(`${jpSide(CQCombat.openerSide(M))}の${role}オープンフェイズ`,
     `▶の付いたカードの<b>左半分（▶側）を押すと開き</b>、<b>右半分（ⓘ側）を押すと中身を確認</b>できます。<br>
-     下から上への一方通行です（開いた階層より下の▶は消えます）。クローズはできません。`, 'warn')
-    + (UI.report ? reportHTML(UI.report) : ''),
-    `<button class="btn ng" data-act="open-end">開かずに終える</button>`, true);
+     下から上への一方通行です（開いた階層より下の▶は消えます）。クローズはできません。<br>
+     終えるときは右下の<b>「${endLabel}」</b>ボタンを押します。`, 'warn')
+    + (UI.report ? reportHTML(UI.report) : ''));
 }
 
 /* ================= 確認 ================= */
@@ -575,10 +753,14 @@ function doDrop(handIdx, laneIdx, pushLayer) {
   const ln = M.board.lanes[laneIdx];
   const mine = S_lanesOf(side).indexOf(laneIdx) >= 0;
 
+  /* カードを置けるのは配置ステップだけ（2026-08-24 本人の指定。エンジン側でも拒否される） */
+  if (M.phase !== 'placement') {
+    return paintNG(card, 'カードを置けるのは配置ステップだけです。メインステップではアタックとリバースだけができます。');
+  }
   if (ln.unit == null) {
     if (!mine) return paintNG(card, 'モンスターを相手の場に直接召還することはできません。相手の場に関われるのは、相手のユニットへのチャネルだけです。');
     if (card.t !== 'U') return paintNG(card, 'ここは空き枠です。魔法と技能はモンスターの上にしか置けません。');
-    markLog();
+    markLog(); markFx();
     const r = CQTurn.summon(M, laneIdx, handIdx);
     if (!r.ok) {
       if (/召還レベル/.test(r.reason || '')) {
@@ -594,11 +776,10 @@ function doDrop(handIdx, laneIdx, pushLayer) {
   if (full && !ln.channels.length) {
     return paintNG(card, `${host.n} はチャネルできる枠がありません（ＣＨ数 ${ln.cap}）。`);
   }
-  if (full && M.phase !== 'placement') return paintNG(card, 'チャネルが一杯です。押し込みができるのは配置ステップだけです。');
   if (full && pushLayer == null) {
     return paintNG(card, `${host.n} のチャネルは一杯です。押し込むときは、<b>入れ替えたい階層のカードに直接重ねて</b>離してください。その階層のカードを捨てて入れ替えます。`);
   }
-  markLog();
+  markLog(); markFx();
   const r = CQTurn.channel(M, laneIdx, handIdx, full ? { layer: pushLayer } : undefined);
   if (!r.ok) return paintNG(card, r.reason || 'その操作はできません');
   step();
@@ -629,7 +810,7 @@ function showDiscardConfirm(handIdx) {
 
 /** アタックを即実行する（確認なし。狙える相手だけが光っているので誤爆しにくい） */
 function doAttack(atkLane, defLane) {
-  markLog();
+  markLog(); markFx();
   const r = CQCombat.declareAttack(M, atkLane, defLane);
   UI.mode = 'idle'; UI.lane = null; UI.targets = null; UI.report = null;
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
@@ -639,7 +820,7 @@ function doAttack(atkLane, defLane) {
 /** 場のカードを1階層だけリバースする（直接クリック用。原作の SW583「行動継続中」に対応：
  * 同じレーンなら続けて上の階層も開け、別の行動を始めるか最上段まで開くと確定して硬直する） */
 function doFlip(laneIdx, layer) {
-  markLog();
+  markLog(); markFx();
   const r = CQTurn.reverseAction(M, laneIdx, [layer], { cont: true });
   UI.report = null;
   if (UI.mode === 'info') UI.mode = 'idle';   /* 内容を見たあとに開いたら、結果の表示に戻す */
@@ -648,7 +829,7 @@ function doFlip(laneIdx, layer) {
 }
 
 function doPending() {
-  markLog();
+  markLog(); markFx();
   const p = UI.pending;
   UI.pending = null;
   if (!p) return;
@@ -662,6 +843,7 @@ function doPending() {
 }
 
 function panelAct(act, data) {
+  if (busy) return;                                  /* 演出中は操作を受け付けない */
   switch (act) {
     case 'ok': return doPending();
     case 'cancel':
@@ -681,7 +863,7 @@ function panelAct(act, data) {
     case 'close-ch':                                  /* 表の技能を閉じる（情報パネルのボタン） */
       return doFlip(+data.lane, +data.layer);
     case 'open-end':
-      markLog();
+      markLog(); markFx();
       CQCombat.endOpen(M);
       return step();
     case 'end-place':
@@ -689,7 +871,7 @@ function panelAct(act, data) {
       CQTurn.endPlacement(M); UI.report = null;
       return step();
     case 'end-turn':
-      markLog();
+      markLog(); markFx();
       CQTurn.endTurn(M); UI.report = null;
       return step();
     default:
@@ -739,6 +921,7 @@ function showCardInfo(el) {
 let drag = null;
 
 document.getElementById('screen-battle').addEventListener('pointerdown', (ev) => {
+  if (busy) return;                                  /* 演出中は操作を受け付けない */
   /* 前のドラッグが何らかの理由で残っていたら、まず片付ける（保険） */
   if (drag) { clearDragVisuals(drag); drag = null; }
   const el = ev.target.closest('.card');
@@ -758,7 +941,7 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
 
   /* 戦闘中：▶付きのカードの左半分を押したら、その階層をそのまま開く */
   if (humanOpening() && el.classList.contains('openable') && !wantInfo) {
-    markLog();
+    markLog(); markFx();
     const r = CQCombat.open(M, +el.dataset.layer);
     if (!r.ok) flash(r.reason);
     return step();
@@ -777,6 +960,7 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
   if (el.classList.contains('hand-card')) {
     if (humanSide() !== M.active || M.combat) { showCardInfo(el); return; }
     if (M.phase === 'discard') { showDiscardConfirm(+el.dataset.hand); return; }
+    if (M.phase !== 'placement') { showCardInfo(el); return; }   /* 置けるのは配置ステップだけ */
     ev.preventDefault();                       /* 画像ドラッグ・テキスト選択を止める */
     drag = { kind: 'hand', el, id: +el.dataset.card, idx: +el.dataset.hand,
              x0: ev.clientX, y0: ev.clientY, moved: false, ghost: null };
@@ -838,10 +1022,10 @@ document.addEventListener('pointermove', (ev) => {
         const i = +l.dataset.lane, ln = M.board.lanes[i];
         const mine = CQState.lanesOf(M.active).indexOf(i) >= 0;
         const full = ln.unit != null && ln.count >= ln.cap;
-        const ok = ln.unit != null
-          ? (full ? (M.phase === 'placement' && ln.channels.length > 0)
-                  : (M.phase === 'placement' || !ln.stiff))
-          : (mine && c.t === 'U' && M.phase === 'placement');
+        /* カードを置けるのは配置ステップだけ（2026-08-24 本人の指定） */
+        const ok = M.phase === 'placement' && (ln.unit != null
+          ? (full ? ln.channels.length > 0 : true)
+          : (mine && c.t === 'U'));
         if (ok) l.classList.add('droppable');
       });
     }
