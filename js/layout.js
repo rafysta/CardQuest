@@ -75,6 +75,10 @@ const SAMPLE_DECK = [
 
 let M = null;                 /* エンジンの対戦状態。これが唯一の真実 */
 let foeAuto = true;           /* 相手を自動で動かすか */
+/* 相手ＡＩの強さ（M5）。フリー→Ｃ→Ｂ→Ａの順に切り替える。強さの実体は
+ * js/engine/ai.js の PRESETS（評価関数は共通で、透視率と行動制限だけが違う＝原作§11.4） */
+const AI_RANKS = ['free', 'rankC', 'rankB', 'rankA'];
+let aiRank = 'rankC';
 const UI = {
   mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-destroy */
   info: null,     /* 表示中のカード */
@@ -143,6 +147,7 @@ function newMatch() {
       onUnitOpen: CQUnits.onUnitOpen              /* M4 v0.14：ユニット固有能力「開：」型の発動処理 */
     }
   });
+  M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };   /* M5：相手ＡＩの強さ（評価関数方策） */
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
   step();
@@ -358,6 +363,7 @@ function renderStatus() {
     `<span class="tn">第 ${M.turn} ターン</span>
      <span class="tw">${phaseLabel()}</span>
      <button class="tiny" data-act="mode">相手：${foeAuto ? '自動' : '手動'}</button>
+     <button class="tiny" data-act="rank">強さ：${CQAi.PRESETS[aiRank].label}</button>
      <button class="tiny" data-act="new">新しい対戦</button>`;
 }
 
@@ -975,6 +981,12 @@ function panelAct(act, data) {
       foeAuto = !foeAuto;
       flash(foeAuto ? '相手を自動で動かします' : '相手もあなたが操作します');
       return step();
+    case 'rank': {                                     /* 相手ＡＩの強さ切替（M5） */
+      aiRank = AI_RANKS[(AI_RANKS.indexOf(aiRank) + 1) % AI_RANKS.length];
+      if (M) M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };
+      flash('相手の強さ：' + CQAi.PRESETS[aiRank].label + '（次の手番から反映）');
+      return renderAll();
+    }
     case 'attack':
       UI.mode = 'attack'; UI.targets = CQCombat.attackTargets(M, UI.lane);
       return renderAll();

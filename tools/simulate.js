@@ -1,11 +1,13 @@
 /* CardQuest — ヘッドレス自動対戦（開発用）
  *
- *   node tools/simulate.js [試行回数] [ターン上限]
+ *   node tools/simulate.js [試行回数] [ターン上限] [mode]
+ *     mode: mixed（既定）… シードごとに両陣営の方策をランダム／評価関数から混ぜる
+ *           random        … 両陣営ともランダム方策（従来どおり）
+ *           eval          … 両陣営とも評価関数方策（rankC）
  *
- * 両陣営が「その場で合法な行動をランダムに選ぶ」だけの方策で対戦させ、
- * 例外・無限ループ・状態不整合が起きないことを確かめる。
- * 原作の「超過ＣＨ無限ループ」のような事故を再発させないための回帰チェックで、
- * 勝率の数字そのものは（敵ＡＩが未実装なので）バランス評価には使えない。
+ * 例外・無限ループ・状態不整合が起きないことを確かめる回帰チェック。
+ * M5で敵ＡＩ（評価関数方策）が入ったため、mixed で両方策のコードパスを網羅する。
+ * ＡＩの勝率較正は tools/calibrate-ai.js を使う。
  */
 'use strict';
 const fs = require('fs');
@@ -81,7 +83,21 @@ function checkInvariants(m) {
   });
 }
 
-function runMatch(seed, maxTurns) {
+/* mixed のとき、シードごとに両陣営の方策を混ぜる（ランダム／フリー／Ｃ／Ａ）。
+ * ランダム方策と評価関数方策の両方のコードパスをファズで通すため */
+const AI_MIX = [null, CQAi.PRESETS.free, CQAi.PRESETS.rankC, CQAi.PRESETS.rankA];
+function pickConfig(mode, rng) {
+  if (mode === 'random') return undefined;
+  if (mode === 'eval') return { self: CQAi.PRESETS.rankC, enemy: CQAi.PRESETS.rankC };
+  const s = AI_MIX[rng.int(0, AI_MIX.length - 1)];
+  const e = AI_MIX[rng.int(0, AI_MIX.length - 1)];
+  const cfg = {};
+  if (s) cfg.self = s;
+  if (e) cfg.enemy = e;
+  return (s || e) ? cfg : undefined;
+}
+
+function runMatch(seed, maxTurns, mode) {
   const rng = CQRng.create(seed);
   const m = CQTurn.createMatch({
     cards: CARD_BY_ID, rng: rng,
@@ -90,6 +106,7 @@ function runMatch(seed, maxTurns) {
     opponentId: 101,
     hooks: HOOKS
   });
+  m.aiConfig = pickConfig(mode, rng);
   let guard = 0;
   while (!m.winner && m.turn < maxTurns && guard++ < 5000) {
     playTurn(m);
@@ -100,10 +117,11 @@ function runMatch(seed, maxTurns) {
 
 const runs = parseInt(process.argv[2], 10) || 300;
 const maxTurns = parseInt(process.argv[3], 10) || 80;
+const mode = process.argv[4] || 'mixed';
 const stat = { self: 0, enemy: 0, draw: 0, turns: 0, loot: 0, errors: [] };
 for (let seed = 1; seed <= runs; seed++) {
   try {
-    const m = runMatch(seed, maxTurns);
+    const m = runMatch(seed, maxTurns, mode);
     if (m.winner) stat[m.winner] += 1; else stat.draw += 1;
     stat.turns += m.turn;
     stat.loot += m.loot.length;
@@ -111,7 +129,7 @@ for (let seed = 1; seed <= runs; seed++) {
     stat.errors.push('seed ' + seed + ': ' + e.message);
   }
 }
-console.log(runs + ' 戦：自陣側 ' + stat.self + ' 勝 / 敵陣側 ' + stat.enemy + ' 勝 / 決着つかず ' + stat.draw);
+console.log(runs + ' 戦（mode=' + mode + '）：自陣側 ' + stat.self + ' 勝 / 敵陣側 ' + stat.enemy + ' 勝 / 決着つかず ' + stat.draw);
 console.log('平均 ' + (stat.turns / runs).toFixed(1) + ' 手番、戦利品 平均 ' + (stat.loot / runs).toFixed(2) + ' 枚');
 if (stat.errors.length) {
   console.log('\n例外 ' + stat.errors.length + ' 件:');

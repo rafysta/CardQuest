@@ -1856,6 +1856,223 @@ t('特殊行動は対象が無くても行動を消費する（仕様書§10.1�
   eq(m.board.lanes[0].stiff, true, '対象が無くても硬直する（行動を消費）');
 });
 
+/* ================= M5: 敵ＡＩ（評価関数方策） ================= */
+section('M5: 敵AI・情報モデル（カンニングしない）');
+const CQAi = require(path.join(root, 'js/engine/ai.js'));
+
+t('難易度プリセット：透視率がパラメータ化されている（§11.3）', () => {
+  eq(CQAi.PRESETS.free.spyRate, 0.196, 'フリー 19.6%');
+  eq(CQAi.PRESETS.rankC.spyRate, 0.24, 'Ｃ 24%');
+  eq(CQAi.PRESETS.rankB.spyRate, 0.31, 'Ｂ 31%');
+  eq(CQAi.PRESETS.rankA.spyRate, 0.36, 'Ａ・Ｓ 36%');
+  eq(CQAi.PRESETS.random.policy, 'random', '未設定・random は従来のランダム方策');
+});
+t('knownTo：知れるのは自分が置いたカード・表・公開済みだけ', () => {
+  eq(CQAi.knownTo({ up: false, mine: true }, 'self'), true, '自分が置いた裏カードは分かる');
+  eq(CQAi.knownTo({ up: false, mine: true }, 'enemy'), false, '相手には分からない');
+  eq(CQAi.knownTo({ up: true, mine: true }, 'enemy'), true, '表なら誰でも分かる');
+  eq(CQAi.knownTo({ up: false, mine: true, revealed: true }, 'enemy'), true, '公開済みなら分かる');
+  eq(CQAi.knownTo({ up: false, mine: true, spied_enemy: true }, 'enemy'), true, '透過で漏れたら分かる');
+});
+t('透過処理：spyRate=1なら必ず漏れ、spyRate=0なら決して漏れない', () => {
+  const mk = (rate) => {
+    const m = mkBattleBoard();
+    m.board.lanes[0] = lane(8, [down(151), down(152)]);   // mine:true＝プレイヤーが置いた
+    m.aiConfig = { enemy: { policy: 'eval', spyRate: rate } };
+    CQAi.observe(m, 'enemy');
+    return m.board.lanes[0].channels;
+  };
+  eq(mk(1).every((c) => c.spied_enemy), true, 'spyRate=1：全部漏れる');
+  eq(mk(0).some((c) => c.spied_enemy), false, 'spyRate=0：何も漏れない');
+});
+t('透過処理：1枚につき抽選は1回だけ（2回目のobserveでは再抽選しない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151)]);
+  m.aiConfig = { enemy: { policy: 'eval', spyRate: 0 } };
+  CQAi.observe(m, 'enemy');                            // 0%で抽選済みの印が付く
+  m.aiConfig = { enemy: { policy: 'eval', spyRate: 1 } };
+  CQAi.observe(m, 'enemy');                            // 100%にしても再抽選されない
+  eq(!!m.board.lanes[0].channels[0].spied_enemy, false, '1枚1回の抽選が守られる');
+});
+
+section('M5: 敵AI・仮想能力値（§11.2）');
+t('仮想能力値：自分のカードは中身どおり、不明カードは空白として数える', () => {
+  const m = mkBattleBoard();
+  // 自陣レーン0：疫障(155)と停滞(151)を自分で置いた（中身既知）
+  m.board.lanes[0] = lane(8, [down(155), down(151)]);
+  CQStats.recalc(m.board, OPT);
+  const own = CQAi.virtualStats(m, 'self', 0);
+  eq(own.atk, 600, '自分視点：疫障は開かない（500+100の1枚分だけ）');
+  eq(own.def, 650, '仮想防御力＝全部裏（450+100×2）');
+  // 同じレーンを敵視点で見ると：中身不明＝空白2枚として全部開く（最悪ケース）
+  const foe = CQAi.virtualStats(m, 'enemy', 0);
+  eq(foe.atk, 700, '敵視点：不明2枚は+100の頭数として全開（500+200）');
+});
+t('仮想能力値：透過で漏れたカードは実物として評価される', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(155), down(151)]);
+  m.board.lanes[0].channels[0].spied_enemy = true;      // 疫障が敵ＡＩに漏れた
+  CQStats.recalc(m.board, OPT);
+  const foe = CQAi.virtualStats(m, 'enemy', 0);
+  eq(foe.atk, 450, '漏れた疫障(-250)を含めて評価する（500+200-250）');
+});
+
+section('M5: 敵AI・攻撃判断（§11.2）');
+/* 評価関数側を self に置く（human=enemy を手で操作するテスト構成） */
+function aiBoard(turn) {
+  const m = mkBattleBoard();
+  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.turn = turn === undefined ? 5 : turn;               // 序盤ペナルティ切れ
+  m.players.self.turnsTaken = 3;
+  return m;
+}
+t('margin≧0（確実に勝てる攻撃）は序盤ペナルティが切れていれば必ず実行する', () => {
+  const m = aiBoard(5);
+  m.board.lanes[0] = lane(16, []);                      // A600（Ｃ型特殊行動なし）
+  m.board.lanes[3] = lane(8, []);                       // D450 → margin +150
+  const acted = CQAi.mainStep(m);
+  eq(acted, true, '行動した');
+  eq(m.board.lanes[3].unit, null, '敵ユニットが破壊された');
+  eq(!!m.lastBattle, true, '特殊行動ではなく攻撃で破壊した');
+});
+t('margin<0（判定上必ず失敗する攻撃）は仕掛けない', () => {
+  const m = aiBoard(5);
+  m.board.lanes[0] = lane(8, []);                       // A500
+  m.board.lanes[3] = lane(8, [down(151, { mine: false }), down(151, { mine: false })]);  // D650
+  m.players.self.lp = 99;                               // やけくそ条件を殺す（③リーサル・②全滅の余地なし）
+  m.players.enemy.lp = 99;
+  const acted = CQAi.mainStep(m);
+  eq(acted, false, '何もしない（攻撃・リバース・特殊行動の対象が無い）');
+  eq(m.board.lanes[3].unit, 8, '敵ユニットは無傷');
+});
+t('1ターン目は確実に勝てる攻撃でも見送る（序盤ペナルティ最大+1000）', () => {
+  const m = aiBoard(1);
+  m.board.lanes[0] = lane(16, []);                      // Ｃ型特殊行動なし
+  m.board.lanes[3] = lane(8, []);
+  m.players.enemy.lp = 99;                              // リーサルによるやけくそを殺す
+  CQAi.mainStep(m);
+  eq(m.board.lanes[3].unit, 8, 'まだ攻撃しない');
+});
+t('リーサル（ＣＨ数≧相手ＬＰ）の相手を最優先で狙う', () => {
+  const m = aiBoard(5);
+  m.board.lanes[0] = lane(16, []);                      // A600：どちらも倒せる
+  m.board.lanes[3] = lane(27, []);                      // メガゾエア ＣＨ2
+  m.board.lanes[4] = lane(8, []);                       // ピッグマン ＣＨ4 ＝リーサル
+  m.players.enemy.lp = 4;
+  CQAi.mainStep(m);
+  eq(m.winner, 'self', 'ＣＨ4のピッグマンを選んで勝負を決める');
+});
+t('フリーユニットは最初の2手番攻撃しない（§11.4）', () => {
+  const m = aiBoard(9);
+  m.aiConfig = { self: CQAi.PRESETS.free };
+  m.players.self.turnsTaken = 2;                        // まだ2手番目
+  m.players.enemy.lp = 99;
+  m.board.lanes[0] = lane(16, []);                      // Ｃ型特殊行動なし
+  m.board.lanes[3] = lane(8, []);
+  CQAi.mainStep(m);
+  eq(m.board.lanes[3].unit, 8, '2手番目までは攻撃しない');
+  m.players.self.turnsTaken = 3;
+  CQAi.mainStep(m);
+  eq(m.board.lanes[3].unit, null, '3手番目からは攻撃する');
+});
+t('相手スタックに漏れて見えている雷撃(135)の罠がある相手は避ける', () => {
+  const m = aiBoard(5);
+  m.board.lanes[0] = lane(10, []);                      // A600 D550（雷撃の射程内）
+  m.board.lanes[3] = lane(8, [down(135, { mine: false })]);   // 罠入り D550
+  m.board.lanes[3].channels[0].spied_self = true;       // 透過で漏れている
+  m.board.lanes[4] = lane(27, []);                      // 罠なし D400
+  m.players.enemy.lp = 99;
+  CQAi.mainStep(m);
+  eq(m.board.lanes[4].unit, null, '罠の無い方を狙う');
+  eq(m.board.lanes[3].unit, 8, '罠入りは残る');
+});
+
+section('M5: 敵AI・戦闘中のオープン判断');
+t('防御側：閉じたままで守れるなら1枚も開かない', () => {
+  const m = mkBattleBoard();
+  m.aiConfig = { enemy: CQAi.PRESETS.rankC };
+  m.board.lanes[0] = lane(8, []);                                  // A500
+  m.board.lanes[3] = lane(8, [down(151, { mine: false })]);        // D550 → 安全
+  CQCombat.declareAttack(m, 0, 3);
+  let g = 0;
+  while (m.combat && g++ < 10) CQAi.openStep(m);                   // 防御側＝評価関数ＡＩ
+  eq(m.board.lanes[3].channels[0].up, false, '閉じたまま');
+  eq(m.lastBattle.success, false, '攻撃は失敗');
+});
+t('防御側：死ぬしかないなら、知っている対抗魔法（135雷撃）を開いて攻撃側を落とす', () => {
+  // 135は「防御力550以下から無作為選択」なので、防御側自身が射程外（>550）になる盤面で
+  // 決定的に検証する：防御側は開いた後も防御力600、攻撃側は550＝雷撃は必ず攻撃側に当たる
+  const m = mkBattleBoard();
+  m.aiConfig = { enemy: CQAi.PRESETS.rankC };
+  m.board.lanes[0] = lane(10, [up(151), up(151)]);                 // A800 D550（表2枚で攻撃+200）
+  m.board.lanes[3] = lane(27, [down(135, { mine: false }), down(151, { mine: false })]);  // D700
+  CQCombat.declareAttack(m, 0, 3);                                 // 800≧700 → 防御側は死ぬしかない
+  let g = 0;
+  while (m.combat && g++ < 10) CQAi.openStep(m);
+  eq(m.board.lanes[0].unit, null, '雷撃で攻撃側が破壊される');
+  eq(m.board.lanes[3].unit, 27, '防御側は生き残る');
+});
+
+section('M5: 敵AI・配置と手札');
+t('手札スロット7のカードは使わない（§11.4：ＡＩは実質6枚運用）', () => {
+  const m = mkBattleBoard();
+  m.phase = 'placement';
+  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.players.self.hand = [180, 180, 180, 180, 180, 180, 8];   // ユニットはスロット7にだけ
+  CQAi.placementStep(m);
+  eq(m.board.lanes.every((l) => l.unit == null), true, 'スロット7のユニットは召還できない');
+});
+t('評価関数の強制捨ては空白(180)を優先し、無ければ末尾（スロット7）を捨てる', () => {
+  const m = mkBattleBoard();
+  m.phase = 'discard';
+  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.players.self.hand = [8, 180, 151];
+  CQAi.discardStep(m);
+  eq(m.players.self.hand.indexOf(180), -1, '空白が捨てられた');
+  m.phase = 'discard';                                  // 捨て終わるとphaseが進むので戻す
+  m.players.self.hand = [8, 151, 152];
+  CQAi.discardStep(m);
+  eq(m.players.self.hand, [8, 151], '空白が無ければ末尾を捨てる');
+});
+t('マリガン：召還できるユニットが無い初手は手札を引き直す（§4.1）', () => {
+  const m = newMatch(600, { selfDeck: mkDeck(50, [151, 8]) });
+  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  CQTurn.beginTurn(m);
+  m.players.self.hand = [151, 151, 151, 151, 151, 151];      // ユニットなしの初手に固定
+  const lpBefore = m.players.self.lp;
+  CQAi.placementStep(m);
+  eq(m.players.self.hasChanged, true, 'チェンジを使った');
+  eq(m.players.self.lp, lpBefore - 1, 'ＬＰを1消費');
+});
+t('フリーユニットはマリガンしない（§11.4）', () => {
+  const m = newMatch(601, { selfDeck: mkDeck(50, [151, 8]) });
+  m.aiConfig = { self: CQAi.PRESETS.free };
+  CQTurn.beginTurn(m);
+  m.players.self.hand = [151, 151, 151, 151, 151, 151];
+  CQAi.placementStep(m);
+  eq(m.players.self.hasChanged, false, 'チェンジを使わない');
+});
+t('罠カード（呪爆133など）は相手のユニットに仕込む', () => {
+  const m = mkBattleBoard();
+  m.phase = 'placement';
+  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.board.lanes[0] = lane(8, []);
+  m.board.lanes[3] = lane(8, []);
+  m.players.self.hand = [133];
+  let g = 0;
+  while (g++ < 5 && CQAi.placementStep(m)) { /* 置けるだけ置く */ }
+  eq(m.board.lanes[3].channels.some((c) => c.card === 133), true, '呪爆は敵ユニットへ');
+  eq(m.board.lanes[0].channels.length, 0, '自陣には置かない');
+});
+t('aiConfig未設定なら従来のランダム方策のまま動く（後方互換）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, []);
+  m.board.lanes[3] = lane(8, []);
+  const acted = CQAi.mainStep(m);                        // ランダム方策は無条件に攻撃する
+  eq(acted, true, '行動する');
+  eq(!!m.lastBattle, true, '攻撃が実行された');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }
