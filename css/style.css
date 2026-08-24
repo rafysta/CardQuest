@@ -265,8 +265,9 @@ input{-webkit-user-select:text;user-select:text}
   background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:14px;
 }
 .i-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+/* 正方形（イラストが1024×1024の正方形なので、箱も正方形にして全体を見せる） */
 .i-art{
-  width:100%;height:150px;border-radius:10px;overflow:hidden;margin-bottom:10px;
+  width:100%;aspect-ratio:1/1;border-radius:10px;overflow:hidden;margin-bottom:10px;
   display:flex;align-items:center;justify-content:center;
   font-size:44px;font-weight:800;color:#ffffff55;border:2px solid #ffffff33;
 }
@@ -505,18 +506,18 @@ td.nm{font-weight:800}
 .detail .big.U{border-color:var(--u-edge);background:linear-gradient(160deg,var(--u-1),var(--u-2))}
 .detail .big.M{border-color:var(--m-edge);background:linear-gradient(160deg,var(--m-1),var(--m-2))}
 .detail .big.S{border-color:var(--s-edge);background:linear-gradient(160deg,var(--s-1),var(--s-2))}
+/* 正方形（イラストが1024×1024の正方形なので、箱も正方形にして全体を見せる） */
 .detail .bigart{
-  height:140px;border-radius:10px;background:#0009;border:1px dashed rgba(255,255,255,.35);
+  aspect-ratio:1/1;border-radius:10px;background:#0009;border:1px dashed rgba(255,255,255,.35);
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
   font-size:40px;color:#fff9;overflow:hidden;
 }
 .detail .bigart img{width:100%;height:100%;object-fit:cover}
-.detail .bigart .hint{font-size:12px;letter-spacing:.04em}
 .detail .bn{font-size:23px;font-weight:800}
 .detail .bstat{display:flex;gap:7px;flex-wrap:wrap;font-size:16px;font-weight:800}
 .detail .bstat span{background:#0006;padding:2px 9px;border-radius:6px}
 .detail .btext{font-size:16px;line-height:1.45}
-.detail .obt{flex:1;min-height:0;overflow:hidden;padding:10px 14px 12px}
+.detail .obt{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:10px 14px 12px}
 .detail h4{font-size:15px;color:var(--dim);margin:6px 0 5px;letter-spacing:.08em}
 .detail .obtain{font-size:14px;line-height:1.5;white-space:pre-wrap;color:#cddaf1}
 

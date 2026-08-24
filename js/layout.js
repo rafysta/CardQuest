@@ -982,7 +982,7 @@ function renderDetail() {
     : `<span>${TYPE_NAME[c.t]}</span><span>${c.p} G</span>`;
   document.getElementById('detail').innerHTML = `
     <div class="big ${c.t}">
-      <div class="bigart">${artInner(c)}<span class="hint">assets/cards/${c.id}.png</span></div>
+      <div class="bigart">${artInner(c)}</div>
       <div class="bn">${c.n}</div>
       <div class="bstat">${stat}</div>
       <div class="btext">${c.e || ''}</div>
