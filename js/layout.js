@@ -21,11 +21,23 @@ function abbrev(name, n) {
   if (/[ッャュョゥィぁぃぅぇぉっゃゅょー]$/.test(s) && s.length > 1) s = base.slice(0, s.length + 1);
   return s;
 }
+/* 憑依で生まれるカース(91〜99)には専用の絵が無い。だが、カースはもともと
+   「通常攻撃で倒されたユニットの霊が取り憑いたもの」で、カースID＝元ユニットID＋26 という
+   1対1の対応があり、元ユニット（ヘルファイア65〜アースバウンド73）の絵は9枚とも揃っている。
+   そこで専用イラストは用意せず、元ユニットの絵を流用し、CSSの img.curse-art で
+   紫の心霊風に加工して「本体ではなく取り憑いた霊のほう」だと分かるようにする。 */
+const CURSE_ART_OFFSET = 26;
+function artSrcId(card) {
+  return card.t === 'C' ? card.id - CURSE_ART_OFFSET : card.id;
+}
 function artInner(card, chars) {
-  const a = abbrev(card.n, chars || 3);
+  /* 絵が無いときの文字の代替。カースは「カース：」を外さないと9種とも「カース」になってしまう */
+  const label = card.t === 'C' ? card.n.replace(/^カース[：:]\s*/, '') : card.n;
+  const a = abbrev(label, chars || 3);
   /* draggable="false" は必須。付けないと、絵のあるカードをドラッグしたときに
      ブラウザ標準の画像ドラッグが始まってしまい、こちらのポインタ操作が途切れる */
-  return `<img src="${ART_DIR}${card.id}.png" alt="" draggable="false"
+  return `<img ${card.t === 'C' ? 'class="curse-art" ' : ''}src="${ART_DIR}${artSrcId(card)}.png"
+     alt="" draggable="false"
      onerror="this.replaceWith(document.createTextNode('${a}'))">`;
 }
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
