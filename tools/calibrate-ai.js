@@ -31,7 +31,7 @@ const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 47, 61, 63, 65, 66, 71, 20, 22, 55,
   101, 104, 110, 113, 117, 130, 135, 136, 143, 145, 3, 9, 10, 31, 70, 180];
 function makeDeck(rng) {
   const deck = [];
-  while (deck.length < 50) deck.push(POOL[rng.int(0, POOL.length - 1)]);
+  while (deck.length < CQTurn.DECK_SIZE) deck.push(POOL[rng.int(0, POOL.length - 1)]);
   return deck;
 }
 

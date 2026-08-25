@@ -424,10 +424,26 @@ t('手札7枚超過で discard フェーズに入る', () => {
   CQTurn.beginTurn(m);                             // 自分2ターン目：6+1=7枚（超過なし）
   eq(m.phase, 'placement', '7枚ちょうどは超過なし');
 });
-t('山札切れは即敗北', () => {
-  const m = newMatch(3, { selfDeck: [8, 8] });      // 2枚しかない→初手6枚requiredで枯渇
+/* M5.5（v0.15.1）：山札切れ敗北は廃止。尽きたら初期リストを自動で再装填し、持ち主がＬＰ−2を払う */
+t('山札が尽きたら自動で再装填しＬＰ−2（M5.5：山札切れ敗北の廃止）', () => {
+  const m = newMatch(3, { selfDeck: [8, 8] });      // 2枚しかない→初手6枚の間に2回再装填
   CQTurn.beginTurn(m);
-  eq([m.players.self.lost, CQTurn.checkResult(m)], [true, 'enemy'], '山札切れ敗北');
+  eq([m.players.self.hand.length, m.players.self.reloads, m.players.self.lp, m.winner],
+     [6, 2, 10 - 2 * CQTurn.RELOAD_LP_COST, null], '再装填2回・ＬＰ−4・敗北しない');
+});
+t('再装填のＬＰコストでＬＰ0になれば敗北する（終了保証）', () => {
+  const m = newMatch(3, { selfDeck: [8, 8], selfOpts: { lp: 3 } });
+  CQTurn.beginTurn(m);                              // 2枚→再装填(ＬＰ1)→2枚→再装填(ＬＰ−1)→敗北
+  eq([m.winner, m.players.self.lp <= 0], ['enemy', true], '再装填コストで敗北');
+});
+t('再装填は初期デッキリストを復元する', () => {
+  const m = newMatch(5, { selfDeck: [8, 101, 151] });
+  const p = m.players.self;
+  for (let i = 0; i < 3; i++) CQTurn.draw(m.rng, p, m);   // 3枚を引き切る
+  eq(p.deckCount, 0, '山札が空');
+  const id = CQTurn.draw(m.rng, p, m);                    // 4枚目 → 再装填してから引く
+  eq([id != null, p.reloads, p.deckCount, p.lp],
+     [true, 1, 2, 10 - CQTurn.RELOAD_LP_COST], '初期3枚を復元して1枚引いた');
 });
 
 section('turn: 配置ステップ');
@@ -1033,11 +1049,19 @@ t('ビッグモスキートはデッキ攻撃でＬＰを回復する', () => {
   CQCombat.deckAttack(m, 0);
   eq(m.players.self.lp, 6, 'ＬＰ+1');
 });
-t('デッキ攻撃で山札が尽きると敗北する', () => {
+t('デッキ攻撃で山札が尽きても敗北しない（M5.5）', () => {
   const m = mkC({ enemyDeck: [180] });
   m.board.lanes[0] = lane(8, []);
-  const r = CQCombat.deckAttack(m, 0);
-  eq([r.result, m.winner], ['self', 'self'], '山札切れで勝利');
+  CQCombat.deckAttack(m, 0);
+  eq([m.players.enemy.deckCount, m.winner], [0, null], '山札0でも対局は続く');
+});
+t('デッキ攻撃：山札が空なら再装填してから破壊する（M5.5）', () => {
+  const m = mkC({ enemyDeck: [180] });
+  m.board.lanes[0] = lane(8, []);
+  m.players.enemy.deckCount = 0; m.players.enemy.deck = {};   // 山札を空にしておく
+  CQCombat.deckAttack(m, 0);
+  eq([m.players.enemy.reloads, m.players.enemy.deckCount,
+      m.players.enemy.lp], [1, 0, 10 - CQTurn.RELOAD_LP_COST - 1], '再装填→1枚破壊・ＬＰ−3');
 });
 
 /* ================= M4 v0.12: 技能49種＋カース9種の残り ================= */

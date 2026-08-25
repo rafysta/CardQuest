@@ -13,7 +13,7 @@
   const el = document.getElementById('sim-run');
   if (!el) return;                              // この画面が無いページでは何もしない
 
-  /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚に揃える。
+  /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白でDECK_SIZE枚に揃える。
    * 55, 167, 169, 181, 184, 186, 199 はM4 v0.12でターン終了時処理・召還特例・
    * 操作権反転を実装した効果で、ここでもファズの対象にする。
    * 101〜148 はM4 v0.13（魔法48種）でファズの対象に追加した。
@@ -25,7 +25,7 @@
     3, 6, 9, 10, 32, 34, 35, 36, 38, 44, 45, 48, 49, 70];
   function makeDeck() {
     const deck = [];
-    while (deck.length < 50) deck.push(POOL[deck.length % POOL.length]);
+    while (deck.length < CQTurn.DECK_SIZE) deck.push(POOL[deck.length % POOL.length]);
     return deck;
   }
 
@@ -121,8 +121,8 @@
       ? `<b class="${m.winner === 'self' ? 'up' : 'dn'}">${m.winner === 'self' ? '自分' : '相手'}の勝ち</b>（${m.turn} 手番）`
       : `<b>決着つかず</b>（ターン上限 ${m.turn} 手番）`;
     resultEl.innerHTML = `${status}
-      　自分：ＬＰ${p1.lp} 手札${p1.hand.length} デッキ${p1.deckCount}${p1.lost ? '（山札切れ）' : ''}
-      　相手：ＬＰ${p2.lp} 手札${p2.hand.length} デッキ${p2.deckCount}${p2.lost ? '（山札切れ）' : ''}
+      　自分：ＬＰ${p1.lp} 手札${p1.hand.length} デッキ${p1.deckCount}${p1.reloads ? `（再装填${p1.reloads}回）` : ''}
+      　相手：ＬＰ${p2.lp} 手札${p2.hand.length} デッキ${p2.deckCount}${p2.reloads ? `（再装填${p2.reloads}回）` : ''}
       ${m.loot.length ? '　戦利品：' + m.loot.map((id) => CARD_BY_ID[id].n).join('・') : ''}`;
     document.getElementById('sim-log').textContent = m.log.join('\n');
   }

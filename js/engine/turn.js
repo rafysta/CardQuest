@@ -25,6 +25,13 @@
 
   const HAND_CAP = 7;
   const FIRST_DRAW = 6;
+  /* M5.5（v0.15.1）意図的な原作からの変更（ゲーム仕様書§4.1）：
+   *   ・デッキ枚数は 50 → 40（仮値）。デッキを組む側（layout.js / simulate.js / tools）は
+   *     必ずこの定数を参照すること。エンジン自体は渡された配列の枚数をそのまま使う
+   *   ・山札切れ敗北は廃止。山札が尽きたら初期デッキリストを自動で書き戻し（再装填）、
+   *     持ち主がＬＰ−2を払う。これが対局の終了保証を兼ねる（膠着してもＬＰが必ず減る） */
+  const DECK_SIZE = 40;
+  const RELOAD_LP_COST = 2;
 
   /* ---- 山札 -------------------------------------------------------------- */
 
@@ -35,11 +42,41 @@
     return counts;
   }
 
+  /** どちらの側のプレイヤーオブジェクトかを引く（再装填のログ・ＬＰ帰属用） */
+  function sideOf(m, player) { return m.players.self === player ? 'self' : 'enemy'; }
+
+  /** M5.5：山札の再装填。初期デッキリストをそのまま書き戻し、持ち主がＬＰ−2を払う。
+   * このエンジンに捨て札置き場は無い（「カードはどこにも残らない」原則）ため、
+   * 「再装填＝初期リストの復元」であり、手札・場に出ているカードもデッキに戻る
+   * （＝一時的に総数が初期デッキを超える。仕様として許容。ゲーム仕様書§4.1）。 */
+  function reloadDeck(m, player) {
+    const side = sideOf(m, player);
+    player.deck = createDeck(player.initial);
+    player.deckCount = player.initial.length;
+    player.reloads += 1;
+    player.lp -= RELOAD_LP_COST;
+    note(m, jp(side) + ' の山札が尽きた → 再装填（ＬＰ−' + RELOAD_LP_COST + '）');
+    checkResult(m);
+  }
+
+  /** 山札が空なら再装填する。デッキからカードを取るあらゆる操作（ドロー・デッキ攻撃の破壊・
+   * 魂の門など）の直前に通ること（M5.5）。初期リストが空の異常系だけは何もしない */
+  function ensureDeck(m, side) {
+    const p = m.players[side];
+    if (p.deckCount <= 0 && p.initial && p.initial.length) reloadDeck(m, p);
+  }
+
   /** 原作のドロー抽選をそのまま再現する。
    * ID昇順に rand(1,50) <= 残り枚数 を判定するため、低いIDほど出やすい（原作の癖）。
-   * 山札が尽きていれば null を返す。 */
-  function draw(rng, player) {
-    if (player.deckCount <= 0) return null;
+   * ※ rand(1,50) の「50」は原作の抽選定数で、デッキ枚数（DECK_SIZE）とは無関係。変えないこと。
+   * 第3引数 m を渡すと、山札が尽きていたら自動で再装填してから引く（M5.5）。
+   * m を渡さない旧形式（低レベルのテスト用）では従来どおり null を返す。 */
+  function draw(rng, player, m) {
+    if (player.deckCount <= 0) {
+      if (!m || !player.initial || !player.initial.length) return null;
+      reloadDeck(m, player);
+      if (m.winner) return null;   // 再装填のＬＰコストで決着した。死後の手札にカードを積まない
+    }
     for (;;) {
       for (let id = 1; id <= 200; id++) {
         const n = player.deck[id] || 0;
@@ -56,7 +93,7 @@
 
   /* ---- プレイヤー・盤面 ---------------------------------------------------- */
 
-  /** 50枚のデッキ配列からプレイヤー状態を作る（不足分は呼び出し側で空白180を補うこと） */
+  /** DECK_SIZE 枚のデッキ配列からプレイヤー状態を作る（不足分は呼び出し側で空白180を補うこと） */
   function createPlayer(deckCardIds, opts) {
     const o = opts || {};
     const deck = createDeck(deckCardIds);
@@ -65,11 +102,12 @@
       maxLp: o.maxLp === undefined ? 15 : o.maxLp,
       deck: deck,
       deckCount: (deckCardIds || []).length,
+      initial: (deckCardIds || []).slice(),  // 再装填（M5.5）で書き戻す初期デッキリスト
+      reloads: 0,                            // このバトルで再装填した回数（較正・表示用）
       hand: [],
       turnsTaken: 0,
       actedThisTurn: false,
-      hasChanged: false,
-      lost: false            // 山札切れによる敗北フラグ（LPが残っていても負け）
+      hasChanged: false
     };
   }
 
@@ -126,11 +164,12 @@
 
   /* ---- 勝敗判定 ------------------------------------------------------------ */
 
-  /** null（継続）または勝者側 'self'|'enemy' を返す */
+  /** null（継続）または勝者側 'self'|'enemy' を返す。
+   * M5.5：山札切れは敗北条件ではなくなった（再装填ルール）。敗北はＬＰ0のみ */
   function checkResult(m) {
     if (m.winner) return m.winner;
-    if (m.players.self.lp <= 0 || m.players.self.lost) return finish(m, 'enemy');
-    if (m.players.enemy.lp <= 0 || m.players.enemy.lost) return finish(m, 'self');
+    if (m.players.self.lp <= 0) return finish(m, 'enemy');
+    if (m.players.enemy.lp <= 0) return finish(m, 'self');
     return null;
   }
   function finish(m, winner) {
@@ -150,8 +189,9 @@
     p.actedThisTurn = false;
     const n = p.turnsTaken === 0 ? FIRST_DRAW : 1;
     for (let i = 0; i < n; i++) {
-      const id = draw(m.rng, p);
-      if (id == null) { p.lost = true; syncHandCount(m); checkResult(m); return m; }
+      const id = draw(m.rng, p, m);                 // 山札が尽きたら自動で再装填（ＬＰ−2。M5.5）
+      if (m.winner) { syncHandCount(m); return m; } // 再装填のＬＰコストでＬＰ0になった
+      if (id == null) break;                        // 初期リストが空のデッキ（テスト用の異常系）のみ
     }
     p.turnsTaken += 1;
     syncHandCount(m);
@@ -417,7 +457,7 @@
     p.deckCount += n;
     p.hand.forEach(function (id) { p.deck[id] = (p.deck[id] || 0) + 1; });
     p.hand = [];
-    for (let i = 0; i < n; i++) draw(m.rng, p);
+    for (let i = 0; i < n; i++) draw(m.rng, p, m);
     p.lp -= 1;
     p.hasChanged = true;
     p.actedThisTurn = true;
@@ -456,8 +496,8 @@
       if (!ln || ln.unit == null || ln.acc.soulGate < 1) return;
       recalc(m);
       if (ln.cap <= ln.count) return;                 // 空きが無ければ得られない
-      const id = draw(m.rng, p);
-      if (id == null) return;                         // 山札切れ（敗北判定はこの後のチェックで拾う）
+      const id = draw(m.rng, p, m);                   // 山札が尽きていれば再装填してから引く（M5.5）
+      if (id == null) return;                         // 初期リストが空の異常系のみ
       p.hand.pop();                                    // draw() は手札に積むので、そのまま外へ出す
       ln.channels.push({ card: id, up: false, mine: side === 'self', revealed: false });
       ln.count = ln.channels.length;
@@ -465,10 +505,9 @@
     });
     recalc(m);
 
-    // 未行動かつ手札5枚以下なら1枚補充
-    if (!p.actedThisTurn && p.hand.length <= 5) {
-      const id = draw(m.rng, p);
-      if (id == null) p.lost = true;
+    // 未行動かつ手札5枚以下なら1枚補充（山札が尽きていれば再装填してから。M5.5）
+    if (!m.winner && !p.actedThisTurn && p.hand.length <= 5) {
+      draw(m.rng, p, m);
     }
 
     // ＬＰクランプ
@@ -494,8 +533,8 @@
   }
 
   const api = {
-    HAND_CAP, FIRST_DRAW,
-    createDeck, draw, createPlayer, createMatch,
+    HAND_CAP, FIRST_DRAW, DECK_SIZE, RELOAD_LP_COST,
+    createDeck, draw, ensureDeck, createPlayer, createMatch,
     beginTurn, discardCard, summon, channel, endPlacement, reverseAction, finalizeReverse,
     canSpecialAction, specialAction,
     change, endTurn,

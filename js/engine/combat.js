@@ -508,20 +508,27 @@
 
   /* ================= デッキ攻撃（直接攻撃） ================= */
 
-  /** 山札から1枚を破壊する（ドローと同じ抽選で1枚減らす。原作 CE0346） */
+  /** 山札から1枚を破壊する（ドローと同じ抽選で1枚減らす。原作 CE0346）。
+   * M5.5：山札が空なら先に再装填してから破壊する（「デッキからカードを取る操作の直前に
+   * ensureDeck を通る」の統一ルール）。山札を空にしても敗北は発生しない */
   function destroyDeckCard(m, side) {
     const p = m.players[side];
-    if (p.deckCount <= 0) return null;
+    if (p.deckCount <= 0) turnApi2().ensureDeck(m, side);
+    if (p.deckCount <= 0) return null;                 // 初期リストが空の異常系のみ
     for (;;) {
       for (let id = 1; id <= 200; id++) {
         const n = p.deck[id] || 0;
         if (n > 0 && m.rng.int(1, 50) <= n) {
           p.deck[id] = n - 1; p.deckCount -= 1;
-          if (p.deckCount <= 0) p.lost = true;
           return id;
         }
       }
     }
+  }
+  /** ターン進行モジュール。循環参照を避けるため、呼ぶ瞬間に解決する（turn.js 側と同じ手法） */
+  function turnApi2() {
+    return (typeof require === 'function' && typeof window === 'undefined')
+      ? require('./turn.js') : global.CQTurn;
   }
 
   /** デッキ攻撃の可否。攻撃対象にできる敵ユニットが0体のとき。跳躍(163)なら2体以下でも可 */

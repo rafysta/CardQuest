@@ -30,7 +30,7 @@ const CQUnits = require(path.join(root, 'js/engine/effects/units.js'));
 const CQAi = require(path.join(root, 'js/engine/ai.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
-/* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白で50枚
+/* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白でDECK_SIZE枚（v0.15.1で50→40）
  * 実装計画M4 v0.12（技能49種＋カース9種）で新たにターン終了時処理・召還特例・
  * 操作権反転を実装した 55, 167, 169, 181, 184, 186, 199 も混ぜてファズの対象にする。
  * M4 v0.13（魔法48種）では101〜148の全ＩＤをPOOLに加え、レベル・戦闘中×・強制中×などの
@@ -45,7 +45,7 @@ const POOL = [8, 1, 2, 5, 7, 19, 21, 46, 47, 61, 63, 65, 66, 71, 20, 22, 55,
   3, 6, 9, 10, 32, 34, 35, 36, 38, 44, 45, 48, 49, 70];
 function makeDeck(rng) {
   const deck = [];
-  while (deck.length < 50) deck.push(POOL[rng.int(0, POOL.length - 1)]);
+  while (deck.length < CQTurn.DECK_SIZE) deck.push(POOL[rng.int(0, POOL.length - 1)]);
   return deck;
 }
 
@@ -118,19 +118,23 @@ function runMatch(seed, maxTurns, mode) {
 const runs = parseInt(process.argv[2], 10) || 300;
 const maxTurns = parseInt(process.argv[3], 10) || 80;
 const mode = process.argv[4] || 'mixed';
-const stat = { self: 0, enemy: 0, draw: 0, turns: 0, loot: 0, errors: [] };
+const stat = { self: 0, enemy: 0, draw: 0, turns: 0, loot: 0, reloads: 0, reloadGames: 0, errors: [] };
 for (let seed = 1; seed <= runs; seed++) {
   try {
     const m = runMatch(seed, maxTurns, mode);
     if (m.winner) stat[m.winner] += 1; else stat.draw += 1;
     stat.turns += m.turn;
     stat.loot += m.loot.length;
+    const rl = m.players.self.reloads + m.players.enemy.reloads;   // M5.5：山札の再装填
+    stat.reloads += rl;
+    if (rl > 0) stat.reloadGames += 1;
   } catch (e) {
     stat.errors.push('seed ' + seed + ': ' + e.message);
   }
 }
 console.log(runs + ' 戦（mode=' + mode + '）：自陣側 ' + stat.self + ' 勝 / 敵陣側 ' + stat.enemy + ' 勝 / 決着つかず ' + stat.draw);
-console.log('平均 ' + (stat.turns / runs).toFixed(1) + ' 手番、戦利品 平均 ' + (stat.loot / runs).toFixed(2) + ' 枚');
+console.log('平均 ' + (stat.turns / runs).toFixed(1) + ' 手番、戦利品 平均 ' + (stat.loot / runs).toFixed(2) + ' 枚、'
+  + '再装填 平均 ' + (stat.reloads / runs).toFixed(2) + ' 回（発生 ' + (100 * stat.reloadGames / runs).toFixed(1) + '%）');
 if (stat.errors.length) {
   console.log('\n例外 ' + stat.errors.length + ' 件:');
   stat.errors.slice(0, 10).forEach(function (e) { console.log('  ' + e); });

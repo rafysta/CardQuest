@@ -163,7 +163,7 @@
   function h23(m, ctx) {                                        // アンフィビアス：手札２枚入手
     const p = m.players[ctx.caster], Turn = turnApi();
     let n = 0;
-    for (let i = 0; i < 2; i++) { if (Turn.draw(m.rng, p) == null) break; n += 1; }
+    for (let i = 0; i < 2; i++) { if (Turn.draw(m.rng, p, m) == null) break; n += 1; }
     capHand(m, ctx.caster);
     note(m, '手札２枚入手：' + n + '枚引いた');
   }
@@ -263,7 +263,7 @@
 
   function s38(m, laneIndex, side) {                            // デモングローブ：手札＋１入手
     const p = m.players[side], Turn = turnApi();
-    const id = Turn.draw(m.rng, p);
+    const id = Turn.draw(m.rng, p, m);
     capHand(m, side);
     note(m, '手札＋１入手：' + (id == null ? '山札が無い' : nameOf(m, id) + ' を引いた'));
   }

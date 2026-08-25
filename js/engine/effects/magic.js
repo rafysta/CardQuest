@@ -95,10 +95,11 @@
     ln.channels.push(entry);
     ln.count = ln.channels.length;
   }
-  /** 山札から1枚引いて手札を経由せず呼び出し元に返す（魂の門(181)と同じやり方） */
+  /** 山札から1枚引いて手札を経由せず呼び出し元に返す（魂の門(181)と同じやり方）。
+   * 山札が尽きていれば自動で再装填される（M5.5：draw の第3引数 m） */
   function drawDirect(m, side) {
     const Turn = turnApi(), p = m.players[side];
-    const id = Turn.draw(m.rng, p);
+    const id = Turn.draw(m.rng, p, m);
     if (id == null) return null;
     p.hand.pop();
     return id;
@@ -245,14 +246,14 @@
   function h111(m, ctx) {                                     // 変換：手札を全て捨て新たに3枚引く
     const p = m.players[ctx.caster], Turn = turnApi();
     p.hand = [];
-    for (let i = 0; i < 3; i++) { if (Turn.draw(m.rng, p) == null) break; }
+    for (let i = 0; i < 3; i++) { if (Turn.draw(m.rng, p, m) == null) break; }
     note(m, '変換：手札を入れ替えた');
   }
 
   function h112(m, ctx) {                                     // 抽出：手札を3枚得るがドロー毎にＬＰ1点を失う
     const p = m.players[ctx.caster], Turn = turnApi();
     for (let i = 0; i < 3; i++) {
-      if (Turn.draw(m.rng, p) == null) break;
+      if (Turn.draw(m.rng, p, m) == null) break;
       damage(m, ctx.caster, 1);
     }
     capHand(m, ctx.caster);
@@ -491,9 +492,9 @@
   function h140(m, ctx) {                                     // 時の渦：ドローステップへ戻る（レベル4／戦闘中×強制中×）
     // 「ドローステップへ戻る」をフェイズ遷移として厳密に再現すると m.phase の不変条件が崩れやすいため、
     // 簡略化：手番側がもう1枚ドローする（実質的にターン中の追加ドローとして再現）
-    const id = turnApi().draw(m.rng, m.players[m.active]);
+    const id = turnApi().draw(m.rng, m.players[m.active], m);
     capHand(m, m.active);
-    note(m, '時の渦：（簡略実装）' + jp(m.active) + ' がもう1枚ドロー' + (id == null ? '（山札切れ）' : ''));
+    note(m, '時の渦：（簡略実装）' + jp(m.active) + ' がもう1枚ドロー' + (id == null ? '（山札なし）' : ''));
   }
 
   /* ================= 141〜148 ================= */
@@ -539,7 +540,7 @@
     recalc(m);
     const Turn = turnApi();
     let got = 0;
-    for (let i = 0; i < n; i++) { if (Turn.draw(m.rng, m.players[ctx.caster]) == null) break; got += 1; }
+    for (let i = 0; i < n; i++) { if (Turn.draw(m.rng, m.players[ctx.caster], m) == null) break; got += 1; }
     capHand(m, ctx.caster);
     note(m, '還元：ＣＨ' + n + '枚を破壊し' + got + '枚ドローした');
     return { consumed: true };
