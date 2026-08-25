@@ -1,8 +1,9 @@
-/* 敵ＡＩ（M5）と強さ切替ＵＩの検証（Playwright／ヘッドレスChromium）
+/* 敵ＡＩ（M5→M5.7で探索方策に刷新）と強さ切替ＵＩの検証（Playwright／ヘッドレスChromium）
  *
  *   ・上部の「強さ：Ｃ」ボタンが表示され、押すたびにＣ→Ｂ→Ａ→フリー→Ｃと巡回する
  *   ・切替が M.aiConfig.enemy に反映される（新しい対戦にも引き継がれる）
- *   ・評価関数ＡＩを相手に1ターン回してもエラーが出ない（敵の手番が完走する）
+ *   ・探索ＡＩ（policy:'search'）を相手に1ターン回してもエラーが出ない（敵の手番が完走する）
+ *   ・ブラウザに CQSearch が読み込まれ、敵の思考が実際に search で行われている
  *
  * 使い方： python3 -m http.server 8324 を立ててから node tools/verify-ai-rank.js
  */
@@ -34,8 +35,10 @@ function check(ok, note, detail) { results.push([ok, note, detail || '']); }
     policy: M.aiConfig && M.aiConfig.enemy && M.aiConfig.enemy.policy
   }));
   check(initial.label === '強さ：Ｃ', '既定の強さ表示は「強さ：Ｃ」', initial.label);
-  check(initial.cfg === 'Ｃ' && initial.policy === 'eval', 'M.aiConfig に評価関数ＡＩ(rankC)が入っている',
+  check(initial.cfg === 'Ｃ' && initial.policy === 'search', 'M.aiConfig に探索ＡＩ(rankC/search)が入っている',
     JSON.stringify({ cfg: initial.cfg, policy: initial.policy }));
+  const hasSearch = await page.evaluate(() => typeof CQSearch !== 'undefined' && !!CQSearch.placementStep);
+  check(hasSearch, 'CQSearch（js/engine/search.js）がブラウザに読み込まれている');
 
   /* ---- 2. ボタンでＣ→Ｂ→Ａ→フリー→Ｃと巡回する ---- */
   const seq = [];
@@ -73,7 +76,11 @@ function check(ok, note, detail) { results.push([ok, note, detail || '']); }
     if (!st.busy && !st.combat && st.active === 'self' && st.turn >= turn0 + 2) { backToMe = true; break; }
     await page.waitForTimeout(300);
   }
-  check(backToMe, '評価関数ＡＩの手番が完走して自分の番に戻る（または決着）');
+  check(backToMe, '探索ＡＩの手番が完走して自分の番に戻る（または決着）');
+  const stats = await page.evaluate(() => M._searchStats || null);
+  check(!!stats && stats.ms !== undefined, '敵の思考が search で行われた（M._searchStats が残る）',
+    JSON.stringify(stats));
+  check(!stats || stats.ms <= 1500, '1手の思考が時間予算内（≦1500ms）', stats && (stats.ms + 'ms'));
   check(errors.length === 0, 'コンソールエラー0件', errors.slice(0, 3).join(' / '));
 
   await browser.close();

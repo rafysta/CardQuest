@@ -1,13 +1,16 @@
 /* CardQuest — ヘッドレス自動対戦（開発用）
  *
  *   node tools/simulate.js [試行回数] [ターン上限] [mode]
- *     mode: mixed（既定）… シードごとに両陣営の方策をランダム／評価関数から混ぜる
+ *     mode: mixed（既定）… シードごとに両陣営の方策をランダム／heuristic／search から混ぜる
  *           random        … 両陣営ともランダム方策（従来どおり）
- *           eval          … 両陣営とも評価関数方策（rankC）
+ *           eval          … 両陣営とも評価関数方策（heuristic＝M5の旧実装）
+ *           search        … 両陣営とも探索方策（M5.7。ファズ用の軽量設定）
  *
  * 例外・無限ループ・状態不整合が起きないことを確かめる回帰チェック。
- * M5で敵ＡＩ（評価関数方策）が入ったため、mixed で両方策のコードパスを網羅する。
- * ＡＩの勝率較正は tools/calibrate-ai.js を使う。
+ * M5.7で探索方策（決定化サンプリング＋先読み）が入ったため、mixed は
+ * ランダム／heuristic／search の全コードパスを網羅する。search はファズでは
+ * 軽量設定（samples2・depth1・budget60ms）で回す＝コードパスの網羅が目的で、
+ * 強さの較正は tools/calibrate-ai.js（本番プリセット）が担当する。
  */
 'use strict';
 const fs = require('fs');
@@ -83,12 +86,16 @@ function checkInvariants(m) {
   });
 }
 
-/* mixed のとき、シードごとに両陣営の方策を混ぜる（ランダム／フリー／Ｃ／Ａ）。
- * ランダム方策と評価関数方策の両方のコードパスをファズで通すため */
-const AI_MIX = [null, CQAi.PRESETS.free, CQAi.PRESETS.rankC, CQAi.PRESETS.rankA];
+/* mixed のとき、シードごとに両陣営の方策を混ぜる（ランダム／heuristic／search軽量）。
+ * 3方策すべてのコードパスをファズで通すため。search は軽量設定にしないと数千戦が
+ * 現実的な時間で終わらない（本番プリセットの強さ較正は calibrate-ai.js の仕事） */
+const SEARCH_LITE = { policy: 'search', samples: 2, depth: 1, budgetMs: 60, minSamples: 1,
+                      noAttackTurns: 0, mulligan: true, handSlots: 6, label: '探索(軽)' };
+const AI_MIX = [null, CQAi.PRESETS.heuristic, SEARCH_LITE];
 function pickConfig(mode, rng) {
   if (mode === 'random') return undefined;
-  if (mode === 'eval') return { self: CQAi.PRESETS.rankC, enemy: CQAi.PRESETS.rankC };
+  if (mode === 'eval') return { self: CQAi.PRESETS.heuristic, enemy: CQAi.PRESETS.heuristic };
+  if (mode === 'search') return { self: SEARCH_LITE, enemy: SEARCH_LITE };
   const s = AI_MIX[rng.int(0, AI_MIX.length - 1)];
   const e = AI_MIX[rng.int(0, AI_MIX.length - 1)];
   const cfg = {};

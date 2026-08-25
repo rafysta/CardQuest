@@ -75,8 +75,9 @@ const SAMPLE_DECK = [
 
 let M = null;                 /* エンジンの対戦状態。これが唯一の真実 */
 let foeAuto = true;           /* 相手を自動で動かすか */
-/* 相手ＡＩの強さ（M5）。フリー→Ｃ→Ｂ→Ａの順に切り替える。強さの実体は
- * js/engine/ai.js の PRESETS（評価関数は共通で、透視率と行動制限だけが違う＝原作§11.4） */
+/* 相手ＡＩの強さ（M5→M5.7で刷新）。フリー→Ｃ→Ｂ→Ａの順に切り替える。強さの実体は
+ * js/engine/ai.js の PRESETS（M5.7：決定化サンプリング＋先読み。差はサンプル数と読みの深さ。
+ * 透視率は撤廃済み＝ＡＩが知れる情報は人間と完全対称） */
 const AI_RANKS = ['free', 'rankC', 'rankB', 'rankA'];
 let aiRank = 'rankC';
 const UI = {

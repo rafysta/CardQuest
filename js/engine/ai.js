@@ -1,11 +1,13 @@
-/* CardQuest エンジン — 敵ＡＩ（実装計画M5）
+/* CardQuest エンジン — 敵ＡＩ（実装計画M5／M5.7）
  *
- * 『SOULGATE カードバトル仕様書』§11 の評価関数を移植した本実装と、
- * M2〜M4で使ってきたランダム方策（開発・ファズ用）の両方をここに持つ。
- * どちらを使うかは m.aiConfig[side].policy で切り替える（未設定＝ランダム方策のまま、
- * 既存のテスト・シミュレータは無改修で従来どおり動く）。
+ * 3つの方策を m.aiConfig[side].policy で切り替える（未設定＝ランダム方策のまま、
+ * 既存のテスト・シミュレータは無改修で従来どおり動く）：
+ *   'random' … M2〜M4のランダム方策（開発・ファズ用）
+ *   'eval'   … M5で移植した §11.2 の評価関数方策（'heuristic' プリセット。比較較正・
+ *              先読みのロールアウト代行用に温存）
+ *   'search' … M5.7の本方策（決定化サンプリング＋先読み。js/engine/search.js）
  *
- * ■ §11.2 の中核（本実装で忠実に再現した部分）
+ * ■ §11.2 の中核（'eval' で忠実に再現した部分。'search' も評価の部品として流用する）
  *   ・すべての判断の入力は「仮想能力値」＝そのユニットの全ＣＨを表にした場合の攻撃力／
  *     裏にした場合の防御力（原作 EV0245／CE0285〜290）
  *   ・召還するか … スコア（基礎 rand 20〜60）≧ 30 で召還
@@ -15,23 +17,20 @@
  *   ・「やけくそ」モード … 独立モードではなくルーチン切替。
  *     ①傀儡を受けた ②全ＣＨを裏にしても攻撃を止められない ③この1体でリーサル、で発動
  *
- * ■ §11.3 情報モデル（カンニングしない）
- *   ・ＡＩが中身を知れるのは「自分が置いたカード」「公開済み（表・revealed）」だけ。
- *     不明カードは『空白』(180) とみなして仮想能力値を計算する（＝枚数だけ数えて賭ける）
- *   ・透過処理（透視）：相手がチャネリングしたカードの中身が確率で漏れる。
- *     確率は難易度パラメータ（フリー19.6%／Ｃ24%／Ｂ31%／Ａ・Ｓ36%）。
- *     原作はチャネリングの瞬間に抽選するが、ここでは「ＡＩが次に盤面を見た時に、
- *     未抽選のカードを1回だけ抽選する」実装にした（1枚につき1回・分布は等価。
- *     エンジン本体に手を入れずに済む）。抽選結果はチャンネルの spied_側 フラグに残る
+ * ■ 情報モデル（M5.7で透視率を撤廃。2026-08-25 本人確定）
+ *   ・ＡＩが中身を知れるのは「自分が置いたカード」「公開済み（表・revealed）」だけ＝
+ *     人間と完全対称（§11.3の原則だけを残す）。不明カードは『空白』(180) とみなして
+ *     仮想能力値を計算する（＝枚数だけ数えて賭ける）
+ *   ・原作§11.3の透過処理（相手の裏向きカードの中身が確率で漏れる：フリー19.6%〜Ａ36%）と
+ *     例外2（魔力の盾等の周期検知）・例外3（手札を読むバグ）は再実装しない。
+ *     難易度の本体は search 方策のサンプル数と読みの深さ（『実装計画追補 M5.7』参照）
  *
  * ■ 08_ai.md（詳細1,367行）が手元に無いための近似（要確認事項。開発メモ参照）
  *   ・配置13段階・メイン10段階の判断ブロックの内訳は不明のため、§11.2の閾値だけを
  *     使った簡略な手順にしてある（スコアへの加点条件・序盤ペナルティの減衰カーブ・
  *     戦闘中オープンの専用ルーチン・魔法対象の「重要度」走査は本実装の設計判断）
  *   ・魔法の発動対象は引き続き効果ハンドラ内の m.rng 自動選択（M4の設計のまま）
- *   ・「魔力の盾／イビルアイ／呪爆だけ裏のまま検知される周期」（§11.3例外2）と
- *     「特殊行動がプレイヤーの手札を読むバグ」（同例外3）、追い詰められたときの
- *     「召還レベル改竄チート」は未実装
+ *   ・追い詰められたときの「召還レベル改竄チート」は未実装
  *
  * すべての関数は「1回の呼び出し＝1手だけ進める」形（途中でプレイヤー入力が要るとき
  * 呼び出し側が止められる）。乱数は必ず m.rng を通す（再現性のため）。DOMには依存しない。
@@ -48,39 +47,41 @@
 
   const BLANK = 180;
 
-  /* ================= 難易度プリセット（§11.3・§11.4） =================
-   * 強さの差は「透視率」と「行動制限」で作る（思考ルーチン本体は共通＝原作どおり）。
+  /* ================= 難易度プリセット（M5.7：透視率撤廃・2026-08-25 本人確定） =================
+   * 強さの差は search 方策の「サンプル数 N（samples）」と「決定ノイズ（noise）」で作る。
+   *   較正の結果（開発メモ参照）：読み深度（depth）は2以上にすると想像上の相手への悲観で
+   *   かえって弱くなり、サンプル数もＮ≈10で強さが飽和した。そこで上位＝最善のみ・
+   *   下位ほどノイズで次善手が混ざる、という段差に設計し直した（追補§4の数値からの変更。
+   *   noise はスコアに混ぜる乱数の振幅で、未公開情報は読まない＝カンニングではない）。
+   * depth＝先読みする手番（半ターン）の数。全ランク1（自分のこの手番の帰結まで）。
+   * budgetMs は1手の思考時間予算（ゲーム仕様書§4.4「上限1秒」との整合。search.js 参照）。
    * フリーユニットの弱体化（§11.4）：マリガン無し・最初の2手番は攻撃しない。
-   * 手札スロット7は全難易度で使わない（原作のＡＩは全ループが1〜6まで＝実質6枚運用） */
+   * 手札スロット7は全難易度で使わない（原作のＡＩは全ループが1〜6まで＝実質6枚運用）。
+   * 'heuristic'＝M5の評価関数方策そのもの（比較較正・ロールアウト代行用に温存。ＵＩには出さない） */
   const PRESETS = {
     random: { policy: 'random', label: 'ランダム' },
-    free: { policy: 'eval', spyRate: 0.196, noAttackTurns: 2, mulligan: false, handSlots: 6, label: 'フリー' },
-    rankC: { policy: 'eval', spyRate: 0.24, noAttackTurns: 0, mulligan: true, handSlots: 6, label: 'Ｃ' },
-    rankB: { policy: 'eval', spyRate: 0.31, noAttackTurns: 0, mulligan: true, handSlots: 6, label: 'Ｂ' },
-    rankA: { policy: 'eval', spyRate: 0.36, noAttackTurns: 0, mulligan: true, handSlots: 6, label: 'Ａ' }
+    heuristic: { policy: 'eval', noAttackTurns: 0, mulligan: true, handSlots: 6, label: '旧Ｃ' },
+    free: { policy: 'search', samples: 5, depth: 1, noise: 0.6, budgetMs: 600, minSamples: 2,
+            noAttackTurns: 2, mulligan: false, handSlots: 6, label: 'フリー' },
+    rankC: { policy: 'search', samples: 8, depth: 1, noise: 0.6, budgetMs: 600, minSamples: 3,
+             noAttackTurns: 0, mulligan: true, handSlots: 6, label: 'Ｃ' },
+    rankB: { policy: 'search', samples: 16, depth: 1, noise: 0.25, budgetMs: 600, minSamples: 3,
+             noAttackTurns: 0, mulligan: true, handSlots: 6, label: 'Ｂ' },
+    rankA: { policy: 'search', samples: 30, depth: 1, noise: 0, budgetMs: 600, minSamples: 4,
+             noAttackTurns: 0, mulligan: true, handSlots: 6, label: 'Ａ' }
   };
   function cfgFor(m, side) {
     return (m.aiConfig && m.aiConfig[side]) || PRESETS.random;
   }
 
-  /* ================= 情報モデル（§11.3：カンニングしない） ================= */
+  /* ================= 情報モデル（§11.3の原則のみ。透視率はM5.7で撤廃） ================= */
 
   function placedBy(ch) { return ch.mine ? 'self' : 'enemy'; }
-  /** side がそのチャンネルの中身を知っているか（表・公開済み・自分が置いた・透過で漏れた） */
+  /** side がそのチャンネルの中身を知っているか（表・公開済み・自分が置いた）＝人間と完全対称。
+   * ＡＩの判断はこの関数を通った情報にしか依存してはならない（カンニング禁止。
+   * tests/run.js のカンニング検出ガードが恒久的に監視する） */
   function knownTo(ch, side) {
-    return !!(ch.up || ch.revealed || ch['spied_' + side] || placedBy(ch) === side);
-  }
-  /** 透過処理（透視）：未抽選の不明カードを1枚につき1回だけ抽選する */
-  function observe(m, side) {
-    const rate = cfgFor(m, side).spyRate || 0;
-    m.board.lanes.forEach(function (ln) {
-      ln.channels.forEach(function (ch) {
-        const mk = 'spyChecked_' + side;
-        if (ch[mk]) return;
-        ch[mk] = true;
-        if (!knownTo(ch, side) && rate > 0 && m.rng.next() < rate) ch['spied_' + side] = true;
-      });
-    });
+    return !!(ch.up || ch.revealed || placedBy(ch) === side);
   }
 
   function cloneBoard(b) { return JSON.parse(JSON.stringify(b)); }
@@ -284,7 +285,6 @@
   /** 配置ステップの1手（マリガン → 召還 → チャネリング の順）。何もしなければ false */
   function evalPlacement(m) {
     const side = m.active, cfg = cfgFor(m, side);
-    observe(m, side);
     Stats.recalc(m.board, { cards: m.cards });
     const p = m.players[side];
     const slots = Math.min(p.hand.length, cfg.handSlots || 7);
@@ -427,7 +427,7 @@
   }
 
   /** 攻撃対象のスタックに「こちらが中身を知っている反撃カード」が潜んでいないか読む。
-   * 透視（spyRate）で漏れた情報がここで効く＝透視率が実質的な難易度になる（§11.3）。
+   * 中身既知＝表・公開済み・自分が置いたカードのみ（M5.7で透視率を撤廃。人間と対称）。
    *   trap    … 防御側が開くと攻撃側が破壊されうるカード（135雷撃・141思念波）
    *   undying … 不死(177)。倒し切れず反撃を受ける */
   function believedThreat(m, side, t) {
@@ -445,7 +445,6 @@
    * 何もできなければ false（呼び出し側がターンを終える） */
   function evalMain(m) {
     const side = m.active, cfg = cfgFor(m, side);
-    observe(m, side);
     Stats.recalc(m.board, { cards: m.cards });
     const V = {};
     const vstat = function (i) { return V[i] || (V[i] = virtualStats(m, side, i)); };
@@ -521,7 +520,6 @@
     if (!m.combat) return false;
     const c = m.combat;
     const side = Combat.openerSide(m);
-    observe(m, side);
     const attacker = c.opener === 'attacker';
     const myLane = attacker ? c.attacker : c.defender;
     const foeLane = attacker ? c.defender : c.attacker;
@@ -570,13 +568,22 @@
 
   /* ================= 公開ＡＰＩ（方策で分岐） ================= */
 
-  /** 手札上限オーバーの強制捨て */
+  /** 探索方策モジュール（M5.7）。循環参照を避けるため、呼ぶ瞬間に解決する */
+  function searchApi() {
+    return (typeof require === 'function' && typeof window === 'undefined')
+      ? require('./search.js') : global.CQSearch;
+  }
+
+  /** 手札上限オーバーの強制捨て（search も evalDiscard を共用する：空白→末尾の単純規則） */
   function discardStep(m) {
-    return cfgFor(m, m.active).policy === 'eval' ? evalDiscard(m) : randomDiscard(m);
+    const p = cfgFor(m, m.active).policy;
+    return (p === 'eval' || p === 'search') ? evalDiscard(m) : randomDiscard(m);
   }
   /** 配置ステップの1手。何もできなければ false */
   function placementStep(m) {
-    return cfgFor(m, m.active).policy === 'eval' ? evalPlacement(m) : randomPlacement(m);
+    const p = cfgFor(m, m.active).policy;
+    if (p === 'search') return searchApi().placementStep(m);
+    return p === 'eval' ? evalPlacement(m) : randomPlacement(m);
   }
   /** 配置ステップを最後まで（最大6手） */
   function playPlacement(m) {
@@ -585,13 +592,17 @@
   }
   /** メインステップの1手。何もできなければ false */
   function mainStep(m) {
-    return cfgFor(m, m.active).policy === 'eval' ? evalMain(m) : randomMain(m);
+    const p = cfgFor(m, m.active).policy;
+    if (p === 'search') return searchApi().mainStep(m);
+    return p === 'eval' ? evalMain(m) : randomMain(m);
   }
   /** 戦闘中のオープンフェイズを1手だけ進める（開く／開かずに終える） */
   function openStep(m) {
     if (!m.combat) return false;
     const side = Combat.openerSide(m);
-    return cfgFor(m, side).policy === 'eval' ? evalOpen(m) : randomOpen(m);
+    const p = cfgFor(m, side).policy;
+    if (p === 'search') return searchApi().openStep(m);
+    return p === 'eval' ? evalOpen(m) : randomOpen(m);
   }
   /** 戦闘が終わるまでオープンフェイズを自動で進める（両側とも自動のとき用） */
   function finishCombat(m) {
@@ -600,7 +611,10 @@
   }
 
   const api = { discardStep, placementStep, playPlacement, mainStep, openStep, finishCombat,
-                PRESETS, virtualStats, observe, knownTo, isDesperate };
+                PRESETS, virtualStats, knownTo, isDesperate,
+                /* search.js（M5.7）が評価の部品として使う内部関数（設計原則：
+                 * 「仮想値の算定基準＝オープン判断の基準を同じ関数に揃える」を維持するため公開） */
+                cfgFor, mainReverseLayers, wouldOpenInCombat, believedThreat };
   global.CQAi = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1884,39 +1884,31 @@ t('特殊行動は対象が無くても行動を消費する（仕様書§10.1�
 section('M5: 敵AI・情報モデル（カンニングしない）');
 const CQAi = require(path.join(root, 'js/engine/ai.js'));
 
-t('難易度プリセット：透視率がパラメータ化されている（§11.3）', () => {
-  eq(CQAi.PRESETS.free.spyRate, 0.196, 'フリー 19.6%');
-  eq(CQAi.PRESETS.rankC.spyRate, 0.24, 'Ｃ 24%');
-  eq(CQAi.PRESETS.rankB.spyRate, 0.31, 'Ｂ 31%');
-  eq(CQAi.PRESETS.rankA.spyRate, 0.36, 'Ａ・Ｓ 36%');
+t('難易度プリセット：透視率は撤廃され、差はサンプル数と読みの深さ（M5.7）', () => {
+  ['free', 'rankC', 'rankB', 'rankA', 'heuristic', 'random'].forEach((k) => {
+    eq(CQAi.PRESETS[k].spyRate, undefined, k + '：透視率パラメータが存在しない');
+  });
+  eq(CQAi.PRESETS.free.policy, 'search', 'フリー＝search');
+  eq(CQAi.PRESETS.rankC.policy, 'search', 'Ｃ＝search');
+  eq(CQAi.PRESETS.rankB.policy, 'search', 'Ｂ＝search');
+  eq(CQAi.PRESETS.rankA.policy, 'search', 'Ａ＝search');
+  eq(CQAi.PRESETS.rankC.samples < CQAi.PRESETS.rankB.samples, true, 'Ｃ<Ｂ（サンプル数）');
+  eq(CQAi.PRESETS.rankB.samples < CQAi.PRESETS.rankA.samples, true, 'Ｂ<Ａ（サンプル数）');
+  eq(CQAi.PRESETS.free.samples < CQAi.PRESETS.rankC.samples, true, 'フリー<Ｃ（サンプル数）');
+  eq(CQAi.PRESETS.free.noise >= CQAi.PRESETS.rankC.noise, true, 'フリー≧Ｃ（決定ノイズ）');
+  eq(CQAi.PRESETS.rankC.noise > CQAi.PRESETS.rankB.noise, true, 'Ｃ>Ｂ（決定ノイズ）');
+  eq(CQAi.PRESETS.rankB.noise > CQAi.PRESETS.rankA.noise, true, 'Ｂ>Ａ（決定ノイズ）');
+  eq(CQAi.PRESETS.rankA.noise, 0, 'Ａ＝最善のみ（ノイズ0）');
+  eq(CQAi.PRESETS.heuristic.policy, 'eval', 'heuristic＝M5の評価関数方策（較正・代行用）');
   eq(CQAi.PRESETS.random.policy, 'random', '未設定・random は従来のランダム方策');
 });
-t('knownTo：知れるのは自分が置いたカード・表・公開済みだけ', () => {
+t('knownTo：知れるのは自分が置いたカード・表・公開済みだけ（人間と完全対称）', () => {
   eq(CQAi.knownTo({ up: false, mine: true }, 'self'), true, '自分が置いた裏カードは分かる');
   eq(CQAi.knownTo({ up: false, mine: true }, 'enemy'), false, '相手には分からない');
   eq(CQAi.knownTo({ up: true, mine: true }, 'enemy'), true, '表なら誰でも分かる');
   eq(CQAi.knownTo({ up: false, mine: true, revealed: true }, 'enemy'), true, '公開済みなら分かる');
-  eq(CQAi.knownTo({ up: false, mine: true, spied_enemy: true }, 'enemy'), true, '透過で漏れたら分かる');
-});
-t('透過処理：spyRate=1なら必ず漏れ、spyRate=0なら決して漏れない', () => {
-  const mk = (rate) => {
-    const m = mkBattleBoard();
-    m.board.lanes[0] = lane(8, [down(151), down(152)]);   // mine:true＝プレイヤーが置いた
-    m.aiConfig = { enemy: { policy: 'eval', spyRate: rate } };
-    CQAi.observe(m, 'enemy');
-    return m.board.lanes[0].channels;
-  };
-  eq(mk(1).every((c) => c.spied_enemy), true, 'spyRate=1：全部漏れる');
-  eq(mk(0).some((c) => c.spied_enemy), false, 'spyRate=0：何も漏れない');
-});
-t('透過処理：1枚につき抽選は1回だけ（2回目のobserveでは再抽選しない）', () => {
-  const m = mkBattleBoard();
-  m.board.lanes[0] = lane(8, [down(151)]);
-  m.aiConfig = { enemy: { policy: 'eval', spyRate: 0 } };
-  CQAi.observe(m, 'enemy');                            // 0%で抽選済みの印が付く
-  m.aiConfig = { enemy: { policy: 'eval', spyRate: 1 } };
-  CQAi.observe(m, 'enemy');                            // 100%にしても再抽選されない
-  eq(!!m.board.lanes[0].channels[0].spied_enemy, false, '1枚1回の抽選が守られる');
+  eq(CQAi.knownTo({ up: false, mine: true, spied_enemy: true }, 'enemy'), false,
+     '旧透視フラグが残っていても効かない（M5.7で撤廃）');
 });
 
 section('M5: 敵AI・仮想能力値（§11.2）');
@@ -1932,20 +1924,20 @@ t('仮想能力値：自分のカードは中身どおり、不明カードは�
   const foe = CQAi.virtualStats(m, 'enemy', 0);
   eq(foe.atk, 700, '敵視点：不明2枚は+100の頭数として全開（500+200）');
 });
-t('仮想能力値：透過で漏れたカードは実物として評価される', () => {
+t('仮想能力値：公開済み（revealed）のカードは実物として評価される', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(155), down(151)]);
-  m.board.lanes[0].channels[0].spied_enemy = true;      // 疫障が敵ＡＩに漏れた
+  m.board.lanes[0].channels[0].revealed = true;         // 疫障が公開済み（スカウター等）
   CQStats.recalc(m.board, OPT);
   const foe = CQAi.virtualStats(m, 'enemy', 0);
-  eq(foe.atk, 450, '漏れた疫障(-250)を含めて評価する（500+200-250）');
+  eq(foe.atk, 450, '公開済みの疫障(-250)を含めて評価する（500+200-250）');
 });
 
-section('M5: 敵AI・攻撃判断（§11.2）');
+section('M5: 敵AI・攻撃判断（§11.2。heuristic＝旧評価関数方策のまま検証を維持）');
 /* 評価関数側を self に置く（human=enemy を手で操作するテスト構成） */
 function aiBoard(turn) {
   const m = mkBattleBoard();
-  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
   m.turn = turn === undefined ? 5 : turn;               // 序盤ペナルティ切れ
   m.players.self.turnsTaken = 3;
   return m;
@@ -1986,9 +1978,9 @@ t('リーサル（ＣＨ数≧相手ＬＰ）の相手を最優先で狙う', ()
   CQAi.mainStep(m);
   eq(m.winner, 'self', 'ＣＨ4のピッグマンを選んで勝負を決める');
 });
-t('フリーユニットは最初の2手番攻撃しない（§11.4）', () => {
+t('フリーユニットの行動制限（noAttackTurns＝最初の2手番攻撃しない）は eval でも効く（§11.4）', () => {
   const m = aiBoard(9);
-  m.aiConfig = { self: CQAi.PRESETS.free };
+  m.aiConfig = { self: { policy: 'eval', noAttackTurns: 2, mulligan: false, handSlots: 6 } };
   m.players.self.turnsTaken = 2;                        // まだ2手番目
   m.players.enemy.lp = 99;
   m.board.lanes[0] = lane(16, []);                      // Ｃ型特殊行動なし
@@ -1999,11 +1991,11 @@ t('フリーユニットは最初の2手番攻撃しない（§11.4）', () => {
   CQAi.mainStep(m);
   eq(m.board.lanes[3].unit, null, '3手番目からは攻撃する');
 });
-t('相手スタックに漏れて見えている雷撃(135)の罠がある相手は避ける', () => {
+t('相手スタックに公開済みで見えている雷撃(135)の罠がある相手は避ける', () => {
   const m = aiBoard(5);
   m.board.lanes[0] = lane(10, []);                      // A600 D550（雷撃の射程内）
   m.board.lanes[3] = lane(8, [down(135, { mine: false })]);   // 罠入り D550
-  m.board.lanes[3].channels[0].spied_self = true;       // 透過で漏れている
+  m.board.lanes[3].channels[0].revealed = true;         // 公開済み（スカウター等で見えた）
   m.board.lanes[4] = lane(27, []);                      // 罠なし D400
   m.players.enemy.lp = 99;
   CQAi.mainStep(m);
@@ -2014,7 +2006,7 @@ t('相手スタックに漏れて見えている雷撃(135)の罠がある相手
 section('M5: 敵AI・戦闘中のオープン判断');
 t('防御側：閉じたままで守れるなら1枚も開かない', () => {
   const m = mkBattleBoard();
-  m.aiConfig = { enemy: CQAi.PRESETS.rankC };
+  m.aiConfig = { enemy: CQAi.PRESETS.heuristic };
   m.board.lanes[0] = lane(8, []);                                  // A500
   m.board.lanes[3] = lane(8, [down(151, { mine: false })]);        // D550 → 安全
   CQCombat.declareAttack(m, 0, 3);
@@ -2027,7 +2019,7 @@ t('防御側：死ぬしかないなら、知っている対抗魔法（135雷�
   // 135は「防御力550以下から無作為選択」なので、防御側自身が射程外（>550）になる盤面で
   // 決定的に検証する：防御側は開いた後も防御力600、攻撃側は550＝雷撃は必ず攻撃側に当たる
   const m = mkBattleBoard();
-  m.aiConfig = { enemy: CQAi.PRESETS.rankC };
+  m.aiConfig = { enemy: CQAi.PRESETS.heuristic };
   m.board.lanes[0] = lane(10, [up(151), up(151)]);                 // A800 D550（表2枚で攻撃+200）
   m.board.lanes[3] = lane(27, [down(135, { mine: false }), down(151, { mine: false })]);  // D700
   CQCombat.declareAttack(m, 0, 3);                                 // 800≧700 → 防御側は死ぬしかない
@@ -2041,7 +2033,7 @@ section('M5: 敵AI・配置と手札');
 t('手札スロット7のカードは使わない（§11.4：ＡＩは実質6枚運用）', () => {
   const m = mkBattleBoard();
   m.phase = 'placement';
-  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
   m.players.self.hand = [180, 180, 180, 180, 180, 180, 8];   // ユニットはスロット7にだけ
   CQAi.placementStep(m);
   eq(m.board.lanes.every((l) => l.unit == null), true, 'スロット7のユニットは召還できない');
@@ -2049,7 +2041,7 @@ t('手札スロット7のカードは使わない（§11.4：ＡＩは実質6枚
 t('評価関数の強制捨ては空白(180)を優先し、無ければ末尾（スロット7）を捨てる', () => {
   const m = mkBattleBoard();
   m.phase = 'discard';
-  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
   m.players.self.hand = [8, 180, 151];
   CQAi.discardStep(m);
   eq(m.players.self.hand.indexOf(180), -1, '空白が捨てられた');
@@ -2060,7 +2052,7 @@ t('評価関数の強制捨ては空白(180)を優先し、無ければ末尾（
 });
 t('マリガン：召還できるユニットが無い初手は手札を引き直す（§4.1）', () => {
   const m = newMatch(600, { selfDeck: mkDeck(50, [151, 8]) });
-  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
   CQTurn.beginTurn(m);
   m.players.self.hand = [151, 151, 151, 151, 151, 151];      // ユニットなしの初手に固定
   const lpBefore = m.players.self.lp;
@@ -2070,7 +2062,7 @@ t('マリガン：召還できるユニットが無い初手は手札を引き�
 });
 t('フリーユニットはマリガンしない（§11.4）', () => {
   const m = newMatch(601, { selfDeck: mkDeck(50, [151, 8]) });
-  m.aiConfig = { self: CQAi.PRESETS.free };
+  m.aiConfig = { self: { policy: 'eval', noAttackTurns: 2, mulligan: false, handSlots: 6 } };
   CQTurn.beginTurn(m);
   m.players.self.hand = [151, 151, 151, 151, 151, 151];
   CQAi.placementStep(m);
@@ -2079,7 +2071,7 @@ t('フリーユニットはマリガンしない（§11.4）', () => {
 t('罠カード（呪爆133など）は相手のユニットに仕込む', () => {
   const m = mkBattleBoard();
   m.phase = 'placement';
-  m.aiConfig = { self: CQAi.PRESETS.rankC };
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
   m.board.lanes[0] = lane(8, []);
   m.board.lanes[3] = lane(8, []);
   m.players.self.hand = [133];
@@ -2095,6 +2087,153 @@ t('aiConfig未設定なら従来のランダム方策のまま動く（後方互
   const acted = CQAi.mainStep(m);                        // ランダム方策は無条件に攻撃する
   eq(acted, true, '行動する');
   eq(!!m.lastBattle, true, '攻撃が実行された');
+});
+
+/* ================= M5.7: 探索方策（決定化サンプリング＋先読み） ================= */
+section('M5.7: 探索方策・決定化サンプラー');
+const CQSearch = require(path.join(root, 'js/engine/search.js'));
+/* テスト用の決定的な search 設定：時間予算を事実上無効化してサンプル数を固定する */
+function searchCfg(over) {
+  return Object.assign({ policy: 'search', samples: 3, depth: 1, budgetMs: 1e9, minSamples: 3,
+                         noAttackTurns: 0, mulligan: true, handSlots: 6 }, over || {});
+}
+
+t('カウンティング分布：公開済みのカードを母集団から差し引く', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151), down(152)]);     // ユニット8・表151・自分置き152
+  m.players.self.hand = [180];
+  const pool = CQSearch.countingPool(m, 'self', {});
+  // 母集団は各ＩＤ×2枚。8は場に1枚・151は表1枚・152は自分置き1枚・180は手札1枚が引かれる
+  eq(pool.filter((x) => x === 8).length, 1, 'ユニット8が1枚差し引かれる');
+  eq(pool.filter((x) => x === 151).length, 1, '表の151が1枚差し引かれる');
+  eq(pool.filter((x) => x === 152).length, 1, '自分が置いた152が1枚差し引かれる');
+  eq(pool.filter((x) => x === 180).length, 1, '自分の手札の180が1枚差し引かれる');
+  eq(pool.filter((x) => x === 91).length, 0, 'カース(t:C)は母集団に入らない');
+});
+t('カウンティング分布：samplePool を渡すとその分布を使う（エリアの敵プール等）', () => {
+  const m = mkBattleBoard();
+  const pool = CQSearch.countingPool(m, 'self', { samplePool: [8, 8, 151] });
+  eq(pool.slice().sort((a, b) => a - b), [8, 8, 151], '指定した母集団がそのまま使われる');
+});
+t('世界の決定化：不明カードだけが引き直され、既知のカード・自分の手札は保存される', () => {
+  const m = mkBattleBoard();
+  m.aiConfig = { enemy: searchCfg({ samplePool: [180] }) };
+  m.board.lanes[0] = lane(8, [down(135), up(151)]);     // 裏135＝敵には不明／表151＝既知
+  m.players.self.hand = [101, 102];                     // プレイヤーの手札（敵には不明）
+  m.players.enemy.hand = [151, 152];                    // 敵自身の手札（既知）
+  const rng = CQRng.create(7);
+  const world = CQSearch.makeWorld(m, 'enemy', rng, [180]);
+  eq(world.board.lanes[0].channels[0].card, 180, '不明カードは分布から引き直される');
+  eq(world.board.lanes[0].channels[1].card, 151, '表のカードはそのまま');
+  eq(world.players.enemy.hand, [151, 152], '自分（敵ＡＩ）の手札はそのまま');
+  eq(world.players.self.hand, [180, 180], '相手の手札は枚数を保って引き直される');
+  eq(m.board.lanes[0].channels[0].card, 135, '元の対局は一切変更されない');
+  eq(m.players.self.hand, [101, 102], '元の手札も変更されない');
+});
+t('サンプリングは対局の m.rng を消費しない（別系統ＲＮＧ＝再現性の保護）', () => {
+  const m = mkBattleBoard();
+  m.aiConfig = { self: searchCfg() };
+  m.board.lanes[0] = lane(16, []);
+  m.board.lanes[3] = lane(8, [down(151, { mine: false })]);
+  const before = m.rng.state();
+  CQSearch.decide(m, 'self', CQSearch.enumerateMain(m));
+  eq(m.rng.state(), before, '決定の過程で対局の乱数列は進まない');
+});
+
+section('M5.7: 探索方策・カンニング検出ガード（恒久）');
+t('未公開カードの実ＩＤを差し替えても、同一シードなら同一の手を選ぶ', () => {
+  /* 敵ＡＩ（active=enemy）から見えないプレイヤー側の裏向きカードだけを差し替えた
+   * 2つの対局で、選択される手が完全に一致することを確認する。
+   * ここが崩れたら、ＡＩの判断経路のどこかが未公開情報を読んでいる（＝カンニング） */
+  const play = (hiddenId) => {
+    const m = mkBattleBoard();
+    m.active = 'enemy';
+    m.aiConfig = { enemy: searchCfg({ samplePool: [8, 151, 180] }) };
+    m.board.lanes[3] = lane(16, []);                    // 敵ＡＩのユニット
+    m.board.lanes[0] = lane(8, [down(hiddenId), down(hiddenId)]);  // プレイヤーの裏向きＣＨ
+    m.players.self.hand = [hiddenId];                   // プレイヤーの手札も差し替え対象
+    CQAi.mainStep(m);
+    return JSON.stringify(m._lastChoice);
+  };
+  eq(play(135), play(158), '雷撃(135)を膨張(158)に差し替えても同じ手');
+  eq(play(135), play(101), '魔法101に差し替えても同じ手');
+});
+
+section('M5.7: 探索方策・時間予算と決定');
+t('時間予算：budgetMs=0 なら minSamples で打ち切る', () => {
+  const m = mkBattleBoard();
+  m.aiConfig = { self: searchCfg({ samples: 1000, minSamples: 2, budgetMs: 0 }) };
+  m.board.lanes[0] = lane(16, []);
+  m.board.lanes[3] = lane(8, [down(151, { mine: false })]);
+  CQAi.mainStep(m);
+  eq(m._searchStats.samples, 2, 'minSamples=2 で打ち切られる');
+});
+t('リーサル確定（全世界で適用直後に勝ち）の手を最優先で選ぶ', () => {
+  const m = mkBattleBoard();
+  m.turn = 5;
+  m.players.self.turnsTaken = 3;
+  m.aiConfig = { self: searchCfg() };
+  m.board.lanes[0] = lane(16, []);                      // A600（Ｃ型なし）：どちらも倒せる
+  m.board.lanes[3] = lane(27, []);                      // メガゾエア ＣＨ2 D400
+  m.board.lanes[4] = lane(8, []);                       // ピッグマン ＣＨ4 D450 ＝リーサル
+  m.players.enemy.lp = 4;
+  CQAi.mainStep(m);
+  CQAi.finishCombat(m);
+  eq(m.winner, 'self', 'ＣＨ4のピッグマンを選んで勝負を決める');
+});
+t('確実に勝てる攻撃がある盤面では、パスではなく攻撃を選ぶ', () => {
+  const m = mkBattleBoard();
+  m.turn = 5;
+  m.players.self.turnsTaken = 3;
+  m.aiConfig = { self: searchCfg() };
+  m.board.lanes[0] = lane(16, []);                      // A600 vs D450 → margin +150
+  m.board.lanes[3] = lane(8, []);
+  const acted = CQAi.mainStep(m);
+  CQAi.finishCombat(m);
+  eq(acted, true, '行動した');
+  eq(m.board.lanes[3].unit, null, '敵ユニットが破壊された');
+});
+
+section('M5.7: 探索方策・候補手の列挙（行動制限の維持）');
+t('noAttackTurns：最初の2手番は攻撃・デッキ攻撃が候補に入らない（フリーの個性を維持）', () => {
+  const m = mkBattleBoard();
+  m.aiConfig = { self: searchCfg({ noAttackTurns: 2 }) };
+  m.board.lanes[0] = lane(16, []);
+  m.board.lanes[3] = lane(8, []);
+  m.players.self.turnsTaken = 2;
+  const c1 = CQSearch.enumerateMain(m);
+  eq(c1.some((c) => c.type === 'attack' || c.type === 'deck'), false, '2手番目まで攻撃候補なし');
+  m.players.self.turnsTaken = 3;
+  const c2 = CQSearch.enumerateMain(m);
+  eq(c2.some((c) => c.type === 'attack'), true, '3手番目からは攻撃が候補に入る');
+});
+t('handSlots：手札スロット7のカードは候補に入らない（§11.4：実質6枚運用）', () => {
+  const m = mkBattleBoard();
+  m.phase = 'placement';
+  m.aiConfig = { self: searchCfg() };
+  m.players.self.hand = [180, 180, 180, 180, 180, 180, 8];   // ユニットはスロット7にだけ
+  const cands = CQSearch.enumeratePlacement(m);
+  eq(cands.some((c) => c.type === 'summon'), false, 'スロット7のユニットは召還候補にならない');
+});
+t('search のマリガン：召還できるユニットが無い初手は手札を引き直す（§4.1）', () => {
+  const m = newMatch(700, { selfDeck: mkDeck(50, [151, 8]) });
+  m.aiConfig = { self: searchCfg() };
+  CQTurn.beginTurn(m);
+  m.players.self.hand = [151, 151, 151, 151, 151, 151];
+  const lpBefore = m.players.self.lp;
+  CQAi.placementStep(m);
+  eq(m.players.self.hasChanged, true, 'チェンジを使った');
+  eq(m.players.self.lp, lpBefore - 1, 'ＬＰを1消費');
+});
+t('search の配置：場が空でユニットが手札にあれば召還する', () => {
+  const m = mkBattleBoard();
+  m.phase = 'placement';
+  m.turn = 1;
+  m.aiConfig = { self: searchCfg({ samplePool: [180] }) };
+  m.players.self.hand = [8, 180];
+  const acted = CQAi.placementStep(m);
+  eq(acted, true, '行動した');
+  eq(m.board.lanes.slice(0, 3).some((l) => l.unit === 8), true, 'ユニットが召還される');
 });
 
 /* ================= 結果 ================= */
