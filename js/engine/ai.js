@@ -306,6 +306,12 @@
     const foeSide = S.otherSide(side);
     const foeUnits = S.lanesOf(foeSide).filter(function (i) { return m.board.lanes[i].unit != null; });
 
+    // --- 0. おじゃま虫（M6 戦場ルール）を捨てる ---
+    // 置くことも召還することもできない純ペナルティなので、捨てられるなら迷う余地が無い。
+    // 1ターン1枚・行動済み扱いというコストはエンジン側が見ている
+    const pestIdx = p.hand.findIndex(function (id) { return Field.isPest(id); });
+    if (pestIdx >= 0 && Turn.discardPest(m, pestIdx).ok) return true;
+
     // --- 1. マリガン（§4.1：敵ＡＩも同等のマリガンを持つ。フリーユニットは無し） ---
     if (cfg.mulligan && ownUnits.length === 0) {
       const anySummonable = p.hand.slice(0, slots).some(function (id) {

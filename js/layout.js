@@ -27,11 +27,9 @@ function abbrev(name, n) {
    そこで専用イラストは用意せず、元ユニットの絵を流用し、CSSの img.curse-art で
    紫の心霊風に加工して「本体ではなく取り憑いた霊のほう」だと分かるようにする。 */
 const CURSE_ART_OFFSET = 26;
-/* おじゃま虫（M6 戦場ルール）には専用の絵がまだ無い。空白(180)の絵を流用し、
-   CSSの img.pest-art で緑に寄せたうえに虫マークを重ねて区別する（実装計画 追補§3）。 */
-const PEST_ID = 200;
+/* おじゃま虫（M6 戦場ルール・ID200）も他のカードと同じ。assets/cards/200.png を置けば絵になる
+   （置くまではカード名の文字表示。カードの地色だけ CSS の .card.X で緑に分けてある）。 */
 function artSrcId(card) {
-  if (card.id === PEST_ID) return 180;
   return card.t === 'C' ? card.id - CURSE_ART_OFFSET : card.id;
 }
 function artInner(card, chars) {
@@ -40,8 +38,7 @@ function artInner(card, chars) {
   const a = abbrev(label, chars || 3);
   /* draggable="false" は必須。付けないと、絵のあるカードをドラッグしたときに
      ブラウザ標準の画像ドラッグが始まってしまい、こちらのポインタ操作が途切れる */
-  const cls = card.t === 'C' ? 'curse-art' : (card.id === PEST_ID ? 'pest-art' : '');
-  return `<img ${cls ? `class="${cls}" ` : ''}src="${ART_DIR}${artSrcId(card)}.png"
+  return `<img ${card.t === 'C' ? 'class="curse-art" ' : ''}src="${ART_DIR}${artSrcId(card)}.png"
      alt="" draggable="false"
      onerror="this.replaceWith(document.createTextNode('${a}'))">`;
 }
@@ -964,6 +961,23 @@ function showChangeConfirm() {
     okBtn() + ngBtn(), true);
 }
 
+/* M6 戦場ルール：おじゃま虫だけは配置ステップで手札から直接捨てられる（2026-08-26 本人の指定）。
+   1ターン1枚まで・捨てると「行動した」扱い、というコストはエンジン側（CQTurn.canDiscardPest）が見る */
+function showPestDiscardConfirm(handIdx) {
+  const card = CARD_BY_ID[M.players[M.active].hand[handIdx]];
+  const chk = CQTurn.canDiscardPest(M, handIdx);
+  UI.mode = 'confirm';
+  if (!chk.ok) {
+    UI.pending = null;
+    return paint(miniCardHTML(card) + askHTML('いまは捨てられません', chk.reason, 'ng'), ngBtn('閉じる'), true);
+  }
+  UI.pending = { kind: 'pest-discard', handIdx };
+  paint(miniCardHTML(card) + askHTML('おじゃま虫を捨てますか？',
+    'このカードは<b>置くことも召還することもできません</b>。捨てられるのは<b>1ターンに1枚まで</b>で、'
+    + '捨てるとそのターンは「行動した」扱いになります（何もしなかったときの手札1枚補充は受けられません）。', 'warn'),
+    okBtn('捨てる') + ngBtn(), true);
+}
+
 function showDiscardConfirm(handIdx) {
   const card = CARD_BY_ID[M.players[M.active].hand[handIdx]];
   UI.pending = { kind: 'discard', handIdx };
@@ -1079,6 +1093,7 @@ function doPending() {
   let r = { ok: true };
   if (p.kind === 'change') r = CQTurn.change(M);
   else if (p.kind === 'discard') r = CQTurn.discardCard(M, p.handIdx);
+  else if (p.kind === 'pest-discard') r = CQTurn.discardPest(M, p.handIdx);
   else if (p.kind === 'deck-attack') r = CQCombat.deckAttack(M, p.lane);
   else if (p.kind === 'special-action') r = CQTurn.specialAction(M, p.lane);
   UI.mode = 'idle'; UI.lane = null; UI.layers = []; UI.report = null;
@@ -1254,6 +1269,8 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     if (humanSide() !== M.active || M.combat) { showCardInfo(el); return; }
     if (M.phase === 'discard') { showDiscardConfirm(+el.dataset.hand); return; }
     if (M.phase !== 'placement') { showCardInfo(el); return; }   /* 置けるのは配置ステップだけ */
+    /* M6 戦場ルール：おじゃま虫は場に置けないので、ドラッグではなく「捨てる」確認を出す */
+    if (CQField.isPest(+el.dataset.card)) { showPestDiscardConfirm(+el.dataset.hand); return; }
     ev.preventDefault();                       /* 画像ドラッグ・テキスト選択を止める */
     drag = { kind: 'hand', el, id: +el.dataset.card, idx: +el.dataset.hand,
              x0: ev.clientX, y0: ev.clientY, moved: false, ghost: null };

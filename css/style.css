@@ -682,5 +682,7 @@ td.nm{font-weight:800}
 .i-field{border-top:1px solid var(--line);padding-top:8px;margin-top:10px}
 .i-field:first-of-type{border-top:none;margin-top:0}
 
-/* おじゃま虫（専用の絵がまだ無いので空白180の絵を緑に寄せて流用する） */
-img.pest-art{filter:hue-rotate(70deg) saturate(1.6) brightness(.92)}
+/* おじゃま虫（種別 'X'）。ほかのカードと取り違えないよう、くすんだ緑の別色にする */
+.card.X{border-color:#6b8f3a;background:linear-gradient(150deg,#26331a,#46612a)}
+.i-art.X,.c-art.X{background:linear-gradient(150deg,#26331a,#46612a)}
+/* 絵は assets/cards/200.png を置けば自動で使われる（未配置ならカード名の文字表示） */

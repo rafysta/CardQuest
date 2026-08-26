@@ -109,7 +109,8 @@
       hand: [],
       turnsTaken: 0,
       actedThisTurn: false,
-      hasChanged: false
+      hasChanged: false,
+      pestDiscardTurn: -1        // M6 戦場ルール：おじゃま虫を捨てたターン（1ターン1枚の判定用）
     };
   }
 
@@ -319,6 +320,41 @@
     syncHandCount(m);
     recalc(m);
     note(m, jp(side) + ' がチャネル');
+    return { ok: true };
+  }
+
+  /* ---- M6 戦場ルール：おじゃま虫を捨てる ------------------------------------
+   * このエンジンには「好きなときに手札を捨てる」行動が無い（原作にも無い）。
+   * そのままだと、おじゃま虫は手札が8枚になる強制捨てまで抱え込むしかなく、
+   * 「置けない・召還できない・自分では外せない」の三重苦になって理不尽に感じる
+   * （2026-08-26 本人の指定で追加）。そこで**おじゃま虫に限って**手札から直接
+   * 捨てられるようにした。ルールの牙（手札圧迫）は次の2つで残してある：
+   *   ・捨てられるのは配置ステップだけ・**1ターンに1枚まで**
+   *     （投入頻度が捨てる速さを上回れば、やはり手札は詰まっていく）
+   *   ・捨てると「そのターンは行動した」扱い＝未行動のときの手札1枚補充を失う
+   * ふつうのカードはここから捨てられない（手札を軽くする裏技にしないため）。 */
+
+  /** いまこの手札のおじゃま虫を捨てられるか（ＵＩはこの reason をそのまま出す） */
+  function canDiscardPest(m, handIndex) {
+    if (m.phase !== 'placement') return { ok: false, reason: 'おじゃま虫を捨てられるのは配置ステップだけです' };
+    const p = activePlayer(m);
+    const id = p.hand[handIndex];
+    if (id == null) return { ok: false, reason: '手札の指定が不正です' };
+    if (!Field.isPest(id)) return { ok: false, reason: 'ここから捨てられるのはおじゃま虫だけです' };
+    if (p.pestDiscardTurn === m.turn) return { ok: false, reason: 'おじゃま虫を捨てられるのは1ターンに1枚までです' };
+    return { ok: true };
+  }
+
+  /** おじゃま虫を1枚、手札から直接捨てる */
+  function discardPest(m, handIndex) {
+    const chk = canDiscardPest(m, handIndex);
+    if (!chk.ok) return chk;
+    const side = m.active, p = activePlayer(m);
+    p.hand.splice(handIndex, 1);
+    p.pestDiscardTurn = m.turn;      // このターンはもう捨てられない
+    p.actedThisTurn = true;          // 未行動のときの1枚補充は受けられない＝捨てるのはタダではない
+    syncHandCount(m);
+    note(m, jp(side) + ' がおじゃま虫を捨てた');
     return { ok: true };
   }
 
@@ -567,6 +603,7 @@
     HAND_CAP, FIRST_DRAW, DECK_SIZE, RELOAD_LP_COST,
     createDeck, draw, ensureDeck, createPlayer, createMatch,
     beginTurn, discardCard, summon, channel, endPlacement, reverseAction, finalizeReverse,
+    canDiscardPest, discardPest,
     canSpecialAction, specialAction,
     change, endTurn,
     checkResult

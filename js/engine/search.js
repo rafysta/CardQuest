@@ -232,6 +232,7 @@
     switch (cand.type) {
       case 'summon': return Turn.summon(c, cand.lane, cand.hand).ok;
       case 'channel': return Turn.channel(c, cand.lane, cand.hand).ok;
+      case 'discardPest': return Turn.discardPest(c, cand.hand).ok;
       case 'attack': return Combat.declareAttack(c, cand.lane, cand.target).ok;
       case 'deck': { const r = Combat.deckAttack(c, cand.lane); return !r || r.ok !== false; }
       case 'special': return Turn.specialAction(c, cand.lane).ok;
@@ -351,7 +352,12 @@
       if (card.t === 'U' && emptyOwn !== undefined) {
         cands.push({ type: 'summon', lane: emptyOwn, hand: h, id: id });
       }
-      if (!Field.channelAllowed(m, id).ok) continue;    // M6：おじゃま虫はチャネリングできない
+      // M6 戦場ルール：おじゃま虫は置けない。捨てるかどうかだけを候補にする
+      // （1ターン1枚・行動済み扱いというコストがあるので、先読みに損得を判断させる）
+      if (Field.isPest(id)) {
+        if (Turn.canDiscardPest(m, h).ok) cands.push({ type: 'discardPest', hand: h, id: id });
+        continue;
+      }
       if (ownRoom.length) {
         let best = ownRoom[0];
         if (card.t === 'U') {

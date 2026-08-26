@@ -159,6 +159,33 @@ const URL = process.env.CQ_URL || 'http://localhost:8321/index.html';
       r.ok === false && /おじゃま虫/.test(r.reason), JSON.stringify(r));
   }
 
+  // --- 7) おじゃま虫を配置ステップで捨てる（v0.15.5） ---
+  if (gotPest) {
+    // 直前の判定で phase を書き換えているので、配置ステップの状態に戻して描画し直す
+    await page.evaluate(() => { M.phase = 'placement'; renderAll(); });
+    await page.waitForTimeout(300);
+    const pestEl = await page.$('#hand .hand-card[data-card="200"]');
+    ok('手札のおじゃま虫が見つかる', !!pestEl);
+    if (pestEl) {
+      const b = await pestEl.boundingBox();
+      await page.mouse.click(b.x + b.width / 2, b.y + 14);
+      await page.waitForTimeout(300);
+      const txt = await page.$eval('#info-fix', (e) => e.textContent);
+      ok('押すと「捨てますか？」の確認が出る', /捨てますか/.test(txt), txt.slice(0, 30));
+      await page.click('#info-fix [data-act="ok"]').catch(() => {});
+      await page.waitForTimeout(500);
+      ok('捨てると手札から消える',
+        await page.evaluate(() => M.players.self.hand.indexOf(200) < 0));
+      // 2枚目は同じターンには捨てられない（エンジンの理由がそのまま出る）
+      const second = await page.evaluate(() => {
+        M.players.self.hand.push(200);
+        return CQTurn.canDiscardPest(M, M.players.self.hand.length - 1);
+      });
+      ok('同じターンの2枚目は理由付きで断られる',
+        second.ok === false && /1ターンに1枚/.test(second.reason), JSON.stringify(second));
+    }
+  }
+
   ok('コンソールエラーなし', errors.length === 0, errors.slice(0, 3).join(' / '));
 
   await browser.close();

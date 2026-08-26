@@ -2555,6 +2555,55 @@ t('引き直し（チェンジ）で山札に戻らない＝再装填でも復�
   eq(m.players.self.initial.indexOf(CQField.PEST_CARD), -1, '再装填リストにも入らない');
   eq(m.players.self.deckCount, before - 1 + 1, '戻したのはピッグマン1枚だけ（引き直しも1枚）');
 });
+t('配置ステップでは手札から直接捨てられる（2026-08-26 本人の指定）', () => {
+  const m = mkField([{ id: 'pestCard', period: 99 }]);
+  m.phase = 'placement'; m.turn = 1;
+  m.players.self.hand = [8, CQField.PEST_CARD];
+  eq(CQTurn.discardPest(m, 1).ok, true, '捨てられる');
+  eq(m.players.self.hand, [8], '手札から消えた');
+  eq(m.board.hand.self, 1, '手札枚数の同期も取れている');
+});
+t('捨てられるのはおじゃま虫だけ・配置ステップだけ', () => {
+  const m = mkField([{ id: 'pestCard', period: 99 }]);
+  m.phase = 'placement'; m.turn = 1;
+  m.players.self.hand = [8, CQField.PEST_CARD];
+  eq(CQTurn.discardPest(m, 0).ok, false, 'ふつうのカードは捨てられない');
+  m.phase = 'main';
+  eq(CQTurn.discardPest(m, 1).ok, false, 'メインステップでは捨てられない');
+  eq(m.players.self.hand.length, 2, '手札は減っていない');
+});
+t('捨てられるのは1ターンに1枚まで（次のターンにはまた捨てられる）', () => {
+  const m = mkField([{ id: 'pestCard', period: 99 }]);
+  m.phase = 'placement'; m.turn = 1;
+  m.players.self.hand = [CQField.PEST_CARD, CQField.PEST_CARD];
+  eq(CQTurn.discardPest(m, 0).ok, true, '1枚目は捨てられる');
+  const ng = CQTurn.discardPest(m, 0);
+  eq([ng.ok, /1ターンに1枚/.test(ng.reason)], [false, true], '同じターンの2枚目は却下');
+  m.turn = 3;                                   // 自分の次の手番
+  eq(CQTurn.discardPest(m, 0).ok, true, 'ターンが変われば捨てられる');
+});
+t('捨てると「行動した」扱いになり、未行動のときの1枚補充を受けられない', () => {
+  const drew = function (discard) {
+    const m = mkField([{ id: 'pestCard', period: 99 }]);
+    m.phase = 'placement'; m.turn = 1;
+    m.players.self.hand = [CQField.PEST_CARD];
+    if (discard) CQTurn.discardPest(m, 0);
+    CQTurn.endPlacement(m);
+    const before = m.players.self.deckCount;
+    CQTurn.endTurn(m);
+    return before - m.players.self.deckCount;   // ターン終了時に引いた枚数
+  };
+  eq(drew(false), 1, '何もしなければ1枚補充される（対照）');
+  eq(drew(true), 0, '捨てたターンは補充されない＝捨てるのはタダではない');
+});
+t('ＡＩは配置ステップでおじゃま虫を捨てる', () => {
+  const m = mkField([{ id: 'pestCard', period: 99 }]);
+  m.phase = 'placement'; m.turn = 1;
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
+  m.players.self.hand = [CQField.PEST_CARD, 8];
+  CQAi.placementStep(m);
+  eq(m.players.self.hand.indexOf(CQField.PEST_CARD), -1, '真っ先に捨てる');
+});
 t('ＡＩは真っ先におじゃま虫を捨てる（空白より優先）', () => {
   const m = mkField([{ id: 'pestCard', period: 1 }]);
   m.phase = 'discard';
