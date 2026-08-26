@@ -1103,11 +1103,21 @@ t('光臨（アッシュメイカーの固有能力）があれば召還Ｌｖ3�
   eq([r.ok, m.board.lanes[1].unit], [true, 13], '光臨で直接召還できる');
 });
 t('魔道書：レーンに付いている枚数×2ぶん、リバース召還の要求レベルが下がる', () => {
-  // 10 ヨルムンガンド＝召還Ｌｖ5。魔道書2枚（表）で要求Ｌｖ5-4=1まで下がり、3階層目でも成功する
+  // 10 ヨルムンガンド＝召還Ｌｖ5。魔道書2枚（表）で要求Ｌｖ5-4=1まで下がり、3階層目でも成功する。
+  // ただしＬｖ2以上なので生贄の儀式が要る（v0.15.3）＝メインステップで検証する
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(2, [up(186), up(186), down(10)]);
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[0].unit, 10, '魔道書2枚でＬｖ1相当まで下がり召還成功（ホストの跡地）');
+  eq(m.board.lanes[0].channels.length, 2, '下の魔道書2枚を引き継ぐ');
+});
+t('魔道書で要求レベルが下がっても、戦闘中は生贄の儀式ができない（v0.15.3）', () => {
   const m = duel(8, [up(186), up(186), down(10)], 8, [down(180)]);
   CQCombat.declareAttack(m, 0, 3);
   const r = CQCombat.open(m, 3);
-  eq([r.effect.result, m.board.lanes[1].unit], ['summon', 10], '魔道書2枚でＬｖ1相当まで下がり召還成功');
+  eq(r.effect.result, 'ritualCombat', '戦闘中は召還失敗');
+  eq(m.board.lanes.filter((l) => l.unit === 10).length, 0, 'ヨルムンガンドは破壊された');
 });
 t('魔道書が無ければ同じ階層でも召還レベル不足で破壊される', () => {
   const m = duel(8, [down(180), down(180), down(10)], 8, [down(180)]);
@@ -2234,6 +2244,131 @@ t('search の配置：場が空でユニットが手札にあれば召還する'
   const acted = CQAi.placementStep(m);
   eq(acted, true, '行動した');
   eq(m.board.lanes.slice(0, 3).some((l) => l.unit === 8), true, 'ユニットが召還される');
+});
+
+/* ================= M5.8: 生贄召還（召還Ｌｖ2以上のリバース召還） ================= */
+section('M5.8: 生贄召還の成立');
+/* ホストは パイロウイング(2)＝召還Ｌｖ1・ＣＨ5・固有能力が儀式に干渉しない。
+ * 積むカードは 空白(180)＝表になっても効果が無いので、引き継ぎ枚数だけを純粋に見られる */
+const FILL = 180;
+function ritualBoard(chs, hostId) {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(hostId === undefined ? 2 : hostId, chs);
+  CQStats.recalc(m.board, OPT);
+  return m;
+}
+
+t('召還Ｌｖ5：ホストを生贄に、下に積まれた4枚を引き継いで跡地に立つ', () => {
+  const m = ritualBoard([down(FILL), down(FILL), down(FILL), down(FILL), down(12)]);
+  const lpBefore = m.players.self.lp;
+  const r = CQTurn.reverseAction(m, 0, [5]);
+  eq(r.ok, true, 'リバース成功');
+  eq(m.board.lanes[0].unit, 12, 'ホストの跡地にウロボロスが立つ');
+  eq(m.board.lanes[0].channels.length, 4, '下の4枚を引き継いだ');
+  eq(m.board.lanes[0].channels.every((c) => c.card === FILL && !c.up), true, '裏向きのまま引き継ぐ');
+  eq(m.players.self.lp, lpBefore, '生贄でＬＰは減らない（suppress）');
+  eq(m.board.lanes[0].stiff, false, '召還されたユニットは硬直しない');
+});
+t('引き継いだ裏向きＣＨはそのまま防御力になる（Ｄ550＋100×4＝950）', () => {
+  const m = ritualBoard([down(FILL), down(FILL), down(FILL), down(FILL), down(12)]);
+  CQTurn.reverseAction(m, 0, [5]);
+  CQStats.recalc(m.board, OPT);
+  eq(m.board.lanes[0].def, 950, 'ウロボロスＤ550＋引き継ぎ4枚');
+});
+t('召還されるユニットより上に積まれていたカードはホストと一緒に破壊される', () => {
+  const m = ritualBoard([down(FILL), down(FILL), down(13), down(FILL), down(FILL)]);
+  CQTurn.reverseAction(m, 0, [3]);                      // ニドヘッグ(Ｌｖ3)を3階層目から
+  eq(m.board.lanes[0].unit, 13, 'ニドヘッグが立つ');
+  eq(m.board.lanes[0].channels.length, 2, '下の2枚だけが残る（上の2枚は消える）');
+});
+t('敵が仕込んだカードも一緒に引き継ぐ', () => {
+  const m = ritualBoard([down(FILL, { mine: false }), down(FILL), down(FILL), down(FILL), down(12)]);
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(m.board.lanes[0].channels[0].mine, false, '敵が置いたカードも持ち主のまま付いてくる');
+});
+t('リバース召還したユニットはその場で攻撃できる', () => {
+  const m = ritualBoard([down(FILL), down(FILL), down(FILL), down(FILL), down(12)]);
+  m.board.lanes[3] = lane(8, []);
+  m.turn = 5;
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(CQCombat.canAttack(m, 0).ok, true, '硬直していないので攻撃できる');
+});
+
+section('M5.8: 生贄召還の失敗（儀式が成立しない4条件）');
+t('戦闘中のオープンフェイズでは儀式ができず、ユニットは破壊される', () => {
+  const m = ritualBoard([down(FILL), down(FILL), down(FILL), down(FILL), down(12)]);
+  m.board.lanes[3] = lane(8, []);
+  m.turn = 5;
+  CQCombat.declareAttack(m, 0, 3);
+  eq(!!m.combat, true, '戦闘に入った');
+  CQCombat.open(m, 5);                                   // ウロボロスの階層を開く
+  eq(m.board.lanes[0].unit, 2, 'ホストは生き残る');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 12), false, 'ウロボロスは破壊された');
+  eq(m.board.lanes.filter((l) => l.unit === 12).length, 0, '場のどこにも召還されていない');
+});
+t('救済(179)が表向きのホストは生贄にできず、召還は失敗する', () => {
+  const m = ritualBoard([up(179), down(FILL), down(FILL), down(FILL), down(12)]);
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(m.board.lanes[0].unit, 2, 'ホストは救済で守られて残る');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 12), false, 'ウロボロスは破壊された');
+});
+t('裏向きの救済は儀式を邪魔しない（技能は表向きのときだけ効く）', () => {
+  const m = ritualBoard([down(179), down(FILL), down(FILL), down(FILL), down(12)]);
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(m.board.lanes[0].unit, 12, '儀式は成立する');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 179), true, '救済は引き継がれる');
+});
+t('救済能力を固有で持つケツァルコアトル(11)はホストにできない', () => {
+  const m = ritualBoard([down(FILL), down(FILL), down(FILL), down(FILL), down(12)], 11);
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(m.board.lanes[0].unit, 11, 'ケツァルコアトルは生贄にならない');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 12), false, 'ウロボロスは破壊された');
+});
+t('敵のユニットに仕込んだ場合は生贄を用意できず失敗する', () => {
+  const m = mkBattleBoard();
+  m.active = 'enemy';                                    // 敵が自分のレーンをリバースする
+  m.board.lanes[3] = lane(2, [down(FILL, { mine: true }), down(FILL, { mine: true }),
+                              down(FILL, { mine: true }), down(FILL, { mine: true }),
+                              down(12, { mine: true })]);  // プレイヤーが敵のスタックに仕込んだ
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 3, [5]);
+  eq(m.board.lanes[3].unit, 2, '敵のホストは生贄にならない');
+  eq(m.board.lanes.filter((l) => l.unit === 12).length, 0, 'ウロボロスは召還されず破壊された');
+});
+
+section('M5.8: 傀儡で奪ったユニットの生贄と、召還Ｌｖ1の据え置き');
+t('傀儡で操作権を奪った敵ユニットは生贄にできる（自分の場の空きへ召還）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[3] = lane(2, [down(FILL), down(FILL), down(13), up(169)]);   // 表の傀儡で操作権が自分に
+  CQStats.recalc(m.board, OPT);
+  eq(CQState.controlSide(m.board.lanes[3], 3), 'self', '操作権は自分側');
+  CQTurn.reverseAction(m, 3, [3]);
+  eq(m.board.lanes[3].unit, null, '敵陣のホストが生贄になった');
+  const born = m.board.lanes.findIndex((l, i) => i < 3 && l.unit === 13);
+  eq(born >= 0, true, 'ニドヘッグは自分の場に召還される');
+  eq(m.board.lanes[born].channels.length, 2, '下の2枚を引き継ぐ');
+});
+t('傀儡で奪っても、自分の場に空きが無ければ召還は失敗する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, []); m.board.lanes[1] = lane(8, []); m.board.lanes[2] = lane(8, []);
+  m.board.lanes[3] = lane(2, [down(FILL), down(FILL), down(13), up(169)]);
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 3, [3]);
+  eq(m.board.lanes[3].unit, 2, 'ホストは残る');
+  eq(m.board.lanes[3].channels.some((c) => c.card === 13), false, 'ニドヘッグは破壊された');
+});
+t('召還Ｌｖ1のユニットは従来どおり（生贄なし・引き継ぎなし・空きレーンへ）', () => {
+  const m = ritualBoard([down(19)]);                     // 召還Ｌｖ1のユニットを1階層目に
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].unit, 2, 'ホストは生き残る');
+  const born = m.board.lanes.findIndex((l, i) => i < 3 && l.unit === 19);
+  eq(born >= 0 && born !== 0, true, '空きレーンに召還される');
+  eq(m.board.lanes[born].channels.length, 0, 'ＣＨは引き継がない');
+});
+t('儀式が失敗しても、下に積まれていたカードは残る', () => {
+  const m = ritualBoard([up(179), down(FILL), down(FILL), down(FILL), down(12)]);
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(m.board.lanes[0].channels.length, 4, '救済＋空白3枚がそのまま残る');
 });
 
 /* ================= 結果 ================= */

@@ -367,7 +367,7 @@
     //   （EV0182 ＣＨオープン処理は EV0006 page7 のリバースからも呼ばれる）。
     //   押収(118)・潜入(138)・妄執(148)のようにカード自身がこの階層から消える効果があるため、
     //   それが起きた分だけ以降の階層番号を繰り下げて対応する */
-    let shift = 0;
+    let shift = 0, ritual = false;
     for (let i = 0; i < layers.length; i++) {
       const n = layers[i] - shift;
       const cur = m.board.lanes[laneIndex];
@@ -382,6 +382,10 @@
         const eff = combatApi().onOpen(m, laneIndex, n, ch, opts);   // ★M4：魔法発動・リバース召還
         consumed = !!(eff && eff.consumed);
         if (consumed) shift += 1;
+        // 生贄召還（v0.15.3）：リバースしていたユニット自身が生贄になり、跡地に別のユニットが
+        // 立った。行動していたユニットはもう居ないので、以降の階層は触らず硬直もさせない
+        // （召還されたユニットは硬直しない、という既存ルールをここでも守る）
+        if (eff && eff.result === 'ritual') { ritual = true; break; }
       }
       const after = m.board.lanes[laneIndex];
       if (!after || after.unit == null) break;         // 呪爆・妄執等でユニットごと消えた（そのレーンはもう無い）
@@ -392,8 +396,8 @@
     // リバースしたユニットはその瞬間に硬直する（2026-08-24 本人の指定。従来は継続確定まで
     // 硬直を遅らせていたが、画面上で「動けなくなった」ことがすぐ分かるように変更）。
     // 継続モード中の同じレーンだけは、硬直していても上の階層を続けて開ける（上の stiff 判定参照）
-    if (finalLane && finalLane.unit != null) finalLane.stiff = true;
-    if (opts && opts.cont && !m.winner
+    if (!ritual && finalLane && finalLane.unit != null) finalLane.stiff = true;
+    if (!ritual && opts && opts.cont && !m.winner
         && finalLane && finalLane.unit != null
         && finalLane.reversePtr < finalLane.channels.length) {
       m.reversing = laneIndex;        // 行動継続中（原作 SW583）：まだ上の階層を続けられる

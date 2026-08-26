@@ -164,14 +164,24 @@
     return layer >= req - (ln.acc ? ln.acc.tome : 0);
   }
 
-  /** 潜行ユニットをこの階層で開くとリバース召還が成功するか（side の場に出るものだけ） */
+  /** 潜行ユニットをこの階層で開くとリバース召還が成功するか（side の場に出るものだけ）。
+   * v0.15.3：召還Ｌｖ2以上は「生贄の儀式」（メインステップ・自分が操作するホスト・救済なし・
+   * 置き場所あり）が要る。combat.js の ritualCheck と同じ条件をここでも見ておかないと、
+   * ＡＩが成立しない召還を選んで切り札を自滅させる（逆に条件を厳しくしすぎると使わなくなる） */
   function reverseSummonable(m, side, laneIndex, layer, ch) {
     if (!isUnit(ch.card)) return false;
     if (placedBy(ch) !== side) return false;              // 相手のユニットを出してやる義理はない
     const ln = m.board.lanes[laneIndex];
-    const lv = S.unitStats(m.cards[ch.card]).lv - (ln.acc ? ln.acc.tome : 0);
-    if (layer < lv) return false;
-    return S.lanesOf(side).some(function (i) { return m.board.lanes[i].unit == null; });
+    const printedLv = S.unitStats(m.cards[ch.card]).lv;
+    if (layer < printedLv - (ln.acc ? ln.acc.tome : 0)) return false;
+    const hasRoom = function () {
+      return S.lanesOf(side).some(function (i) { return m.board.lanes[i].unit == null; });
+    };
+    if (printedLv < 2) return hasRoom();                  // 従来どおり
+    if (m.combat) return false;                           // 戦闘中は儀式ができない
+    if (S.controlSide(ln, laneIndex) !== side) return false;          // 生贄にできるユニットが無い
+    if (ln.acc && ln.acc.salvation >= 1) return false;                // 救済に守られている
+    return S.sideOf(laneIndex) === side ? true : hasRoom();           // ふつうはホストの跡地に立つ
   }
 
   /* ================= やけくそモード（§11.2） ================= */

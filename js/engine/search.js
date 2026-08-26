@@ -354,7 +354,9 @@
         }
         cands.push({ type: 'channel', lane: best, hand: h, id: id });
       }
-      if (foeRoom.length) {
+      // 相手のユニットへのチャネル。ただし召還Ｌｖ2以上のユニットカードは、相手の場では
+      // 生贄を用意できず必ず召還失敗＝捨てるのと同じなので候補にしない（v0.15.3）
+      if (foeRoom.length && !(card.t === 'U' && S.unitStats(card).lv >= 2)) {
         cands.push({ type: 'channel', lane: foeRoom[0], hand: h, id: id });
       }
     }
@@ -423,8 +425,19 @@
   function openStep(m) {
     if (!m.combat) return false;
     const side = Combat.openerSide(m);
-    const layers = Combat.openableLayers(m);
+    const ln = m.board.lanes[Combat.openerLane(m)];
+    let layers = Combat.openableLayers(m);
     if (!layers.length) { Combat.endOpen(m); return true; }
+    // 戦闘中に「中身を知っている召還Ｌｖ2以上のユニットカード」を開くのは、生贄の儀式が
+    // できないぶん確実に破壊されるだけの手（v0.15.3）。得が一切無いので候補から外す。
+    // 中身を知らないカードは対象外＝カンニングにはならない（Ai().knownTo を通す）
+    const safe = layers.filter(function (n) {
+      const ch = ln && ln.channels[n - 1];
+      if (!ch || !Ai().knownTo(ch, side)) return true;
+      const card = m.cards[ch.card];
+      return !(card && card.t === 'U' && S.unitStats(card).lv >= 2);
+    });
+    layers = safe;   // 全部が該当するなら「開かずに終える」だけが残る（開く得が無いので正しい）
     const cands = layers.map(function (n) { return { type: 'open', layer: n }; });
     cands.push({ type: 'end' });
     const choice = decide(m, side, cands);

@@ -263,6 +263,27 @@
     return { consumed: consumed, result: 'magic' };
   }
 
+  /** 生贄の儀式が成立するか（召還Ｌｖ2以上のリバース召還。v0.15.3）。
+   * destSide＝そのユニットカードを置いた人の陣営。成立時は dest（新ユニットが立つレーン）を返す */
+  function ritualCheck(m, laneIndex, destSide) {
+    const ln = m.board.lanes[laneIndex];
+    // ① 戦闘中は儀式ができない（オープンフェイズでのリバース召還は必ず失敗する）
+    if (m.combat) return { ok: false, result: 'ritualCombat', reason: '戦闘中は生贄を捧げられず、' };
+    // ② 生贄にできるのは「そのカードを置いた本人が操作している」ユニットだけ。
+    //    敵のユニットに仕込んだ場合は生贄を用意できない。傀儡で操作権を奪ったユニットは生贄にできる
+    if (S.controlSide(ln, laneIndex) !== destSide)
+      return { ok: false, result: 'ritualFoe', reason: '生贄にできるユニットが無く、' };
+    // ③ 救済(179)／救済能力（11 ケツァルコアトル固有）で守られたユニットは生贄にできない
+    if (ln.acc.salvation >= 1)
+      return { ok: false, result: 'ritualSalvation', reason: '救済に守られたユニットは生贄にできず、' };
+    // ④ 置き場所：ふつうはホストの跡地。傀儡で奪った相手陣のユニットを生贄にしたときだけ、
+    //    自分の場に空きレーンが必要（無ければ失敗）
+    if (S.sideOf(laneIndex) === destSide) return { ok: true, dest: laneIndex };
+    const dest = S.lanesOf(destSide).filter(function (i) { return m.board.lanes[i].unit == null; })[0];
+    if (dest === undefined) return { ok: false, result: 'nospace', reason: '召還先が無く、' };
+    return { ok: true, dest: dest };
+  }
+
   /** リバース召還（原作 EV0182 [C]）。潜行ユニットがオープンされて場に出る */
   function reverseSummon(m, laneIndex, layer, ch) {
     const ln = m.board.lanes[laneIndex], id = ch.card;
@@ -287,14 +308,40 @@
     // (5) 召還レベル：配置階層 >= 召還レベル で成功。
     //     魔道書(186)はこのレーンに付いている枚数×2ぶん要求レベルを下げる（メインステップ中のみ有効。
     //     『能力値計算とチャンネル』確定事項#12）
-    const lv = S.unitStats(m.cards[id]).lv - ln.acc.tome;
+    const printedLv = S.unitStats(m.cards[id]).lv;        // 印字の召還レベル（魔道書で下がる前）
+    const lv = printedLv - ln.acc.tome;
     if (layer < lv) {
       drop();
       note(m, nameOf(m, id) + ' は召還レベルが足りず破壊された');
       return { consumed: true, result: 'level' };
     }
-    // (6) 召還先＝そのカードを置いたマスターの場。空きが無ければ破壊
     const destSide = ch.mine ? 'self' : 'enemy';
+
+    // (5.5) 生贄の儀式（v0.15.3／M5.8。2026-08-26 本人の指定）
+    //   召還Ｌｖ2以上のユニットは、ホストを生贄に捧げないと場に出られない。
+    //   儀式が成立しなければ召還失敗＝出てこようとしたカードを破壊する（下のカードはそのまま残る）。
+    //   成立すると、そのユニットより下に積まれていたカードをそのまま引き継ぎ（敵が仕込んだカードも
+    //   含む）、上に積まれていたカードはホストと一緒に消え、跡地にそのまま立つ。
+    //   ※ 召還Ｌｖ1は従来どおり（生贄なし・引き継ぎなし・空きレーンへ）
+    if (printedLv >= 2) {
+      const rit = ritualCheck(m, laneIndex, destSide);
+      if (!rit.ok) {
+        drop();
+        note(m, nameOf(m, id) + ' は' + rit.reason + '召還に失敗し破壊された');
+        return { consumed: true, result: rit.result };
+      }
+      const carried = ln.channels.slice(0, layer - 1);     // 下に積まれていたカード＝引き継ぐ
+      ln.channels = ln.channels.slice(layer);              // 上に積まれていたカード＝ホストと共に消える
+      ln.count = ln.channels.length;
+      note(m, nameOf(m, ln.unit) + ' を生贄に ' + nameOf(m, id) + ' を召還（ＣＨ' + carried.length + '枚を引き継ぎ）');
+      // 生贄はＬＰダメージを伴わない（suppress。ＬＰを払うと逆転の切り札にならないため）
+      destroy(m, laneIndex, { normalAttack: false, suppress: true });
+      m.board.lanes[rit.dest] = S.makeLane(id, carried, m.cards);   // 召還されたユニットは硬直しない
+      recalc(m);
+      return { consumed: true, result: 'ritual', lane: rit.dest };
+    }
+
+    // (6) 召還先＝そのカードを置いたマスターの場。空きが無ければ破壊
     const dest = S.lanesOf(destSide).filter(function (i) { return m.board.lanes[i].unit == null; })[0];
     if (dest === undefined) {
       drop();
@@ -586,7 +633,7 @@
 
   const api = {
     canAttack, canTarget, attackTargets, declareAttack,
-    canOpenPhase, openableLayers, openerLane, openerSide, open, endOpen, onOpen,
+    canOpenPhase, openableLayers, openerLane, openerSide, open, endOpen, onOpen, ritualCheck,
     destroy, expireMagic, applyPendingCurse,
     canDeckAttack, deckAttack, destroyDeckCard, abortBattle
   };

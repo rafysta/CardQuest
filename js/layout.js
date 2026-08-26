@@ -953,7 +953,67 @@ function tryStartDestroyPick(laneIdx, layer, ch, resume) {
   return true;
 }
 
+/* ================= 生贄召還の確認（v0.15.3） =================
+ * 召還Ｌｖ2以上のユニットカードをリバースすると、ホストを生贄に捧げて召還するか、
+ * 儀式が成立せずそのカードが破壊されるかのどちらかになる。どちらも取り返しがつかないので、
+ * 開く前に何が起きるかを提示する。
+ * **介入するのは「自分に中身が見えているカード」だけ**（chKnown）。相手が置いた裏向きカードでは
+ * 確認が出ない＝ＵＩが中身を知っていることが漏れない（憑依解除(101)の対象選択と同じ考え方）。 */
+const RITUAL_NG = {
+  ritualCombat: '戦闘中は生贄の儀式ができません。',
+  ritualFoe: '相手が操作しているユニットは生贄にできません。',
+  ritualSalvation: '救済に守られたユニットは生贄にできません。',
+  nospace: '自分の場に空きレーンがありません。'
+};
+function tryConfirmRitual(laneIdx, layer, ch, resume) {
+  if (!ch || ch.up || !chKnown(ch)) return false;
+  const card = CARD_BY_ID[ch.card];
+  if (!card || card.t !== 'U') return false;
+  const lv = CQState.unitStats(card).lv;
+  if (lv < 2) return false;                                  /* Ｌｖ1は従来どおり＝確認は不要 */
+  const ln = M.board.lanes[laneIdx];
+  if (!ln || ln.unit == null) return false;
+  const hostName = (CARD_BY_ID[ln.unit] || {}).n || 'ユニット';
+  const acc = ln.acc || {};
+  let q, body;
+  if (acc.resist >= 1) {
+    q = `${card.n} は破壊されます`;
+    body = '抵抗が付いているため、出てこようとしたユニットカードは破壊されます。';
+  } else if (acc.fusion >= 1) {
+    q = `${card.n} は潜行したまま残ります`;
+    body = '融合が付いているため、場には出ずチャネリングのまま留まります。';
+  } else if (layer < lv - (acc.tome || 0)) {
+    q = `${card.n} は破壊されます`;
+    body = `召還レベルが足りません（${lv - (acc.tome || 0)}階層目以上に潜っている必要があります）。`;
+  } else {
+    const rit = CQCombat.ritualCheck(M, laneIdx, ch.mine ? 'self' : 'enemy');
+    if (!rit.ok) {
+      q = `${card.n} は召還できず破壊されます`;
+      body = (RITUAL_NG[rit.result] || '生贄の儀式が成立しません。')
+        + '<br>召還Ｌｖ2以上のユニットは、ホストを生贄に捧げないと場に出られません。';
+    } else {
+      const carried = layer - 1, upper = ln.channels.length - layer;
+      q = `${hostName} を生贄に ${card.n} を召還しますか？`;
+      body = `${hostName} は破壊されます（ＬＰは減りません）。`
+        + `<br>下に積まれた <b>${carried}枚</b> は ${card.n} に引き継がれます。`
+        + (upper > 0 ? `<br>上に積まれた <b>${upper}枚</b> は一緒に破壊されます。` : '');
+    }
+  }
+  UI.pending = { kind: 'run', run: resume };
+  UI.mode = 'confirm';
+  paint(miniCardHTML(card) + askHTML(q, body, 'warn'), okBtn('開く') + ngBtn(), true);
+  return true;
+}
+
 function doPending() {
+  /* kind:'run' … 確認のあとに実行する処理を関数ごと預かる形（生贄召還の確認で使う）。
+     預けた関数が自分で markLog/markFx を呼ぶので、ここでは二重に呼ばない */
+  const pr = UI.pending;
+  if (pr && pr.kind === 'run') {
+    UI.pending = null;
+    UI.mode = 'idle'; UI.lane = null; UI.layers = []; UI.report = null;
+    return pr.run();
+  }
   markLog(); markFx();
   const p = UI.pending;
   UI.pending = null;
@@ -1098,10 +1158,14 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
       if (!r.ok) flash(r.reason);
       step();
     })) return;
-    markLog(); markFx();
-    const r = CQCombat.open(M, layer);
-    if (!r.ok) flash(r.reason);
-    return step();
+    const openNow = () => {
+      markLog(); markFx();
+      const r = CQCombat.open(M, layer);
+      if (!r.ok) flash(r.reason);
+      step();
+    };
+    if (tryConfirmRitual(laneIdx, layer, ch, openNow)) return;   /* 生贄召還の確認（v0.15.3） */
+    return openNow();
   }
   /* 攻撃対象を選んでいる最中（行動メニュー経由）：対象を押したら即攻撃 */
   if (UI.mode === 'attack' && el.dataset.lane !== undefined) {
@@ -1113,6 +1177,7 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     const laneIdx = +el.dataset.lane, layer = +el.dataset.layer;
     const ch = M.board.lanes[laneIdx].channels[layer - 1];
     if (tryStartDestroyPick(laneIdx, layer, ch, (choice) => doFlip(laneIdx, layer, choice))) return;
+    if (tryConfirmRitual(laneIdx, layer, ch, () => doFlip(laneIdx, layer))) return;  /* v0.15.3 */
     return doFlip(laneIdx, layer);
   }
   if (el.classList.contains('empty-unit')) return;
