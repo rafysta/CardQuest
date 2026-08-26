@@ -792,7 +792,9 @@ td.nm{font-weight:800}
 /* 非戦闘マス（宝箱・ショップ・休憩・換金・？）のアイコン：台座に近い位置まで大きく下げて
  * 表示する（2026-08-26 本人指摘：アイコンと台座が離れていて浮いて見える）。 */
 .node-icon-img{width:80%;height:80%;object-fit:contain;filter:drop-shadow(0 4px 3px rgba(0,0,0,.5));align-self:flex-end}
-.node-icon{font-size:36px;line-height:1;filter:drop-shadow(0 3px 3px rgba(0,0,0,.5));align-self:flex-end}
+/* ？（question）はテキスト絵文字のため上と同じ詰め方だと逆に台座へ近づきすぎた
+ * （2026-08-26 本人指摘）。少し離す。 */
+.node-icon{font-size:36px;line-height:1;filter:drop-shadow(0 3px 3px rgba(0,0,0,.5));align-self:flex-end;margin-bottom:30px}
 .node-silhouette{font-size:28px;color:#8a97b6;filter:brightness(.4)}
 /* 切り抜き未生成時のフォールバック（従来の枠付きカード絵） */
 .node-art-fallback{
@@ -813,10 +815,10 @@ td.nm{font-weight:800}
   border-radius:10px;padding:1px 6px;font-size:12px;font-weight:800}
 
 /* プレイヤーのコマ：常時アイドルで小さく揺れ、移動時は上下に跳ねながら横へ滑る（マップ仕様書§4.2）。
- * 2026-08-26 本人指定：1.2倍に拡大（58×76 → 70×91）。 */
+ * 2026-08-26 本人指定：1.2倍→1.3倍→さらに1.1倍に拡大（58×76 → 70×91 → 91×118 → 100×130）。 */
 .player-token{
   position:absolute;transform:translate(-50%,-96%);
-  width:70px;height:91px;z-index:6;pointer-events:none;
+  width:100px;height:130px;z-index:6;pointer-events:none;
 }
 .player-token img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 8px 6px rgba(0,0,0,.55))}
 .player-token.idle{animation:player-idle 1.7s ease-in-out infinite}
@@ -833,8 +835,9 @@ td.nm{font-weight:800}
   50%{transform:translate(-50%,-96%) translateY(-15px)}
 }
 
-.run-log{position:absolute;left:16px;bottom:14px;font-size:12px;color:var(--dim);
-  background:rgba(5,8,15,.7);border-radius:8px;padding:6px 10px;pointer-events:none}
+/* おまかせドラフト等の直近ログはマップ上では邪魔（2026-08-26 本人指摘）なので非表示にする。
+ * run.log 自体への記録は継続（他画面・将来のヒント表示等で使う可能性があるため）。 */
+.run-log{display:none}
 
 /* レンタル（おまかせドラフト）バッジ。マップ仕様書§1.2 */
 .rental-badge{
