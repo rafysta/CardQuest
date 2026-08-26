@@ -35,6 +35,10 @@ const URL = process.env.CQ_URL || 'http://localhost:8321/index.html';
     }
   });
   await page.goto(URL);
+  await page.waitForTimeout(400);   // 読み込み直後はフォント差し替え等でタブの位置がわずかに動くことがある
+  /* v0.16でラン画面が既定タブになったため、単発検証用のバトル画面タブへ明示的に切り替える */
+  await page.click('.tab[data-screen="screen-battle"]');
+  await page.waitForTimeout(300);
 
   const results = [];
   const ok = (name, cond, extra) => results.push([cond ? 'PASS' : 'FAIL', name, extra || '']);

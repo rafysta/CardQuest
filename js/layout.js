@@ -50,7 +50,13 @@ document.querySelectorAll('.tab').forEach((b) => {
     document.querySelectorAll('.screen').forEach((x) => x.classList.remove('on'));
     b.classList.add('on');
     document.getElementById(b.dataset.screen).classList.add('on');
-    if (b.dataset.screen === 'screen-battle') fitBoard();
+    /* v0.16でラン画面が既定タブになり、バトル画面は最初 display:none のまま
+     * newMatch()/renderAll() が走ることがある（非表示中は clientHeight などが0になり、
+     * --cw/--chh/--vstep/--hstep に0が焼き込まれる）。表示に切り替えた直後、
+     * レイアウトが確定してから（rAFで1フレーム待って）測り直す。 */
+    if (b.dataset.screen === 'screen-battle') {
+      requestAnimationFrame(() => { fitBoard(); if (M) renderHand(); });
+    }
   });
 });
 
@@ -94,6 +100,26 @@ const FIELD_SETS = [
   { label: '封鎖の列', rules: [{ id: 'laneLock', lanes: [2] }] }
 ];
 let fieldSet = 0;
+/* ラン（M6・js/run/run.js）からこの同じバトル画面を呼ぶための橋渡し。
+ * ラン中はバトル画面の「強さ」「戦場」「新しい対戦」（不正な変更・離脱の入口になる）を隠し、
+ * 決着後の「もう一度」を「ランへ戻る」に差し替えて runOverHook を呼ぶ。 */
+let RUN_ACTIVE = false;
+let runOverHook = null;
+/** js/run-ui.js から呼ばれる：ラン中の戦闘を、既存のバトル画面でそのまま始める。
+ * setup は CQRun.battleSetup() の戻り値そのもの。onOver(M) は決着後「ランへ戻る」を押したときに呼ばれる。 */
+function startRunBattle(setup, onOver) {
+  RUN_ACTIVE = true; runOverHook = onOver; foeAuto = true;
+  M = CQTurn.createMatch(Object.assign({}, setup, {
+    rng: CQRng.create(setup.seed),
+    hooks: { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen }
+  }));
+  M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };
+  UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
+  UI.pending = null; UI.report = null;
+  const tab = document.querySelector('.tab[data-screen="screen-battle"]');
+  if (tab) tab.click();
+  step();
+}
 const UI = {
   mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-destroy */
   info: null,     /* 表示中のカード */
@@ -375,14 +401,17 @@ function renderStatus() {
   for (let i = 0; i < top.hand.length; i++) h += `<span class="mini" style="z-index:${20 - i}"></span>`;
   document.getElementById('ehand').innerHTML = h + `<b>${top.hand.length}</b>`;
 
-  document.getElementById('turnbox').innerHTML =
-    `<span class="tn">第 ${M.turn} ターン</span>
-     <span class="tw">${phaseLabel()}</span>
-     ${fieldChipsHTML()}
-     <button class="tiny" data-act="mode">相手：${foeAuto ? '自動' : '手動'}</button>
-     <button class="tiny" data-act="rank">強さ：${CQAi.PRESETS[aiRank].label}</button>
-     <button class="tiny" data-act="field">戦場：${FIELD_SETS[fieldSet].label}</button>
-     <button class="tiny" data-act="new">新しい対戦</button>`;
+  document.getElementById('turnbox').innerHTML = RUN_ACTIVE
+    ? `<span class="tn">第 ${M.turn} ターン</span>
+       <span class="tw">${phaseLabel()}</span>
+       ${fieldChipsHTML()}`
+    : `<span class="tn">第 ${M.turn} ターン</span>
+       <span class="tw">${phaseLabel()}</span>
+       ${fieldChipsHTML()}
+       <button class="tiny" data-act="mode">相手：${foeAuto ? '自動' : '手動'}</button>
+       <button class="tiny" data-act="rank">強さ：${CQAi.PRESETS[aiRank].label}</button>
+       <button class="tiny" data-act="field">戦場：${FIELD_SETS[fieldSet].label}</button>
+       <button class="tiny" data-act="new">新しい対戦</button>`;
 }
 
 /* --- 戦場ルール（M6）の常時表示 ---
@@ -653,7 +682,10 @@ function renderHand() {
   /* ステップを進めるボタン */
   const acts = document.getElementById('acts');
   let b = '';
-  if (M.winner) b = '<button class="act-btn" data-act="new">もう一度<br>対戦する</button>';
+  if (M.winner) {
+    b = RUN_ACTIVE ? '<button class="act-btn" data-act="run-over">ランへ<br>戻る</button>'
+                   : '<button class="act-btn" data-act="new">もう一度<br>対戦する</button>';
+  }
   else if (M.combat) {
     /* オープンフェイズを終えるボタンは、他のステップの「配置を終える」と同じ右下に置く。
      * 防御側は既に1枚以上開いていることもあるので「開かずに終える」ではなく「迎撃を終える」
@@ -801,7 +833,8 @@ function panelOver() {
     <p class="i-t">${why}（第 ${M.turn} ターン）</p>
     ${M.loot.length ? `<div class="i-loot">戦利品：${M.loot.map((id) => CARD_BY_ID[id].n).join('・')}</div>` : ''}
     ${UI.report ? reportHTML(UI.report) : ''}`,
-    `<button class="btn ok" data-act="new">もう一度</button>`, true);
+    RUN_ACTIVE ? `<button class="btn ok" data-act="run-over">ランへ戻る</button>`
+               : `<button class="btn ok" data-act="new">もう一度</button>`, true);
 }
 
 /* --- メインステップ：ユニットを選んだときの行動メニュー --- */
@@ -1109,6 +1142,12 @@ function panelAct(act, data) {
       UI.pending = null; UI.mode = 'idle'; UI.lane = null; UI.layers = [];
       return renderAll();
     case 'new': return newMatch();
+    case 'run-over': {                                  /* ラン中の戦闘決着 → ランの画面へ戻る */
+      const m = M, hook = runOverHook;
+      RUN_ACTIVE = false; runOverHook = null;
+      if (hook) hook(m);
+      return;
+    }
     case 'mode':
       foeAuto = !foeAuto;
       flash(foeAuto ? '相手を自動で動かします' : '相手もあなたが操作します');

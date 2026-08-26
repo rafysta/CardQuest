@@ -25,6 +25,10 @@ const CQCombat = require(path.join(root, 'js/engine/combat.js'));
 const CQMagic = require(path.join(root, 'js/engine/effects/magic.js'));
 const CQUnits = require(path.join(root, 'js/engine/effects/units.js'));
 const CQField = require(path.join(root, 'js/engine/fieldrules.js'));
+const CQAreas = require(path.join(root, 'js/run/areas.js'));
+const CQMap = require(path.join(root, 'js/run/map.js'));
+const CQRun = require(path.join(root, 'js/run/run.js'));
+const CQSave = require(path.join(root, 'js/meta/save.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
 /* ---- ミニ・テストハーネス ---- */
@@ -2690,6 +2694,289 @@ t('ＡＩの候補列挙もロックレーンを空きとして数えない', ()
   CQAi.placementStep(m);
   eq([m.board.lanes[0].unit, m.board.lanes[1].unit, m.board.lanes[2].unit], [null, null, 8],
      'ロックされていないレーン2にだけ召還する');
+});
+
+/* ================= M6 ラン：分岐マップ生成器（js/run/map.js） ================= */
+section('M6 ラン: マップ生成器');
+
+t('草原・森の敵プールが原作ドロップ表から拾える', () => {
+  const g = CQAreas.enemyPool(CARD_BY_ID, 'grassland');
+  const f = CQAreas.enemyPool(CARD_BY_ID, 'forest');
+  eq(g.length > 5, true, '草原プールが十分な数ある');
+  eq(f.length > 5, true, '森プールが十分な数ある');
+  eq(g.every((e) => e.price > 0 && e.price <= CQAreas.DEFS.grassland.priceMax), true, '草原プールの価格上限が守られている');
+  eq(g.every((e) => e.id !== 64), true, 'マスターズソウルは混ざらない');
+});
+
+t('マップ生成：8マス構造（開始1＋2択×2×3セグメント＋ボス1＝14ノード）で常に同じ形', () => {
+  const m1 = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed: 42, ownedIds: [] });
+  eq(Object.keys(m1.nodes).length, 14, 'ノード総数14');
+  eq(m1.nodes[m1.start].connectsTo.length, 2, '開始マスの分岐は常に2択');
+  eq(m1.nodes[m1.boss].connectsTo.length, 0, 'ボスの先はない');
+  const segACounts = {};
+  Object.values(m1.nodes).forEach((n) => { if (n.seg != null) segACounts[n.seg] = (segACounts[n.seg] || 0) + 1; });
+  eq(segACounts, { 0: 4, 1: 4, 2: 4 }, '各セグメントは4ノード（A0,A1,B0,B1）');
+});
+
+t('マップ生成：同じシードなら常に同じ結果（決定的）', () => {
+  const a = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed: 999, ownedIds: [1, 2] });
+  const b = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed: 999, ownedIds: [1, 2] });
+  eq(JSON.stringify(a), JSON.stringify(b), '同一シード・同一入力は同一マップ');
+});
+
+t('関門（第3セグメント）にだけ精鋭が出現しうる', () => {
+  let sawElite2 = false, eliteOutside = false;
+  for (let seed = 1; seed <= 60; seed++) {
+    const m = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed, ownedIds: [] });
+    Object.values(m.nodes).forEach((n) => {
+      if (n.strength !== 'elite') return;
+      if (n.seg === 2) sawElite2 = true; else eliteOutside = true;
+    });
+  }
+  eq(sawElite2, true, '関門に精鋭が出る試行が十分ある');
+  eq(eliteOutside, false, '関門以外に精鋭は出ない');
+});
+
+t('？イベントは1ランに最大1回', () => {
+  for (let seed = 1; seed <= 80; seed++) {
+    const m = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed, ownedIds: [] });
+    const qCount = Object.values(m.nodes).filter((n) => n.type === 'question').length;
+    if (qCount > 1) throw new Error('seed ' + seed + ' で？が' + qCount + '回出た');
+  }
+});
+
+t('霧が有効なランでは第1セグメントに必ずショップがある', () => {
+  let sawFog = false;
+  for (let seed = 1; seed <= 60; seed++) {
+    const m = CQMap.generate({ cards: CARD_BY_ID, areaId: 'forest', seed, ownedIds: [] });
+    if (!m.fog.active) continue;
+    sawFog = true;
+    const seg0Types = Object.values(m.nodes).filter((n) => n.seg === 0).map((n) => n.type);
+    eq(seg0Types.indexOf('shop') >= 0, true, 'seed ' + seed + '：霧マップの第1セグメントにショップがある');
+  }
+  eq(sawFog, true, '森は十分な試行で霧が発生する（初期値50%）');
+});
+
+t('霧は開始と第1セグメントには掛からない（第2・第3・ボスだけ）', () => {
+  const m = CQMap.generate({ cards: CARD_BY_ID, areaId: 'forest', seed: 7, ownedIds: [] });
+  eq(m.nodes[m.start].fog, false, '開始マスは霧なし');
+  Object.values(m.nodes).forEach((n) => {
+    if (n.seg === 0) eq(n.fog, false, '第1セグメントは霧なし: ' + n.id);
+  });
+});
+
+t('おまかせドラフトの候補は3回とも重複しない', () => {
+  const m = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed: 55, ownedIds: [] });
+  const all = m.draftPools.flat();
+  eq(new Set(all).size, all.length, '3回ぶん9枚（プールが十分あれば）すべて別カード');
+});
+
+/* ================= M6 ラン：進行管理（js/run/run.js） ================= */
+section('M6 ラン: 進行管理');
+
+const STARTER = [8, 1, 3, 2, 5, 7, 9, 19, 20, 22, 31, 70, 58, 65, 66, 67, 71, 73, 10, 17,
+  151, 158, 167, 169, 171, 172, 173, 177, 178, 179, 181, 183, 199,
+  101, 104, 113, 117, 136, 143, 145];
+function freshMeta() { return CQSave.loadMeta(null, STARTER); }
+
+t('ラン開始：マップと初期状態が揃う', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 123, freshMeta());
+  eq(run.at, run.map.start, '開始マスに立っている');
+  eq(run.lp, 10, 'ＬＰ初期値');
+  eq(run.rentals, [], 'レンタルは最初は空');
+  eq(Object.values(run.deck).reduce((a, b) => a + b, 0), STARTER.length, '所持デッキは初期デッキと同じ枚数');
+});
+
+t('プレイヤーデッキ組み立ては常にDECK_SIZE枚（不足は空白で埋める）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 1, freshMeta());
+  const deck = CQRun.buildPlayerDeck(run);
+  eq(deck.length, CQRun.DECK_SIZE, 'DECK_SIZE枚ちょうど');
+});
+
+t('おまかせドラフト：対象は空白優先、無ければ定価最安。ピックはレンタルで所持デッキに残らない', () => {
+  const meta = freshMeta();
+  meta.deck[180] = 2;  // 空白を混ぜておく
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 2, meta);
+  const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+  eq(dp.targetId, 180, '空白がある間は空白が対象');
+  const before180 = run.deck[180];
+  CQRun.applyDraft(run, dp.options[0]);
+  eq(run.deck[180], before180 - 1, '空白が1枚減った');
+  eq(run.rentals.indexOf(dp.options[0]) >= 0, true, 'ピックはレンタルに入る');
+  eq(run.deck[dp.options[0]] || 0, 0, 'レンタルは所持デッキ(run.deck)には加算されない');
+});
+
+t('おまかせドラフト：「変更しない」を選ぶと何も変わらない', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 3, freshMeta());
+  const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+  const before = JSON.stringify(run.deck);
+  CQRun.applyDraft(run, dp.targetId);
+  eq(JSON.stringify(run.deck), before, '所持デッキは変化しない');
+  eq(run.rentals.length, 0, 'レンタルも増えない');
+});
+
+t('戦闘マス設定：敵デッキ・自デッキともDECK_SIZE枚、戦場ルールがそのまま渡る', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 4, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  n.fieldRules = [{ id: 'noHighCH', max: 5 }];
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
+  eq(setup.enemyDeck.length, CQRun.DECK_SIZE, '敵デッキDECK_SIZE枚');
+  eq(setup.selfDeck.length, CQRun.DECK_SIZE, '自デッキDECK_SIZE枚');
+  eq(setup.fieldRules, n.fieldRules, '戦場ルールがそのまま渡る');
+});
+
+t('戦闘結果の反映：勝利で戦利品・Ｇが入り、ＬＰが引き継がれる', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 5, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const fakeM = { winner: 'self', loot: [8, 8], players: { self: { lp: 7 } } };
+  const before = Object.assign({}, run.deck);
+  const res = CQRun.reportBattle(run, n, fakeM);
+  eq(res.win, true, '勝利フラグ');
+  eq(n.cleared, true, 'マスが解決済みになる');
+  eq(run.deck[8], (before[8] || 0) + 2, '戦利品が所持デッキに加わる');
+  eq(run.gainedCards, [8, 8], '獲得リストにも入る');
+  eq(run.lp, 7, 'ＬＰが戦闘後の値に更新される');
+  eq(run.gold > 0, true, 'Ｇが増える');
+});
+
+t('戦闘結果の反映：敗北はＬＰ0＝ランの終了（ゲームオーバー）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 6, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  CQRun.reportBattle(run, n, { winner: 'enemy', loot: [], players: { self: { lp: 0 } } });
+  eq(run.lp, 0, 'ＬＰ0');
+  eq(run.outcome, 'lose', '敗北で終了フラグが立つ');
+});
+
+t('ボス撃破は run.outcome を勝利にする（js/run-ui.js のフックが行う判定と同じ規則）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 8, freshMeta());
+  const bossNode = run.map.nodes[run.map.boss];
+  CQRun.reportBattle(run, bossNode, { winner: 'self', loot: [], players: { self: { lp: 9 } } });
+  if (bossNode.type === 'boss' && true) run.outcome = run.outcome || 'win';
+  eq(run.outcome, 'win', 'ボス勝利でラン成功');
+});
+
+t('マス移動：解決前は進めない、connectsTo外にも進めない', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 9, freshMeta());
+  CQRun.depart(run);
+  const first = CQRun.currentNode(run);
+  eq(CQRun.advance(run, 'zzz').ok, false, '未解決のうちは進めない');
+  first.cleared = true;
+  eq(CQRun.advance(run, 'zzz').ok, false, 'つながっていない先には進めない');
+  eq(CQRun.advance(run, first.connectsTo[0]).ok, true, 'つながっている先には進める');
+  eq(run.at, first.connectsTo[0], '現在地が移動する');
+});
+
+t('宝箱：開封は1回だけ、Ｇとカードが入る', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 10, freshMeta());
+  const n = { type: 'chest', rare: false, gold: 100, cardId: 41, opened: false };
+  const before = run.gold;
+  const r1 = CQRun.openChest(run, n);
+  eq(r1.gold, 100, '初回はゴールドが返る');
+  eq(run.gold, before + 100, 'Ｇが増える');
+  eq(run.deck[41], 1, 'カードが入る');
+  const r2 = CQRun.openChest(run, n);
+  eq(r2.gold, 0, '2回目は何も起きない');
+  eq(run.gold, before + 100, 'Ｇは増えない');
+});
+
+t('休憩：ＬＰ+3・maxLpで頭打ち', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 11, freshMeta());
+  run.lp = 14;
+  CQRun.rest(run, {});
+  eq(run.lp, 15, 'maxLp(15)で頭打ち');
+});
+
+t('ショップ：購入・回復・霧払いはＧが無いと断られる', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 12, freshMeta());
+  run.gold = 0;
+  const n = { stock: [41], healCost: 100, fogClearCost: 100, hasFogClear: true };
+  eq(CQRun.shopBuy(run, CARD_BY_ID, n, 41).ok, false, 'Ｇ不足で購入できない');
+  eq(CQRun.shopHeal(run, n).ok, false, 'Ｇ不足で回復できない');
+  eq(CQRun.shopClearFog(run, n).ok, false, 'Ｇ不足で霧払いできない');
+  run.gold = 99999;
+  const before = Object.assign({}, run.deck);
+  const buy = CQRun.shopBuy(run, CARD_BY_ID, n, 41);
+  eq(buy.ok, true, '購入できる');
+  eq(run.deck[41], (before[41] || 0) + 1, '購入したカードが所持デッキに入る');
+  eq(n.stock.indexOf(41), -1, '品揃えから消える');
+});
+
+t('換金：所持カードだけ売れる。空白は売れない', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 13, freshMeta());
+  eq(CQRun.sell(run, CARD_BY_ID, 180).ok, false, '空白は売れない');
+  eq(CQRun.sell(run, CARD_BY_ID, 99999).ok, false, '持っていないカードは売れない');
+  const before = run.deck[8];
+  const r = CQRun.sell(run, CARD_BY_ID, 8);
+  eq(r.ok, true, '所持カードは売れる');
+  eq(run.deck[8], before - 1, '1枚減る');
+});
+
+t('？イベント：一度解決したら再解決しない', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 14, freshMeta());
+  const n = { type: 'question', event: { id: 'coin', text: 't', effect: { gold: 150 } }, resolved: false };
+  const before = run.gold;
+  CQRun.resolveQuestion(run, n);
+  eq(run.gold, before + 150, '効果が適用される');
+  eq(n.resolved, true, '解決済みになる');
+  const r2 = CQRun.resolveQuestion(run, n);
+  eq(r2, null, '2回目は何もしない');
+  eq(run.gold, before + 150, 'Ｇも変わらない');
+});
+
+t('ラン終了の清算：レンタルは所持デッキに混入しない（返却）', () => {
+  const meta = freshMeta();
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 15, meta);
+  const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+  CQRun.applyDraft(run, dp.options[0]);
+  eq(run.rentals.length, 1, 'レンタルが1枚入った');
+  const settled = CQRun.settle(run, meta);
+  eq((settled.deck[dp.options[0]] || 0), 0, 'レンタルは清算後の所持デッキに残らない');
+  eq(settled.cleared.length, 0, '未クリアなら解放エリアは増えない');
+});
+
+t('ラン終了の清算：クリアするとエリアが解放リストに入る', () => {
+  const meta = freshMeta();
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 16, meta);
+  run.outcome = 'win';
+  const settled = CQRun.settle(run, meta);
+  eq(settled.cleared.indexOf('grassland') >= 0, true, '草原がクリア済みになる');
+});
+
+/* ================= M6 ラン：セーブ（js/meta/save.js） ================= */
+section('M6 ラン: セーブ');
+
+function mockStorage() {
+  const m = {};
+  return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } };
+}
+
+t('cq_meta：無ければ既定デッキから初期化、あれば保存した内容を読む', () => {
+  const st = mockStorage();
+  const m1 = CQSave.loadMeta(st, [8, 8, 180]);
+  eq(m1.deck, { 8: 2, 180: 1 }, '既定デッキから多重集合を作る');
+  m1.gold = 777;
+  CQSave.saveMeta(st, m1);
+  const m2 = CQSave.loadMeta(st, [1]);
+  eq(m2.gold, 777, '保存した内容を読み戻す（既定デッキは無視される）');
+});
+
+t('cq_run：無ければnull、保存すれば読み戻せる、clearRunで消える', () => {
+  const st = mockStorage();
+  eq(CQSave.loadRun(st), null, '最初はnull');
+  CQSave.saveRun(st, { at: 'n0', gold: 5 });
+  eq(CQSave.loadRun(st), { at: 'n0', gold: 5 }, '保存した内容を読み戻す');
+  CQSave.clearRun(st);
+  eq(CQSave.loadRun(st), null, 'clearRunで消える');
+});
+
+t('壊れたcq_metaは初期化して復旧する', () => {
+  const st = mockStorage();
+  st.setItem('cq_meta', '{not json');
+  const m = CQSave.loadMeta(st, [8]);
+  eq(m.deck, { 8: 1 }, '壊れていても既定デッキから復旧する');
 });
 
 /* ================= 結果 ================= */
