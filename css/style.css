@@ -746,20 +746,22 @@ td.nm{font-weight:800}
 
 /* マスは「台座タイル」として描く。アイコン・敵・コマはタイルの上に立つ（黒い角丸カード枠は廃止）。
  * サイズは3段階（2026-08-26 本人指定：ボス以外を拡大・精鋭は通常より大きく）：
- * 通常128px ＜ 精鋭148px ＜ ボス158px（ボスは変更なし） */
+ * 通常128px ＜ 精鋭148px ＜ ボス158px（ボスは変更なし）。
+ * さらに2026-08-26 追加指定：精鋭はそのまま・通常の戦闘マスだけ90%に縮小（弱く見せる）。 */
 .map-node{
   position:absolute;transform:translate(-50%,-62%);
   width:128px;height:146px;
   display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
 }
+.map-node.battle.normal{width:115px;height:131px}
 .map-node.elite{width:148px;height:166px}
 .map-node.boss{width:158px;height:180px}
 
 .node-tile{
   width:78%;height:20px;border-radius:50%;flex:none;
-  /* 台座は「影」ではなく「立ち位置を示す明るい足場」として、白っぽい色にする
-   * （2026-08-26 本人指摘：黒だと影に見え、アイコンと離れていると浮いて見える） */
-  background:radial-gradient(ellipse at center, rgba(255,248,232,.55) 0%, rgba(255,248,232,.22) 55%, transparent 78%);
+  /* 台座は接地影として黒でよい（2026-08-26 本人確認）。アイコン側との距離を詰めて
+   * 「浮いている」感を消す（.node-figure の margin-bottom／.node-icon-img 側で対応）。 */
+  background:radial-gradient(ellipse at center, rgba(0,0,0,.55) 0%, rgba(0,0,0,.24) 55%, transparent 78%);
 }
 .map-node.pickable .node-tile{
   cursor:pointer;
@@ -775,6 +777,7 @@ td.nm{font-weight:800}
   animation:node-sway 3.6s ease-in-out infinite;
 }
 .map-node.pickable .node-figure{cursor:pointer}
+.map-node.battle.normal .node-figure{width:103px;height:103px}
 .map-node.elite .node-figure{width:132px;height:132px}
 .map-node.boss .node-figure{width:134px;height:134px}
 .map-node.done .node-figure{animation:none;opacity:.55}
@@ -786,8 +789,10 @@ td.nm{font-weight:800}
   width:100%;height:100%;object-fit:contain;
   filter:drop-shadow(0 6px 5px rgba(0,0,0,.55));
 }
-.node-icon-img{width:66%;height:66%;object-fit:contain;filter:drop-shadow(0 6px 5px rgba(0,0,0,.5))}
-.node-icon{font-size:34px;filter:drop-shadow(0 4px 4px rgba(0,0,0,.5))}
+/* 非戦闘マス（宝箱・ショップ・休憩・換金・？）のアイコン：台座に近い位置まで大きく下げて
+ * 表示する（2026-08-26 本人指摘：アイコンと台座が離れていて浮いて見える）。 */
+.node-icon-img{width:80%;height:80%;object-fit:contain;filter:drop-shadow(0 4px 3px rgba(0,0,0,.5));align-self:flex-end}
+.node-icon{font-size:36px;line-height:1;filter:drop-shadow(0 3px 3px rgba(0,0,0,.5));align-self:flex-end}
 .node-silhouette{font-size:28px;color:#8a97b6;filter:brightness(.4)}
 /* 切り抜き未生成時のフォールバック（従来の枠付きカード絵） */
 .node-art-fallback{
@@ -807,10 +812,11 @@ td.nm{font-weight:800}
 .node-pip{position:absolute;bottom:0;right:-4px;background:#0a1120;border:1px solid var(--line);
   border-radius:10px;padding:1px 6px;font-size:12px;font-weight:800}
 
-/* プレイヤーのコマ：常時アイドルで小さく揺れ、移動時は上下に跳ねながら横へ滑る（マップ仕様書§4.2） */
+/* プレイヤーのコマ：常時アイドルで小さく揺れ、移動時は上下に跳ねながら横へ滑る（マップ仕様書§4.2）。
+ * 2026-08-26 本人指定：1.2倍に拡大（58×76 → 70×91）。 */
 .player-token{
   position:absolute;transform:translate(-50%,-96%);
-  width:58px;height:76px;z-index:6;pointer-events:none;
+  width:70px;height:91px;z-index:6;pointer-events:none;
 }
 .player-token img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 8px 6px rgba(0,0,0,.55))}
 .player-token.idle{animation:player-idle 1.7s ease-in-out infinite}
