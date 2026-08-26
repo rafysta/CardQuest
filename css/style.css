@@ -744,32 +744,38 @@ td.nm{font-weight:800}
 .road-tread.done{stroke:#3a2f06;opacity:.8}
 .road-under.done{opacity:.65}
 
-/* マスは「台座タイル」として描く。アイコン・敵・コマはタイルの上に立つ（黒い角丸カード枠は廃止） */
+/* マスは「台座タイル」として描く。アイコン・敵・コマはタイルの上に立つ（黒い角丸カード枠は廃止）。
+ * サイズは3段階（2026-08-26 本人指定：ボス以外を拡大・精鋭は通常より大きく）：
+ * 通常128px ＜ 精鋭148px ＜ ボス158px（ボスは変更なし） */
 .map-node{
   position:absolute;transform:translate(-50%,-62%);
-  width:112px;height:132px;
+  width:128px;height:146px;
   display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
 }
+.map-node.elite{width:148px;height:166px}
 .map-node.boss{width:158px;height:180px}
 
 .node-tile{
-  width:80%;height:22px;border-radius:50%;flex:none;
-  background:radial-gradient(ellipse at center, rgba(12,10,6,.55) 0%, rgba(12,10,6,.24) 55%, transparent 78%);
+  width:78%;height:20px;border-radius:50%;flex:none;
+  /* 台座は「影」ではなく「立ち位置を示す明るい足場」として、白っぽい色にする
+   * （2026-08-26 本人指摘：黒だと影に見え、アイコンと離れていると浮いて見える） */
+  background:radial-gradient(ellipse at center, rgba(255,248,232,.55) 0%, rgba(255,248,232,.22) 55%, transparent 78%);
 }
 .map-node.pickable .node-tile{
   cursor:pointer;
-  background:radial-gradient(ellipse at center, rgba(250,204,21,.62) 0%, rgba(250,204,21,.24) 55%, transparent 78%);
+  background:radial-gradient(ellipse at center, rgba(250,204,21,.68) 0%, rgba(250,204,21,.28) 55%, transparent 78%);
   animation:tile-pulse 1.7s ease-in-out infinite;
 }
 .map-node.done .node-tile{opacity:.4}
 @keyframes tile-pulse{0%,100%{opacity:.75}50%{opacity:1}}
 
 .node-figure{
-  position:relative;width:92px;height:92px;margin-bottom:-8px;
+  position:relative;width:114px;height:114px;margin-bottom:-22px;
   display:flex;align-items:center;justify-content:center;
   animation:node-sway 3.6s ease-in-out infinite;
 }
 .map-node.pickable .node-figure{cursor:pointer}
+.map-node.elite .node-figure{width:132px;height:132px}
 .map-node.boss .node-figure{width:134px;height:134px}
 .map-node.done .node-figure{animation:none;opacity:.55}
 .map-node.foggy .node-figure{filter:brightness(.55) saturate(.4)}
@@ -778,9 +784,9 @@ td.nm{font-weight:800}
 /* 敵・ボスは背景除去済みの切り抜き（tools/make-cutouts.py）をそのまま立たせる。枠は付けない */
 .node-cutout,.node-master-cutout{
   width:100%;height:100%;object-fit:contain;
-  filter:drop-shadow(0 10px 8px rgba(0,0,0,.55));
+  filter:drop-shadow(0 6px 5px rgba(0,0,0,.55));
 }
-.node-icon-img{width:62%;height:62%;object-fit:contain;filter:drop-shadow(0 6px 5px rgba(0,0,0,.5))}
+.node-icon-img{width:66%;height:66%;object-fit:contain;filter:drop-shadow(0 6px 5px rgba(0,0,0,.5))}
 .node-icon{font-size:34px;filter:drop-shadow(0 4px 4px rgba(0,0,0,.5))}
 .node-silhouette{font-size:28px;color:#8a97b6;filter:brightness(.4)}
 /* 切り抜き未生成時のフォールバック（従来の枠付きカード絵） */
@@ -834,13 +840,17 @@ td.nm{font-weight:800}
   border-radius:6px;padding:0 5px;margin-right:4px;vertical-align:middle;
 }
 
-/* confirm() の代替ダイアログ（リタイヤ確認） */
+/* confirm() の代替ダイアログ（リタイヤ確認）。
+ * #app の中（run-ui.js が #app 直下に追加する）に position:absolute で置くことで、
+ * #app の transform:scale（画面が小さいときの縮小表示）と一緒に縮む・動くようにする。
+ * position:fixed のまま body 直下に置くと縮尺に従わず実寸で出てしまい、
+ * 画面をはみ出して見えることがあった（2026-08-26 本人指摘。#flashと同じ理由・同じ直し方）。 */
 .cq-confirm-overlay{
-  position:fixed;inset:0;background:rgba(3,5,10,.72);display:flex;align-items:center;justify-content:center;z-index:50;
+  position:absolute;inset:0;background:rgba(3,5,10,.72);display:flex;align-items:center;justify-content:center;z-index:50;
 }
 .cq-confirm-box{
   background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px 26px;
-  max-width:420px;text-align:center;
+  max-width:420px;width:calc(100% - 48px);text-align:center;
 }
 .cq-confirm-box p{line-height:1.6;margin-bottom:16px}
 .cq-confirm-btns{display:flex;gap:12px;justify-content:center}

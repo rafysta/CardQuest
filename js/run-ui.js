@@ -125,6 +125,8 @@ if (typeof window !== 'undefined') window.masterCutoutFallback = masterCutoutFal
 /** マスの中身（台座タイルの上に立つもの）。バッジ・体数ピップも同じ figure 内に置く
  * （figure を position:relative にしてバッジを追従させるため）。 */
 function nodeFigureHTML(n, run) {
+  /* 開始マスにはアイコンを何も置かない（2026-08-26 本人指定）。台座タイルだけが残る。 */
+  if (n.type === 'start') return '';
   if (n.type === 'battle') {
     const hidden = !nodeVisible(n, run);
     if (hidden) return '<div class="node-silhouette">？</div>';
@@ -223,7 +225,7 @@ function renderMap() {
     const can = pickable.indexOf(id) >= 0 && !n.cleared;
     const done = n.cleared;
     const delay = ((id.charCodeAt(1) * 37) % 900) / 1000;
-    return `<div class="map-node ${n.type} ${can ? 'pickable' : ''} ${done ? 'done' : ''} ${n.fog && !run.map.fog.cleared ? 'foggy' : ''}"
+    return `<div class="map-node ${n.type} ${n.strength || ''} ${can ? 'pickable' : ''} ${done ? 'done' : ''} ${n.fog && !run.map.fog.cleared ? 'foggy' : ''}"
         style="left:${(n.x / 1280 * 100).toFixed(2)}%; top:${(n.y / 800 * 100).toFixed(2)}%; animation-delay:${delay}s"
         data-act="node" data-id="${id}">
       <div class="node-figure">${nodeFigureHTML(n, run)}</div>
@@ -449,7 +451,12 @@ function showConfirm(message, onYes) {
       <button class="btn ok" data-act="cq-confirm-yes">リタイヤする</button>
     </div>
   </div>`;
-  document.body.appendChild(ov);
+  /* #app の外（document.body直下）に position:fixed で置くと、画面が小さくて
+   * #app ごと縮小表示されているとき（--app-scale）だけこのダイアログが縮尺に従わず
+   * 実寸のまま出てしまい、周りに対して大きすぎる／画面をはみ出す（2026-08-26 本人指摘）。
+   * #flash と同じ理由・同じ直し方：#app の中に position:absolute で入れ、#app の
+   * transform:scale と一緒に縮む/動くようにする。 */
+  (document.getElementById('app') || document.body).appendChild(ov);
   ov.addEventListener('click', function (ev) {
     const t = ev.target.closest('[data-act]');
     if (!t) return;

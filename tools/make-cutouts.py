@@ -24,9 +24,10 @@ import subprocess
 try:
     from rembg import remove, new_session
     from PIL import Image
+    import numpy as np
 except ImportError:
-    print("rembg / Pillow が見つかりません。")
-    print("  pip install rembg onnxruntime --break-system-packages")
+    print("rembg / Pillow / numpy が見つかりません。")
+    print("  pip install rembg onnxruntime numpy --break-system-packages")
     sys.exit(1)
 
 # マップ上での表示は最大でも ~140px（マップ仕様書§4）。1024角のまま置くと1枚1MB近くなるため、
@@ -35,7 +36,30 @@ CUTOUT_SIZE = 512
 HAS_PNGQUANT = shutil.which('pngquant') is not None
 
 
+def tight_crop_square(im, pad_frac=0.04):
+    """背景除去直後は被写体の周りに大きな透明の余白が残ることが多く、そのまま
+    object-fit:contain で表示台座に乗せると、被写体と台座（node-tile）のあいだに
+    見た目上の隙間ができて「浮いている」ように見える（2026-08-26 本人指摘）。
+    アルファ値のある範囲だけをきつく切り出し、正方形に収め直すことでこれを解消する。"""
+    arr = np.array(im)
+    mask = arr[:, :, 3] > 20
+    if not mask.any():
+        return im
+    ys, xs = np.where(mask)
+    x0, x1 = int(xs.min()), int(xs.max())
+    y0, y1 = int(ys.min()), int(ys.max())
+    pad = int(max(x1 - x0, y1 - y0) * pad_frac)
+    x0 = max(0, x0 - pad); y0 = max(0, y0 - pad)
+    x1 = min(im.width, x1 + pad); y1 = min(im.height, y1 + pad)
+    cropped = im.crop((x0, y0, x1, y1))
+    side = max(cropped.width, cropped.height)
+    canvas = Image.new('RGBA', (side, side), (0, 0, 0, 0))
+    canvas.paste(cropped, ((side - cropped.width) // 2, (side - cropped.height) // 2), cropped)
+    return canvas
+
+
 def save_optimized(im, dst):
+    im = tight_crop_square(im)
     im = im.resize((CUTOUT_SIZE, CUTOUT_SIZE), Image.LANCZOS)
     im.save(dst)
     if HAS_PNGQUANT:
