@@ -384,6 +384,11 @@
         if (cap > 6) cap = 6;
         if (acc.swShroud) cap = ln.count;                             // 遮蔽
         if (acc.closedSkill >= 1) cap = ln.count;                     // 閉鎖
+        // M6 戦場ルール laneCap（「石詰まり」）：そのレーンの上限を最後に頭打ちにする。
+        // 五つ星(157)の上書きも膨張(158)の加算も遮蔽・閉鎖も済んだ後に掛けるので、
+        // 既存の上限解決順序に新しい規則を足さずに「岩でそれより上に置けない」だけが実現される
+        const fcap = board.fieldCap ? board.fieldCap[L] : null;
+        if (fcap != null && cap > fcap) cap = fcap;
         ln.cap = cap;
 
         // ④ 最終値を素値で初期化＋リヴァイバー（ＣＨボーナス扱いになる）

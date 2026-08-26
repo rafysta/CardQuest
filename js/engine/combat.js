@@ -23,6 +23,7 @@
   const S = isNode ? require('./state.js') : global.CQState;
   const Stats = isNode ? require('./stats.js') : global.CQStats;
   const Turn = isNode ? require('./turn.js') : global.CQTurn;
+  const Field = isNode ? require('./fieldrules.js') : global.CQField;
 
   const LOOT_MAX = 7;                       // 原作 V979 の上限
 
@@ -279,7 +280,8 @@
     // ④ 置き場所：ふつうはホストの跡地。傀儡で奪った相手陣のユニットを生贄にしたときだけ、
     //    自分の場に空きレーンが必要（無ければ失敗）
     if (S.sideOf(laneIndex) === destSide) return { ok: true, dest: laneIndex };
-    const dest = S.lanesOf(destSide).filter(function (i) { return m.board.lanes[i].unit == null; })[0];
+    // M6 戦場ルール laneLock：ふさがれたレーンは召還先にできない（Field.freeLanesOf に集約）
+    const dest = Field.freeLanesOf(m, destSide)[0];
     if (dest === undefined) return { ok: false, result: 'nospace', reason: '召還先が無く、' };
     return { ok: true, dest: dest };
   }
@@ -304,6 +306,15 @@
     if (ln.acc.fusion >= 1) {
       note(m, '融合：' + nameOf(m, id) + ' は潜行したまま');
       return { consumed: false, result: 'fusion' };
+    }
+    // (4.5) M6 戦場ルール noHighCH：素のＣＨ数が上限を超えるユニットは場に出られない。
+    //   通常召還・リバース召還・生贄の儀式・光臨(199)、すべて同じゲートを通す（例外なし）。
+    //   召還レベル不足と同じく、出てこようとしたカードは破壊される
+    const fgate = Field.summonAllowed(m, id);
+    if (!fgate.ok) {
+      drop();
+      note(m, nameOf(m, id) + ' は戦場ルールで召還できず破壊された');
+      return { consumed: true, result: 'fieldRule' };
     }
     // (5) 召還レベル：配置階層 >= 召還レベル で成功。
     //     魔道書(186)はこのレーンに付いている枚数×2ぶん要求レベルを下げる（メインステップ中のみ有効。
@@ -342,7 +353,8 @@
     }
 
     // (6) 召還先＝そのカードを置いたマスターの場。空きが無ければ破壊
-    const dest = S.lanesOf(destSide).filter(function (i) { return m.board.lanes[i].unit == null; })[0];
+    //     （M6 戦場ルール laneLock でふさがれたレーンは空きとして数えない）
+    const dest = Field.freeLanesOf(m, destSide)[0];
     if (dest === undefined) {
       drop();
       note(m, nameOf(m, id) + ' は召還先が無く破壊された');

@@ -35,6 +35,7 @@
   const isNode = (typeof require === 'function' && typeof window === 'undefined');
   const S = isNode ? require('../state.js') : global.CQState;
   const Stats = isNode ? require('../stats.js') : global.CQStats;
+  const Field = isNode ? require('../fieldrules.js') : global.CQField;
 
   function other(side) { return side === 'self' ? 'enemy' : 'self'; }
   function jp(side) { return side === 'self' ? '自分' : '相手'; }
@@ -326,8 +327,12 @@
     const pool = allChannels(m, function (ch) { const c = m.cards[ch.card]; return !ch.up && c && c.t === 'U'; });
     const t = pick(m, pool);
     if (!t) { note(m, '招来：潜行しているユニットが無い'); return; }
-    const dest = pick(m, S.lanesOf(ctx.caster).filter(function (i) { return m.board.lanes[i].unit == null; }));
+    // M6 戦場ルール：ふさがれたレーン（laneLock）は召還先にできず、
+    // 素のＣＨ数が上限を超えるユニット（noHighCH）はそもそも出せない
+    const dest = pick(m, Field.freeLanesOf(m, ctx.caster));
     if (dest == null) { note(m, '招来：召還先が無い'); return; }
+    const hidden = m.board.lanes[t.lane].channels[t.idx];
+    if (!Field.summonAllowed(m, hidden.card).ok) { note(m, '招来：戦場ルールで召還できない'); return; }
     const taken = dropChannelAt(m, t.lane, t.idx);
     m.board.lanes[dest] = S.makeLane(taken.card, [], m.cards);   // 召還されたユニットは硬直しない
     recalc(m);

@@ -44,6 +44,7 @@
   const Turn = isNode ? require('./turn.js') : global.CQTurn;
   const Combat = isNode ? require('./combat.js') : global.CQCombat;
   const Magic = isNode ? require('./effects/magic.js') : global.CQMagic;
+  const Field = isNode ? require('./fieldrules.js') : global.CQField;
 
   const BLANK = 180;
 
@@ -174,9 +175,10 @@
     const ln = m.board.lanes[laneIndex];
     const printedLv = S.unitStats(m.cards[ch.card]).lv;
     if (layer < printedLv - (ln.acc ? ln.acc.tome : 0)) return false;
-    const hasRoom = function () {
-      return S.lanesOf(side).some(function (i) { return m.board.lanes[i].unit == null; });
-    };
+    // M6 戦場ルール：ふさがれたレーン（laneLock）は召還先として数えない。
+    // 素のＣＨ数が上限を超えるユニット（noHighCH）はそもそも場に出られない
+    if (!Field.summonAllowed(m, ch.card).ok) return false;
+    const hasRoom = function () { return Field.freeLanesOf(m, side).length > 0; };
     if (printedLv < 2) return hasRoom();                  // 従来どおり
     if (m.combat) return false;                           // 戦闘中は儀式ができない
     if (S.controlSide(ln, laneIndex) !== side) return false;          // 生贄にできるユニットが無い
@@ -226,7 +228,7 @@
   function randomPlacement(m) {
     const p = m.players[m.active];
     const own = S.lanesOf(m.active);
-    const empty = own.filter(function (i) { return m.board.lanes[i].unit == null; })[0];
+    const empty = Field.freeLanesOf(m, m.active)[0];
     if (empty !== undefined) {
       const idx = p.hand.findIndex(function (id) {
         const c = m.cards[id];
@@ -286,8 +288,9 @@
   function evalDiscard(m) {
     const p = m.players[m.active];
     if (!p.hand.length) return false;
-    // 『空白』(180) があればそれを、なければ末尾（＝原作のＡＩが使えない手札スロット7）を捨てる
-    let idx = p.hand.indexOf(BLANK);
+    // おじゃま虫（M6 戦場ルール）＞『空白』(180) ＞ 末尾（＝原作のＡＩが使えない手札スロット7）の順に捨てる
+    let idx = p.hand.findIndex(function (id) { return Field.isPest(id); });
+    if (idx < 0) idx = p.hand.indexOf(BLANK);
     if (idx < 0) idx = p.hand.length - 1;
     return Turn.discardCard(m, idx).ok;
   }
@@ -313,7 +316,7 @@
     }
 
     // --- 2. 召還（§11.2：スコア基礎 rand 20〜60、閾値 ≧30） ---
-    const empty = ownLanes.filter(function (i) { return m.board.lanes[i].unit == null; })[0];
+    const empty = Field.freeLanesOf(m, side)[0];
     if (empty !== undefined) {
       let score = m.rng.int(20, 60);
       if (ownUnits.length === 0) score += 999;          // 場が空なら必ず出す（近似）

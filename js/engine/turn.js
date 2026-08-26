@@ -22,6 +22,8 @@
     ? require('./state.js') : global.CQState;
   const Stats = (typeof require === 'function' && typeof window === 'undefined')
     ? require('./stats.js') : global.CQStats;
+  const Field = (typeof require === 'function' && typeof window === 'undefined')
+    ? require('./fieldrules.js') : global.CQField;
 
   const HAND_CAP = 7;
   const FIRST_DRAW = 6;
@@ -115,7 +117,7 @@
   function createMatch(opts) {
     const cards = opts.cards;
     const lanes = []; for (let i = 0; i < S.LANES; i++) lanes.push(S.emptyLane());
-    return {
+    const m = {
       cards: cards,
       rng: opts.rng,
       board: S.makeBoard(lanes, 0, 0),
@@ -131,8 +133,13 @@
       loot: [],                // 戦利品（通常攻撃で倒した敵ユニットのID。最大7）
       lastBattle: null,        // 直前の戦闘結果
       hooks: opts.hooks || null,  // { onMagicOpen } … 魔法の発動（M4）
+      fieldRules: [],          // M6 戦場ルール（下の Field.init で確定。オートセーブ対象）
+      fieldState: null,        // 戦場ルールの進行中カウンタ（おじゃま虫の投入回数）
       log: []
     };
+    // M6 戦場ルール：バトル開始時に確定する（途中で増減しない＝「戦闘前に必ず見える」の前提）
+    Field.init(m, opts.fieldRules);
+    return m;
   }
 
   function other(side) { return side === 'self' ? 'enemy' : 'self'; }
@@ -229,10 +236,15 @@
     const own = S.lanesOf(side);
     if (own.indexOf(laneIndex) < 0) return { ok: false, reason: '自陣のレーンではありません' };
     if (m.board.lanes[laneIndex].unit != null) return { ok: false, reason: 'そのレーンは空いていません' };
+    // M6 戦場ルール laneLock：ふさがれたレーンには何も出せない
+    if (!Field.laneUsable(m.board, laneIndex)) return { ok: false, reason: '戦場ルール：その列は使えません' };
     const id = p.hand[handIndex];
     if (id == null) return { ok: false, reason: '手札の指定が不正です' };
     const card = cardOf(m, id);
     if (!card || card.t !== 'U') return { ok: false, reason: 'ユニットカードではありません' };
+    // M6 戦場ルール noHighCH：素のＣＨ数が上限を超えるユニットは召還できない（両陣営・例外なし）
+    const gate = Field.summonAllowed(m, id);
+    if (!gate.ok) return { ok: false, reason: gate.reason };
     const us = S.unitStats(card);
     recalc(m);
     const bypass = us.lv >= 3 && us.lv <= 6 && anyAdvent(m);
@@ -251,6 +263,9 @@
   function laneAcceptsChannel(m, laneIndex) {
     const lane = m.board.lanes[laneIndex];
     if (lane.unit == null) return { ok: false, reason: 'ユニットが居ません' };
+    // M6 戦場ルール laneLock：ふさがれたレーンは対象に選べない（ふつうユニットも居ないが、
+    // 走査の抜けで通ってしまわないよう受け入れ側でも塞いでおく）
+    if (!Field.laneUsable(m.board, laneIndex)) return { ok: false, reason: '戦場ルール：その列は使えません' };
     recalc(m);
     return { ok: true, lane: lane, full: lane.count >= lane.cap };
   }
@@ -274,6 +289,9 @@
     if (lane.acc.closedSkill >= 1) return { ok: false, reason: '閉鎖：チャネリングできません' };
     const id = p.hand[handIndex];
     if (id == null) return { ok: false, reason: '手札の指定が不正です' };
+    // M6 戦場ルール pestCard：おじゃま虫はチャネリングできない（純粋な手札圧迫にする）
+    const cgate = Field.channelAllowed(m, id);
+    if (!cgate.ok) return { ok: false, reason: cgate.reason };
 
     if (acc.full) {
       const layer = o.layer;
@@ -457,9 +475,12 @@
     if (p.actedThisTurn) return { ok: false, reason: 'このターンに何か操作した後は使えません' };
     if (p.hasChanged) return { ok: false, reason: 'このバトルではもう使えません' };
     if (p.lp <= 1) return { ok: false, reason: 'ＬＰが足りません' };
-    const n = p.hand.length;
+    // M6 戦場ルール pestCard：おじゃま虫は山札を経由しないカードなので、
+    // 引き直しでも山札に戻さず（＝再装填でも復活しない）そのまま消える。引き直す枚数にも数えない
+    const back = p.hand.filter(function (id) { return !Field.isPest(id); });
+    const n = back.length;
     p.deckCount += n;
-    p.hand.forEach(function (id) { p.deck[id] = (p.deck[id] || 0) + 1; });
+    back.forEach(function (id) { p.deck[id] = (p.deck[id] || 0) + 1; });
     p.hand = [];
     for (let i = 0; i < n; i++) draw(m.rng, p, m);
     p.lp -= 1;
@@ -482,6 +503,12 @@
     recalc(m);
     // 表向き魔法カード(101〜150)の消滅（＋爆殺の自爆・放出）。停滞(151)があるレーンは残る
     combatApi().expireMagic(m);
+
+    // M6 戦場ルール：定期爆撃の着弾とおじゃま虫の投入。
+    // 爆撃はＣＨだけを吹き飛ばす（ユニット本体・ＬＰは無傷）ので、ここで勝敗は動かない
+    Field.onTurnEnd(m, side);
+    syncHandCount(m);
+    recalc(m);
 
     // 腐食(167)・カース94/95（マッドシックル／デストレーダー由来）：付いているユニットの持ち主の
     // ターン終了時に自滅する（通常攻撃ではないので戦利品・憑依は発生しない。救済があれば無効化される）

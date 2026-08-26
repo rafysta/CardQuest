@@ -11,8 +11,8 @@
 'use strict';
 
 const ART_DIR = 'assets/cards/';
-const TYPE_MARK = { U: 'Ｕ', M: 'Ｍ', S: 'Ｓ', C: 'Ｃ' };
-const TYPE_NAME = { U: 'モンスター', M: '魔法', S: '技能', C: 'カース' };
+const TYPE_MARK = { U: 'Ｕ', M: 'Ｍ', S: 'Ｓ', C: 'Ｃ', X: '虫' };
+const TYPE_NAME = { U: 'モンスター', M: '魔法', S: '技能', C: 'カース', X: 'おじゃま虫' };
 const LAYERS = 6;                    /* チャネリングの最大階層 */
 
 function abbrev(name, n) {
@@ -27,7 +27,11 @@ function abbrev(name, n) {
    そこで専用イラストは用意せず、元ユニットの絵を流用し、CSSの img.curse-art で
    紫の心霊風に加工して「本体ではなく取り憑いた霊のほう」だと分かるようにする。 */
 const CURSE_ART_OFFSET = 26;
+/* おじゃま虫（M6 戦場ルール）には専用の絵がまだ無い。空白(180)の絵を流用し、
+   CSSの img.pest-art で緑に寄せたうえに虫マークを重ねて区別する（実装計画 追補§3）。 */
+const PEST_ID = 200;
 function artSrcId(card) {
+  if (card.id === PEST_ID) return 180;
   return card.t === 'C' ? card.id - CURSE_ART_OFFSET : card.id;
 }
 function artInner(card, chars) {
@@ -36,7 +40,8 @@ function artInner(card, chars) {
   const a = abbrev(label, chars || 3);
   /* draggable="false" は必須。付けないと、絵のあるカードをドラッグしたときに
      ブラウザ標準の画像ドラッグが始まってしまい、こちらのポインタ操作が途切れる */
-  return `<img ${card.t === 'C' ? 'class="curse-art" ' : ''}src="${ART_DIR}${artSrcId(card)}.png"
+  const cls = card.t === 'C' ? 'curse-art' : (card.id === PEST_ID ? 'pest-art' : '');
+  return `<img ${cls ? `class="${cls}" ` : ''}src="${ART_DIR}${artSrcId(card)}.png"
      alt="" draggable="false"
      onerror="this.replaceWith(document.createTextNode('${a}'))">`;
 }
@@ -80,6 +85,18 @@ let foeAuto = true;           /* 相手を自動で動かすか */
  * 透視率は撤廃済み＝ＡＩが知れる情報は人間と完全対称） */
 const AI_RANKS = ['free', 'rankC', 'rankB', 'rankA'];
 let aiRank = 'rankC';
+/* 戦場ルール（M6。js/engine/fieldrules.js）。本番ではマップ生成が戦闘ごとに確定させるが、
+ * 分岐マップが入るまでは、この単発戦闘モードで1種類ずつ切り替えて検証する（追補§M6の導入手順）。
+ * 「新しい対戦」を押した時点の選択が、その対局のルールとして確定する */
+const FIELD_SETS = [
+  { label: 'なし', rules: [] },
+  { label: '高ＣＨ禁止', rules: [{ id: 'noHighCH', max: 4 }] },
+  { label: '定期爆撃', rules: [{ id: 'bomb', period: 5, layer: 4 }] },
+  { label: 'おじゃま虫', rules: [{ id: 'pestCard', period: 3, target: 'self' }] },
+  { label: '岩の列', rules: [{ id: 'laneCap', cap: 2, lanes: [1, 4] }] },
+  { label: '封鎖の列', rules: [{ id: 'laneLock', lanes: [2] }] }
+];
+let fieldSet = 0;
 const UI = {
   mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-destroy */
   info: null,     /* 表示中のカード */
@@ -143,6 +160,7 @@ function newMatch() {
     enemyDeck: SAMPLE_DECK.slice(),
     first: 'self',
     opponentId: 101,                /* フリーユニット戦扱い＝戦利品が記録される */
+    fieldRules: FIELD_SETS[fieldSet].rules,   /* M6 戦場ルール：バトル開始時に確定する */
     hooks: {
       onMagicOpen: CQMagic.onMagicOpen,           /* M4 v0.13：魔法48種の発動処理 */
       onUnitOpen: CQUnits.onUnitOpen              /* M4 v0.14：ユニット固有能力「開：」型の発動処理 */
@@ -363,9 +381,27 @@ function renderStatus() {
   document.getElementById('turnbox').innerHTML =
     `<span class="tn">第 ${M.turn} ターン</span>
      <span class="tw">${phaseLabel()}</span>
+     ${fieldChipsHTML()}
      <button class="tiny" data-act="mode">相手：${foeAuto ? '自動' : '手動'}</button>
      <button class="tiny" data-act="rank">強さ：${CQAi.PRESETS[aiRank].label}</button>
+     <button class="tiny" data-act="field">戦場：${FIELD_SETS[fieldSet].label}</button>
      <button class="tiny" data-act="new">新しい対戦</button>`;
+}
+
+/* --- 戦場ルール（M6）の常時表示 ---
+ * 追補§M6の大原則「戦闘前に必ず見える」を画面側でも守る。有効なルールのアイコンを
+ * ターン表示の隣に出しっぱなしにし、押すと説明が右のパネルに出る。
+ * 定期爆撃だけは着弾までの残りターン数を数字で併記する（カウントダウン） */
+function fieldChipsHTML() {
+  const rules = (M && M.fieldRules) || [];
+  if (!rules.length) return '';
+  return '<span class="fchips">' + rules.map((r, k) => {
+    const d = CQField.describe(r);
+    const cd = r.id === 'bomb' ? CQField.bombCountdown(M) : null;
+    const num = cd == null ? '' : `<b class="${cd === 0 ? 'now' : ''}">${cd === 0 ? '着弾' : 'あと' + cd}</b>`;
+    return `<button class="fchip" data-act="field-info" data-idx="${k}"
+      title="${esc(d.name)}">${d.icon}<span>${esc(d.name)}</span>${num}</button>`;
+  }).join('') + '</span>';
 }
 
 function phaseLabel() {
@@ -468,7 +504,14 @@ function laneHTML(i) {
     else cls.push('dimmed');
     if (CQCombat.openerLane(M) === i) cls.push('opening');
   }
+  /* M6 戦場ルール laneLock：使えないレーンには蓋を被せる（何も置けないことが一目で分かる） */
+  const locked = !CQField.laneUsable(M.board, i);
+  if (locked) cls.push('locked');
   let inner = '';
+  if (locked) {
+    return `<div class="lane ${cls.join(' ')}" data-lane="${i}">
+      <div class="card lane-lid" data-act="field-info">🚧<span>使用不可</span></div></div>`;
+  }
   if (ln.unit != null) {
     const max = Math.max(ln.cap, ln.channels.length);
     inner += `<div class="cap-box" style="height:calc(var(--chh) + ${max} * var(--vstep) + 8px)"></div>`;
@@ -704,6 +747,7 @@ function renderPanel() {
     case 'pick-destroy': return panelPickDestroy();
     case 'confirm':   return;                       /* 確認画面は出したまま */
     case 'info':      return panelInfo();
+    case 'field':     return panelField();
     default:          return panelIdle();
   }
 }
@@ -736,6 +780,20 @@ function panelInfo() {
         data-layer="${UI.info.layer}">この技能を閉じる（リバース）</button>`
     : '';
   paint(infoCardHTML(CARD_BY_ID[UI.info.card], UI.info), foot, !!foot);
+}
+
+/* --- 戦場ルールの説明（アイコンを押したとき） --- */
+function panelField() {
+  const rules = (M && M.fieldRules) || [];
+  const body = rules.map((r) => {
+    const d = CQField.describe(r);
+    const cd = r.id === 'bomb' ? CQField.bombCountdown(M) : null;
+    return `<div class="i-field"><h3>${d.icon} ${esc(d.name)}</h3>
+      <p class="i-t">${esc(d.text)}</p>
+      ${cd == null ? '' : `<p class="i-t"><b>${cd === 0 ? 'このターンの終わりに着弾します' : 'あと ' + cd + ' ターンで着弾します'}</b></p>`}
+    </div>`;
+  }).join('');
+  paint('<div class="i-lead">この戦場には特別なルールがあります</div>' + body, ngBtn('閉じる'), true);
 }
 
 function panelOver() {
@@ -1046,6 +1104,14 @@ function panelAct(act, data) {
       flash('相手の強さ：' + CQAi.PRESETS[aiRank].label + '（次の手番から反映）');
       return renderAll();
     }
+    case 'field': {                                    /* 戦場ルールの切替（M6。次の対戦から） */
+      fieldSet = (fieldSet + 1) % FIELD_SETS.length;
+      flash('戦場ルール：' + FIELD_SETS[fieldSet].label + '（「新しい対戦」から反映）');
+      return renderAll();
+    }
+    case 'field-info':                                 /* 有効な戦場ルールの説明を出す */
+      UI.mode = 'field';
+      return renderAll();
     case 'attack':
       UI.mode = 'attack'; UI.targets = CQCombat.attackTargets(M, UI.lane);
       return renderAll();
@@ -1122,6 +1188,8 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
   const el = ev.target.closest('.card');
   if (!el) return;
   if (el.id === 'change-card') { if (canChange()) showChangeConfirm(); return; }
+  /* M6 戦場ルール：使用不可レーンの蓋を押したら、そのルールの説明を出す */
+  if (el.classList.contains('lane-lid')) { UI.mode = 'field'; return renderAll(); }
 
   /* 開けるカード（▶が付いている）は左右で操作を分ける。
      左半分＝開く／右半分＝中身を確認する。開く前に内容を見たい、という要望への対応

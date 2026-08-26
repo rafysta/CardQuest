@@ -651,3 +651,36 @@ td.nm{font-weight:800}
 @keyframes cq-shard-fly{
   to{transform:translate(var(--sx),var(--sy)) rotate(var(--sr));opacity:0}
 }
+
+/* ================= M6 戦場ルール（バトルモディファイア） =================
+ * 追補§M6の大原則「戦闘前に必ず見える」を画面側でも守るための常時表示。
+ * ターン表示の隣にアイコンを出しっぱなしにし、押すと右のパネルに説明が出る。 */
+.fchips{display:flex;align-items:center;gap:6px}
+.fchip{
+  display:flex;align-items:center;gap:5px;
+  background:#3a2405;border:1px solid var(--accent);color:#ffd591;
+  font-size:14px;font-weight:800;padding:3px 9px;border-radius:16px;
+  cursor:pointer;white-space:nowrap;line-height:1.2;
+}
+.fchip span{font-size:13px}
+.fchip b{background:#0a1120;border-radius:10px;padding:1px 7px;font-size:13px;color:#ffe9c2}
+.fchip b.now{background:#7a1220;color:#fff}
+
+/* 使用不可レーン（laneLock）の蓋。「場所が狭くて使えない」ことを絵で見せる */
+.card.lane-lid{
+  position:absolute;left:0;bottom:0;z-index:110;
+  height:calc(var(--chh) + 2 * var(--vstep));
+  border:2px solid #6b5326;border-radius:12px;
+  background:repeating-linear-gradient(135deg,#3a3018 0 12px,#2a2312 12px 24px);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  color:#c9ab6b;font-size:30px;box-shadow:none;
+}
+.card.lane-lid span{font-size:15px;font-weight:800;letter-spacing:.16em}
+.lane.locked{opacity:.85}
+
+/* 情報パネルに出す戦場ルールの説明 */
+.i-field{border-top:1px solid var(--line);padding-top:8px;margin-top:10px}
+.i-field:first-of-type{border-top:none;margin-top:0}
+
+/* おじゃま虫（専用の絵がまだ無いので空白180の絵を緑に寄せて流用する） */
+img.pest-art{filter:hue-rotate(70deg) saturate(1.6) brightness(.92)}

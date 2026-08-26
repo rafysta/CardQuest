@@ -24,6 +24,7 @@ const CQTurn = require(path.join(root, 'js/engine/turn.js'));
 const CQCombat = require(path.join(root, 'js/engine/combat.js'));
 const CQMagic = require(path.join(root, 'js/engine/effects/magic.js'));
 const CQUnits = require(path.join(root, 'js/engine/effects/units.js'));
+const CQField = require(path.join(root, 'js/engine/fieldrules.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
 /* ---- ミニ・テストハーネス ---- */
@@ -2369,6 +2370,277 @@ t('儀式が失敗しても、下に積まれていたカードは残る', () =>
   const m = ritualBoard([up(179), down(FILL), down(FILL), down(FILL), down(12)]);
   CQTurn.reverseAction(m, 0, [5]);
   eq(m.board.lanes[0].channels.length, 4, '救済＋空白3枚がそのまま残る');
+});
+
+/* ================= M6: 戦場ルール（バトルモディファイア） =================
+ * 『CardQuest 実装計画 追補：M5.7』の M6追補 §0〜§5 の実装を検証する。
+ * 設計原理どおり「エンジンにフックとして実装し、ＡＩ側には何も書かない」ため、
+ * ここで通るルールは search の先読みがそのまま体験して回避できることになる。 */
+section('M6: 戦場ルールの共通枠組み');
+
+/** 戦場ルール付きのマッチ（メインステップから始める。盤面は呼び出し側が組む） */
+function mkField(rules, opts) {
+  const m = CQTurn.createMatch(Object.assign({
+    cards: CARD_BY_ID, rng: CQRng.create(1),
+    selfDeck: mkDeck(40, [8, 180]), enemyDeck: mkDeck(40, [8, 180]),
+    first: 'self', hooks: HOOKS, fieldRules: rules
+  }, opts || {}));
+  m.phase = 'main';
+  return m;
+}
+
+t('ルール無しのバトルでは派生データが素通し（従来と完全に同じ）', () => {
+  const m = mkField();
+  eq(m.fieldRules, [], 'ルールは空');
+  eq(m.board.fieldCap, [null, null, null, null, null, null], 'ＣＨ上限の制限なし');
+  eq(m.board.fieldLock, [false, false, false, false, false, false], 'ロックなし');
+});
+t('正規化：未知のＩＤ・壊れたレーン指定は捨てる', () => {
+  eq(CQField.normalize([{ id: 'nosuchRule' }, { id: 'laneCap', lanes: [] }, { id: 'laneLock' }]).length, 0,
+     '3つとも捨てられる');
+  eq(CQField.normalize([{ id: 'laneCap', lanes: [9, 2, 2, -1] }])[0].lanes, [2], '範囲外・重複は除去');
+});
+t('正規化：既定値が埋まる', () => {
+  const r = CQField.normalize([{ id: 'bomb' }, { id: 'noHighCH' }, { id: 'pestCard' }]);
+  eq([r[0].period, r[0].layer, r[1].max, r[2].period], [5, 4, 4, 3], '追補の既定値');
+});
+t('正規化：片陣営3レーン全部のロックは1レーン残す（生成データの不備で詰まないように）', () => {
+  const r = CQField.normalize([{ id: 'laneLock', lanes: [0, 1, 2, 3] }]);
+  eq(r[0].lanes, [0, 1, 3], '自陣は2レーンまでに削られる');
+});
+t('複数の laneCap が同じレーンに掛かったら厳しいほうを採る', () => {
+  const m = mkField([{ id: 'laneCap', cap: 4, lanes: [0] }, { id: 'laneCap', cap: 2, lanes: [0, 1] }]);
+  eq([m.board.fieldCap[0], m.board.fieldCap[1]], [2, 2], '2が採用される');
+});
+t('先読みのクローンにも戦場ルールが持ち回される（設計原理の要）', () => {
+  const m = mkField([{ id: 'bomb', period: 3, layer: 2 }, { id: 'laneLock', lanes: [1] }]);
+  const c = CQSearch.cloneMatch(m, CQRng.create(1));
+  eq(c.fieldRules.length, 2, 'ルール定義が残る');
+  eq(c.board.fieldLock[1], true, 'レーン別の派生データも残る');
+  c.fieldRules[0].period = 99;
+  eq(m.fieldRules[0].period, 3, 'クローンを触っても実対局は変わらない');
+});
+
+section('M6: noHighCH（高ＣＨユニット禁止）');
+t('通常召還：素のＣＨ数が上限超えのユニットは召還できない／上限内は通る', () => {
+  const m = mkField([{ id: 'noHighCH', max: 4 }]);
+  m.phase = 'placement';
+  m.players.self.hand = [1, 8];                       // 1 ミルファイター(ＣＨ5) / 8 ピッグマン(ＣＨ4)
+  const ng = CQTurn.summon(m, 0, 0);
+  eq(ng.ok, false, 'ＣＨ5は却下');
+  eq(/戦場ルール/.test(ng.reason), true, '理由が戦場ルールだと分かる');
+  eq(CQTurn.summon(m, 0, 1).ok, true, 'ＣＨ4は通る');
+});
+t('光臨(199)による召還Ｌｖ3〜6の直接召還も同じゲートを通る（例外なし）', () => {
+  const withAdvent = function (rules) {
+    const m = mkField(rules);
+    m.phase = 'placement';
+    m.board.lanes[2] = lane(8, [up(199)]);            // 光臨を表向きで用意
+    CQStats.recalc(m.board, OPT);
+    m.players.self.hand = [13];                       // 13 ニドヘッグ ＣＨ6 Ｌｖ3
+    return CQTurn.summon(m, 0, 0);
+  };
+  eq(withAdvent().ok, true, 'ルール無しなら光臨で直接召還できる（対照）');
+  eq(withAdvent([{ id: 'noHighCH', max: 4 }]).ok, false, '戦場ルールが光臨より優先される');
+});
+t('リバース召還（召還Ｌｖ1）も却下され、カードは破壊される', () => {
+  const m = mkField([{ id: 'noHighCH', max: 4 }]);
+  m.board.lanes[0] = lane(8, [down(1)]);              // ミルファイター(ＣＨ5・Ｌｖ1)を潜行
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, 0, '出てこようとしたカードは破壊された');
+  eq(m.board.lanes.filter((l) => l.unit === 1).length, 0, '場には出ていない');
+});
+t('生贄召還（召還Ｌｖ2以上）も却下され、ホストは生き残る', () => {
+  const m = mkField([{ id: 'noHighCH', max: 4 }]);
+  m.board.lanes[0] = lane(2, [down(FILL), down(FILL), down(FILL), down(FILL), down(12)]);
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 0, [5]);
+  eq(m.board.lanes[0].unit, 2, 'ホストは生贄にならない');
+  eq(m.board.lanes[0].channels.length, 4, 'ウロボロスだけが破壊される');
+});
+
+section('M6: bomb（定期爆撃）');
+/** 爆撃の検証盤面：自陣レーン0・敵陣レーン3の4階層目に指定カードを置く */
+function bombBoard(rules, ch4Self, ch4Foe) {
+  const m = mkField(rules);
+  m.board.lanes[0] = lane(8, [down(FILL), down(FILL), down(FILL), ch4Self].filter(Boolean));
+  m.board.lanes[3] = lane(8, [down(FILL), down(FILL), down(FILL), ch4Foe].filter(Boolean));
+  CQStats.recalc(m.board, OPT);
+  return m;
+}
+t('period の倍数のターン終了時にだけ落ちる（境界）', () => {
+  const m = bombBoard([{ id: 'bomb', period: 5, layer: 4 }], down(FILL), down(FILL));
+  m.turn = 4;
+  CQTurn.endTurn(m);
+  eq([m.board.lanes[0].count, m.board.lanes[3].count], [4, 4], '4ターン目は落ちない');
+  m.phase = 'main'; m.active = 'self'; m.turn = 5;
+  CQTurn.endTurn(m);
+  eq([m.board.lanes[0].count, m.board.lanes[3].count], [3, 3], '5ターン目に敵味方とも落ちる');
+});
+t('表向きのカードも裏向きのカードも同じように破壊される', () => {
+  const m = bombBoard([{ id: 'bomb', period: 1, layer: 4 }], up(151), down(151));
+  m.turn = 1;
+  CQTurn.endTurn(m);
+  eq([m.board.lanes[0].count, m.board.lanes[3].count], [3, 3], '表裏を問わない');
+});
+t('裏のまま吹き飛んだ呪爆(133)は発動しない（既存のＣＨ破壊魔法と同じ扱い）', () => {
+  const m = bombBoard([{ id: 'bomb', period: 1, layer: 4 }], down(133), null);
+  m.turn = 1;
+  CQTurn.endTurn(m);
+  eq(m.board.lanes[0].unit, 8, 'ホストは無事＝オープン時効果は起きていない');
+  eq(m.board.lanes[0].count, 3, '呪爆だけが消えた');
+});
+t('上に積まれたカードは下に詰まり、枚数カウントも合う', () => {
+  const m = mkField([{ id: 'bomb', period: 1, layer: 2 }]);
+  m.board.lanes[0] = lane(8, [down(151), down(152), down(154), down(155)]);
+  CQStats.recalc(m.board, OPT);
+  m.turn = 1;
+  CQTurn.endTurn(m);
+  const ln = m.board.lanes[0];
+  eq(ln.channels.map((c) => c.card), [151, 154, 155], '2階層目が抜けて上が下りてくる');
+  eq(ln.count, ln.channels.length, '枚数カウントが一致');
+});
+t('該当階層が空のレーンでは何も起きない（no-op）／ユニット本体とＬＰは無傷', () => {
+  const m = bombBoard([{ id: 'bomb', period: 1, layer: 6 }], down(FILL), down(FILL));
+  const lp = [m.players.self.lp, m.players.enemy.lp];
+  m.turn = 1;
+  CQTurn.endTurn(m);
+  eq([m.board.lanes[0].count, m.board.lanes[0].unit], [4, 8], '6階層目は空なので無傷');
+  eq([m.players.self.lp, m.players.enemy.lp], lp, 'ＬＰは動かない');
+});
+
+section('M6: pestCard（おじゃま虫）');
+t('チャネリングできない／召還もできない', () => {
+  const m = mkField([{ id: 'pestCard', period: 3 }]);
+  m.phase = 'placement';
+  m.board.lanes[0] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  m.players.self.hand = [CQField.PEST_CARD];
+  const c = CQTurn.channel(m, 0, 0);
+  eq(c.ok, false, 'チャネリング却下');
+  eq(CQTurn.summon(m, 1, 0).ok, false, '召還も却下');
+  eq(m.players.self.hand.length, 1, '却下されても手札から消えない（＝腐ったまま残る）');
+});
+t('相手の手番が period 回まわるごとに1枚投げ込まれる', () => {
+  const m = mkField([{ id: 'pestCard', period: 3 }]);
+  CQField.onTurnEnd(m, 'self');
+  eq(m.players.self.hand.length, 0, '自分の手番では増えない');
+  CQField.onTurnEnd(m, 'enemy'); CQField.onTurnEnd(m, 'enemy');
+  eq(m.players.self.hand.length, 0, '2回目まではまだ');
+  CQField.onTurnEnd(m, 'enemy');
+  eq(m.players.self.hand, [CQField.PEST_CARD], '3回目で投げ込まれる');
+});
+t('手札が満杯（7枚）のときは不発（裏で増やさない）', () => {
+  const m = mkField([{ id: 'pestCard', period: 1 }]);
+  m.players.self.hand = [8, 8, 8, 8, 8, 8, 8];
+  CQField.onTurnEnd(m, 'enemy');
+  eq(m.players.self.hand.length, 7, '7枚のまま');
+});
+t('7枚オーバーの強制捨ての対象になる', () => {
+  const m = mkField([{ id: 'pestCard', period: 1 }]);
+  m.phase = 'discard';
+  m.players.self.hand = [8, 8, 8, 8, 8, 8, 8, CQField.PEST_CARD];
+  eq(CQTurn.discardCard(m, 7).ok, true, '捨てられる');
+  eq(m.players.self.hand.indexOf(CQField.PEST_CARD), -1, '手札から消えた');
+});
+t('引き直し（チェンジ）で山札に戻らない＝再装填でも復活しない', () => {
+  const m = mkField([{ id: 'pestCard', period: 1 }]);
+  m.phase = 'placement';
+  m.players.self.turnsTaken = 1;
+  m.players.self.hand = [8, CQField.PEST_CARD];
+  const before = m.players.self.deckCount;
+  eq(CQTurn.change(m).ok, true, 'チェンジできる');
+  eq(m.players.self.deck[CQField.PEST_CARD] || 0, 0, '山札に混ざらない');
+  eq(m.players.self.initial.indexOf(CQField.PEST_CARD), -1, '再装填リストにも入らない');
+  eq(m.players.self.deckCount, before - 1 + 1, '戻したのはピッグマン1枚だけ（引き直しも1枚）');
+});
+t('ＡＩは真っ先におじゃま虫を捨てる（空白より優先）', () => {
+  const m = mkField([{ id: 'pestCard', period: 1 }]);
+  m.phase = 'discard';
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
+  m.players.self.hand = [8, 180, CQField.PEST_CARD, 8, 8, 8, 8, 8];
+  CQAi.discardStep(m);
+  eq(m.players.self.hand.indexOf(CQField.PEST_CARD), -1, 'おじゃま虫が捨てられた');
+  eq(m.players.self.hand.indexOf(180) >= 0, true, '空白はまだ残っている');
+});
+
+section('M6: laneCap（レーンＣＨ上限＝石詰まり）');
+t('上限に達したらチャネリングは却下され、押し込みだけができる', () => {
+  const m = mkField([{ id: 'laneCap', cap: 2, lanes: [0] }]);
+  m.phase = 'placement';
+  m.board.lanes[0] = lane(8, [down(FILL), down(FILL)]);
+  CQStats.recalc(m.board, OPT);
+  eq(m.board.lanes[0].cap, 2, 'ＣＨ4のユニットでも上限2');
+  m.players.self.hand = [151, 152];
+  eq(CQTurn.channel(m, 0, 0).ok, false, '積み増しは却下');
+  eq(CQTurn.channel(m, 0, 0, { layer: 1 }).ok, true, '押し込みはできる');
+  eq(m.board.lanes[0].count, 2, '枚数は増えない');
+});
+t('膨張(158)で伸ばしても上限で頭打ちになる', () => {
+  const m = mkField([{ id: 'laneCap', cap: 3, lanes: [0] }]);
+  m.board.lanes[0] = lane(8, [up(158)]);
+  CQStats.recalc(m.board, OPT);
+  eq(m.board.lanes[0].cap, 3, '4+2=6 のところを3で頭打ち');
+});
+t('五つ星(157)の上書き（cap=5）よりも戦場ルールが後に効く', () => {
+  const m = mkField([{ id: 'laneCap', cap: 3, lanes: [0] }]);
+  m.board.lanes[0] = lane(8, [up(157)]);
+  CQStats.recalc(m.board, OPT);
+  eq(m.board.lanes[0].cap, 3, '五つ星でも3');
+});
+t('上限を超えて積まれていたカードは既存の超過ＣＨ消滅で最上段から消える', () => {
+  const m = mkField([{ id: 'laneCap', cap: 2, lanes: [0] }]);
+  m.board.lanes[0] = lane(8, [down(151), down(152), down(154), down(155)]);
+  CQStats.recalc(m.board, OPT);
+  eq(m.board.lanes[0].channels.map((c) => c.card), [151, 152], '上2枚が消える');
+});
+t('制限していないレーンは従来どおり', () => {
+  const m = mkField([{ id: 'laneCap', cap: 2, lanes: [0] }]);
+  m.board.lanes[1] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  eq(m.board.lanes[1].cap, 4, 'ピッグマンの素のＣＨ4のまま');
+});
+
+section('M6: laneLock（レーン制限）');
+t('ロックされたレーンには召還できない（隣のレーンは使える）', () => {
+  const m = mkField([{ id: 'laneLock', lanes: [0] }]);
+  m.phase = 'placement';
+  m.players.self.hand = [8, 8];
+  const ng = CQTurn.summon(m, 0, 0);
+  eq(ng.ok, false, 'ロックレーンは却下');
+  eq(/戦場ルール/.test(ng.reason), true, '理由が分かる');
+  eq(CQTurn.summon(m, 1, 0).ok, true, '空いているレーンには出せる');
+});
+t('ロックされたレーンはチャネリングの対象にもならない', () => {
+  const m = mkField([{ id: 'laneLock', lanes: [0] }]);
+  m.phase = 'placement';
+  m.board.lanes[0] = lane(8, []);          // 異常系：何かの拍子にユニットが居ても受け付けない
+  CQStats.recalc(m.board, OPT);
+  m.players.self.hand = [151];
+  eq(CQTurn.channel(m, 0, 0).ok, false, 'ロックレーンへのチャネリングは却下');
+});
+t('リバース召還の召還先からロックレーンが除外される', () => {
+  const build = function (rules) {
+    const m = mkField(rules);
+    m.board.lanes[0] = lane(8, [down(19)]);          // 19 ブレードライダー ＣＨ4 Ｌｖ1
+    CQStats.recalc(m.board, OPT);
+    CQTurn.reverseAction(m, 0, [1]);
+    return m;
+  };
+  eq(build().board.lanes.findIndex((l) => l.unit === 19) >= 1, true, '対照：空きレーンに出る');
+  const locked = build([{ id: 'laneLock', lanes: [1, 2] }]);
+  eq(locked.board.lanes.some((l) => l.unit === 19), false, '召還先が無く破壊された');
+  eq(locked.board.lanes[0].channels.length, 0, 'チャネルからも消えている');
+});
+t('ＡＩの候補列挙もロックレーンを空きとして数えない', () => {
+  const m = mkField([{ id: 'laneLock', lanes: [0, 1] }]);
+  m.phase = 'placement';
+  m.players.self.hand = [8];
+  m.aiConfig = { self: CQAi.PRESETS.heuristic };
+  CQAi.placementStep(m);
+  eq([m.board.lanes[0].unit, m.board.lanes[1].unit, m.board.lanes[2].unit], [null, null, 8],
+     'ロックされていないレーン2にだけ召還する');
 });
 
 /* ================= 結果 ================= */

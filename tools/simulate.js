@@ -31,6 +31,7 @@ const CQCombat = require(path.join(root, 'js/engine/combat.js'));
 const CQMagic = require(path.join(root, 'js/engine/effects/magic.js'));
 const CQUnits = require(path.join(root, 'js/engine/effects/units.js'));
 const CQAi = require(path.join(root, 'js/engine/ai.js'));
+const CQField = require(path.join(root, 'js/engine/fieldrules.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
 /* 検証用の簡易デッキ：召還Lv1のユニット中心＋技能・魔法少々＋空白でDECK_SIZE枚（v0.15.1で50→40）
@@ -81,11 +82,19 @@ function checkInvariants(m) {
     if (ln.channels.length > 6) throw new Error('レーン' + i + '：階層が6を超えた');
     if (ln.count !== ln.channels.length) throw new Error('レーン' + i + '：枚数カウントがずれている');
     if (ln.count > ln.cap) throw new Error('レーン' + i + '：上限を超えたチャンネルが残っている');
+    /* M6 戦場ルール */
+    const fcap = m.board.fieldCap && m.board.fieldCap[i];
+    if (fcap != null && ln.cap > fcap) throw new Error('レーン' + i + '：戦場ルールのＣＨ上限を超えた');
+    if (m.board.fieldLock && m.board.fieldLock[i] && ln.unit != null)
+      throw new Error('レーン' + i + '：使用不可のレーンにユニットが立った');
   });
   ['self', 'enemy'].forEach(function (side) {
     const p = m.players[side];
     if (p.hand.length > 7) throw new Error(side + '：手札が7枚を超えた');
     if (p.deckCount < 0) throw new Error(side + '：山札が負になった');
+    /* M6 戦場ルール pestCard：おじゃま虫は山札を経由しない＝再装填でも復活しない */
+    if (p.deck[CQField.PEST_CARD]) throw new Error(side + '：おじゃま虫が山札に混ざった');
+    if (p.initial.indexOf(CQField.PEST_CARD) >= 0) throw new Error(side + '：おじゃま虫が再装填リストに入った');
   });
 }
 
@@ -107,6 +116,25 @@ function pickConfig(mode, rng) {
   return (s || e) ? cfg : undefined;
 }
 
+/* M6 戦場ルール（実装計画 追補 §M6）：シードごとに1戦闘1ルールまで抽選する。
+ * 初期リリースの抽選方針（重ね掛けはしない）に合わせつつ、5種すべてのコードパスを
+ * ファズで通す。ルール無しの従来どおりの対局も同じ割合で回す */
+function pickFieldRules(rng) {
+  switch (rng.int(0, 5)) {
+    /* max は 4〜5（追補の既定は4）。3以下にすると検証用デッキから召還できるユニットが
+       ほぼ枯れ、両陣営とも場が空のまま再装填のＬＰ−2だけで削り合う展開になり、
+       決着まで150〜300ターン掛かることを実測した（2026-08-26）。engine としては
+       終了保証（再装填）が効いていて無限ループにはならないが、遊べる長さではないので、
+       マップ生成側の制約として「そのデッキに召還できるユニットが十分残る max を選ぶ」ことにした */
+    case 1: return [{ id: 'noHighCH', max: rng.int(4, 5) }];
+    case 2: return [{ id: 'bomb', period: rng.int(2, 5), layer: rng.int(2, 5) }];
+    case 3: return [{ id: 'pestCard', period: rng.int(1, 3) }];
+    case 4: return [{ id: 'laneCap', cap: rng.int(1, 4), lanes: [rng.int(0, 2), rng.int(3, 5)] }];
+    case 5: return [{ id: 'laneLock', lanes: [rng.int(0, 2)] }];
+    default: return [];
+  }
+}
+
 function runMatch(seed, maxTurns, mode) {
   const rng = CQRng.create(seed);
   const m = CQTurn.createMatch({
@@ -114,7 +142,8 @@ function runMatch(seed, maxTurns, mode) {
     selfDeck: makeDeck(rng), enemyDeck: makeDeck(rng),
     first: rng.next() < 0.5 ? 'self' : 'enemy',
     opponentId: 101,
-    hooks: HOOKS
+    hooks: HOOKS,
+    fieldRules: pickFieldRules(rng)
   });
   m.aiConfig = pickConfig(mode, rng);
   let guard = 0;

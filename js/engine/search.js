@@ -41,6 +41,7 @@
   const Turn = isNode ? require('./turn.js') : global.CQTurn;
   const Combat = isNode ? require('./combat.js') : global.CQCombat;
   const CQRng = isNode ? require('./rng.js') : global.CQRng;
+  const Field = isNode ? require('./fieldrules.js') : global.CQField;
   /** ai.js は相互参照になるため、呼ぶ瞬間に解決する（turn.js の combatApi() と同じ流儀） */
   function Ai() { return isNode ? require('./ai.js') : global.CQAi; }
 
@@ -107,6 +108,11 @@
       loot: (src.loot || []).slice(),
       lastBattle: null,
       hooks: src.hooks,
+      /* M6 戦場ルール：クローンにも必ず持ち回す。これを落とすと先読みの世界だけルールが
+         消えてしまい、「エンジンに実装すれば search が自然に吸収する」という設計原理が壊れる
+         （レーン別の派生データ fieldCap/fieldLock は board の JSON クローンに含まれる） */
+      fieldRules: (src.fieldRules || []).map(function (r) { return Object.assign({}, r); }),
+      fieldState: src.fieldState ? Object.assign({}, src.fieldState) : null,
       aiConfig: { self: Ai().PRESETS.heuristic, enemy: Ai().PRESETS.heuristic },
       log: []
     };
@@ -122,7 +128,9 @@
       });
     });
     const fp = c.players[foe];
-    fp.hand = fp.hand.map(function () { return drawPool(rng, pool); });
+    // おじゃま虫（M6 戦場ルール）は投げ込む演出を必ず見せる＝公開情報なので、
+    // 決定化でも中身を伏せずそのまま残す（＝ＡＩは相手の手札が腐っていることを正しく織り込む）
+    fp.hand = fp.hand.map(function (id) { return Field.isPest(id) ? id : drawPool(rng, pool); });
     const n = Math.max(0, fp.deckCount);
     const deck = {};
     for (let i = 0; i < n; i++) {
@@ -329,7 +337,7 @@
       const ln = lanes[i];
       return ln.unit != null && ln.cap > ln.count && !(ln.acc && ln.acc.closedSkill >= 1);
     };
-    const emptyOwn = ownLanes.filter(function (i) { return lanes[i].unit == null; })[0];
+    const emptyOwn = Field.freeLanesOf(m, side)[0];       // M6 戦場ルール laneLock を考慮した空きレーン
     const ownRoom = ownLanes.filter(roomOf);
     const foeRoom = foeLanes.filter(roomOf);
     const cands = [];
@@ -343,6 +351,7 @@
       if (card.t === 'U' && emptyOwn !== undefined) {
         cands.push({ type: 'summon', lane: emptyOwn, hand: h, id: id });
       }
+      if (!Field.channelAllowed(m, id).ok) continue;    // M6：おじゃま虫はチャネリングできない
       if (ownRoom.length) {
         let best = ownRoom[0];
         if (card.t === 'U') {

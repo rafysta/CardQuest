@@ -96,7 +96,13 @@
     return {
       lanes: lanes,
       hand: { self: handSelf || 0, enemy: handEnemy || 0 },
-      chainLocked: null            // 縛鎖：防御側が開けない階層の集合（戦闘中のみ）
+      chainLocked: null,           // 縛鎖：防御側が開けない階層の集合（戦闘中のみ）
+      /* M6 戦場ルール（js/engine/fieldrules.js）のレーン別派生データ。
+       * バトル開始時に CQField.init() が埋め、以後は書き換えない（＝JSONクローンで安全）。
+       * fieldCap[L]  … そのレーンのＣＨ上限（null＝制限なし。stats.js が最後の頭打ちに使う）
+       * fieldLock[L] … そのレーンが使用不可（召還・召還先として選べない） */
+      fieldCap: null,
+      fieldLock: null
     };
   }
 
