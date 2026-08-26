@@ -54,10 +54,10 @@ function renderAreaSelect() {
 
 /* ================= 開始マス（案内・おまかせドラフト） ================= */
 
-function draftCardMini(id) {
+function draftCardMini(id, isRental) {
   const c = CARD_BY_ID[id];
   return `<div class="draft-card" data-act="pick-draft" data-id="${id}">
-    <div class="dc-art">${artInner(c, 4)}</div>
+    <div class="dc-art">${artInner(c, 4)}${isRental ? '<span class="rental-badge">借</span>' : ''}</div>
     <div class="dc-n">${esc(c.n)}</div>
     <div class="dc-e">${esc(c.e || '')}</div>
   </div>`;
@@ -75,14 +75,14 @@ function renderStart() {
   if (!run.draftPending) RUI.draft = CQRun.beginDraftRound(run, CARD_BY_ID);
   const dp = run.draftPending;
   const target = CARD_BY_ID[dp.targetId];
-  const opts = dp.options.map(draftCardMini).join('');
+  const opts = dp.options.map(function (id) { return draftCardMini(id, true); }).join('');
   runRoot().innerHTML = `
     <div class="run-hud"><div class="run-hud-g">所持Ｇ：<b>${run.gold}</b></div></div>
     <div class="bubble">${esc(area.name)}へようこそ。${area.fog.chance > 0 ? 'この土地は霧が出ることがある。ショップで払える。' : ''}
       道中で使える「おまかせドラフト」で、まだ持っていないカードをレンタルできる（${dp.round + 1}／3回目）。</div>
     <div class="draft-row">
       ${opts}
-      ${draftCardMini(dp.targetId)}
+      ${draftCardMini(dp.targetId, false)}
     </div>
     <p class="draft-note">入れ替え対象：<b>${esc(target.n)}</b>（自動選択。空白がなければいちばん安いカードから）。
       いちばん右の「${esc(target.n)}」を選べば変更しません。選んだカードはこのラン限定のレンタルです。</p>`;
@@ -92,32 +92,109 @@ function renderStart() {
 
 const NODE_ICON = { chest: '🎁', shop: '🛒', rest: '☕', exchange: '💰', question: '❓', start: '🏠', boss: '👑' };
 const NODE_LABEL = { chest: '宝箱', shop: 'ショップ', rest: '休憩', exchange: '換金', question: '？', start: '開始', boss: 'ボス' };
+/* マップ演出仕様（2026-08-26確定・マップ仕様書§4.1〜4.2）：戦闘マス／ボスは枠付きカード絵ではなく
+ * 背景除去済みの切り抜き（tools/make-cutouts.py で事前生成・assets/cutouts/・assets/masters/*_cut.png）を
+ * 台座タイルの上に立たせる。切り抜きが無いカード／エリア追加直後は自動でフォールバックする。 */
+const NODE_ICON_IMG = {
+  chest: 'assets/map/icon_chest.png', shop: 'assets/map/icon_shop.png',
+  rest: 'assets/map/icon_rest.png', exchange: 'assets/map/icon_cash.png'
+};
 
 function nodeVisible(n, run) { return !n.fog || run.map.fog.cleared; }
 
-function nodeIconHTML(n, run) {
+/** 切り抜き画像が404のとき（未生成のカード・開発中のエリア追加直後）、
+ * 従来の枠付きカード絵にその場でフォールバックする。 */
+function nodeArtFallback(img, cardId) {
+  const c = CARD_BY_ID[cardId];
+  const div = document.createElement('div');
+  div.className = 'node-art-fallback';
+  div.innerHTML = artInner(c, 4);
+  img.replaceWith(div);
+}
+if (typeof window !== 'undefined') window.nodeArtFallback = nodeArtFallback;
+
+/** ボス切り抜きが404のとき→通常の肖像（グラデ背景つき）→それも無ければ👑絵文字、の二段フォールバック。 */
+function masterCutoutFallback(img, origSrc) {
+  img.onerror = function () { img.replaceWith(document.createTextNode('👑')); };
+  img.src = origSrc;
+  img.classList.remove('node-master-cutout');
+  img.classList.add('node-art-fallback-img');
+}
+if (typeof window !== 'undefined') window.masterCutoutFallback = masterCutoutFallback;
+
+/** マスの中身（台座タイルの上に立つもの）。バッジ・体数ピップも同じ figure 内に置く
+ * （figure を position:relative にしてバッジを追従させるため）。 */
+function nodeFigureHTML(n, run) {
   if (n.type === 'battle') {
     const hidden = !nodeVisible(n, run);
+    if (hidden) return '<div class="node-silhouette">？</div>';
     const badge = n.strength === 'elite' ? '<span class="node-badge elite">⭐</span>' : '';
-    const pip = (!hidden && n.enemy) ? `<span class="node-pip">×${n.enemy.count}</span>` : '';
-    const inner = hidden ? '<div class="node-silhouette">？</div>' : artInner(CARD_BY_ID[n.enemy.id], 4);
-    return `<div class="node-art ${n.strength}">${inner}</div>${badge}${pip}`;
+    const pip = n.enemy ? `<span class="node-pip">×${n.enemy.count}</span>` : '';
+    return `<img src="assets/cutouts/${n.enemy.id}.png" class="node-cutout" alt="" draggable="false"
+      onerror="nodeArtFallback(this, ${n.enemy.id})">${badge}${pip}`;
   }
   if (n.type === 'boss') {
-    return `<div class="node-art boss"><img src="${CQAreas.get(run.areaId).master}" alt=""
-      draggable="false" onerror="this.replaceWith(document.createTextNode('👑'))"></div>`;
+    const area = CQAreas.get(run.areaId);
+    return `<img src="assets/masters/m_${run.areaId}_cut.png" class="node-master-cutout" alt="" draggable="false"
+      onerror="masterCutoutFallback(this, '${area.master}')">`;
   }
   const hidden = !nodeVisible(n, run);
-  return `<div class="node-icon">${hidden ? '？' : NODE_ICON[n.type]}</div>`;
+  if (hidden) return '<div class="node-silhouette">？</div>';
+  const imgSrc = NODE_ICON_IMG[n.type];
+  if (imgSrc) {
+    return `<img src="${imgSrc}" class="node-icon-img" alt="" draggable="false"
+      onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'node-icon',textContent:'${NODE_ICON[n.type]}'}))">`;
+  }
+  return `<div class="node-icon">${NODE_ICON[n.type]}</div>`;
 }
 
+/** 道を1本描く（縁取り＋路面＋踏み跡の3層。ゆるいベジェで直線を避ける。マップ仕様書§4） */
+function roadSeg(x1, y1, x2, y2, done) {
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;
+  const bow = Math.min(16, len * 0.05);
+  const cx = mx + nx * bow, cy = my + ny * bow;
+  const cls = done ? 'done' : '';
+  const d = `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
+  return `<path d="${d}" class="road-under ${cls}"/>` +
+    `<path d="${d}" class="road-fill ${cls}"/>` +
+    `<path d="${d}" class="road-tread ${cls}"/>`;
+}
+
+/** 経路の描画。セグメント境界（各枝の出口2つ→次の入口2つ、同一のconnectsTo）は
+ * 中間の合流点を経由して描くことで、単純な4本の直線が交差して見える問題（旧v0.16.0）を解消する。
+ * ロジック（connectsTo）自体には一切手を入れない。純粋に描画だけの処理。 */
 function pathSvg(run) {
+  const nodes = run.map.nodes;
+  const bySig = {};
+  Object.values(nodes).forEach(function (n) {
+    if (n.connectsTo.length === 2) {
+      const sig = n.connectsTo.slice().sort().join(',');
+      (bySig[sig] = bySig[sig] || []).push(n);
+    }
+  });
   const segs = [];
-  Object.values(run.map.nodes).forEach(function (n) {
+  const mergedSig = {};
+  Object.keys(bySig).forEach(function (sig) {
+    const group = bySig[sig];
+    if (group.length !== 2) return;
+    const ids = sig.split(',');
+    const targetA = nodes[ids[0]], targetB = nodes[ids[1]];
+    const midX = (group[0].x + group[1].x) / 2 + (targetA.x + targetB.x - group[0].x - group[1].x) / 4;
+    const midY = (targetA.y + targetB.y) / 2;
+    group.forEach(function (src) { segs.push(roadSeg(src.x, src.y, midX, midY, src.cleared)); });
+    segs.push(roadSeg(midX, midY, targetA.x, targetA.y, targetA.cleared));
+    segs.push(roadSeg(midX, midY, targetB.x, targetB.y, targetB.cleared));
+    mergedSig[sig] = true;
+  });
+  Object.values(nodes).forEach(function (n) {
+    const sig = n.connectsTo.length === 2 ? n.connectsTo.slice().sort().join(',') : null;
+    if (sig && mergedSig[sig]) return;
     n.connectsTo.forEach(function (toId) {
-      const t = run.map.nodes[toId];
-      const cleared = n.cleared;
-      segs.push(`<line x1="${n.x}" y1="${n.y}" x2="${t.x}" y2="${t.y}" class="path-line ${cleared ? 'done' : ''}"/>`);
+      const t = nodes[toId];
+      segs.push(roadSeg(n.x, n.y, t.x, t.y, n.cleared));
     });
   });
   return `<svg class="run-paths" viewBox="0 0 1280 800" preserveAspectRatio="none">${segs.join('')}</svg>`;
@@ -127,6 +204,15 @@ function runChoiceIds(run) {
   const cur = CQRun.currentNode(run);
   if (!cur.cleared) return [cur.id];
   return cur.connectsTo;
+}
+
+/** 現在地に立つプレイヤーのコマ。常時アイドルで小さく揺れる（マップ仕様書§4.2）。 */
+function playerTokenHTML(run, walking) {
+  const n = run.map.nodes[run.at];
+  return `<div class="player-token ${walking ? 'walking' : 'idle'}"
+      style="left:${(n.x / 1280 * 100).toFixed(2)}%; top:${(n.y / 800 * 100).toFixed(2)}%">
+    <img src="assets/map/player.png" alt="" draggable="false"
+      onerror="this.replaceWith(document.createTextNode('🚶'))"></div>`;
 }
 
 function renderMap() {
@@ -140,7 +226,8 @@ function renderMap() {
     return `<div class="map-node ${n.type} ${can ? 'pickable' : ''} ${done ? 'done' : ''} ${n.fog && !run.map.fog.cleared ? 'foggy' : ''}"
         style="left:${(n.x / 1280 * 100).toFixed(2)}%; top:${(n.y / 800 * 100).toFixed(2)}%; animation-delay:${delay}s"
         data-act="node" data-id="${id}">
-      ${nodeIconHTML(n, run)}
+      <div class="node-figure">${nodeFigureHTML(n, run)}</div>
+      <div class="node-tile"></div>
     </div>`;
   }).join('');
   runRoot().innerHTML = `
@@ -153,8 +240,34 @@ function renderMap() {
     <div class="run-map" style="background-image:url('${area.bg}')">
       ${pathSvg(run)}
       ${nodesHTML}
+      ${playerTokenHTML(run, false)}
     </div>
     <div class="run-log">${(run.log.slice(-3).map(function (l) { return '<div>・' + esc(l) + '</div>'; })).join('')}</div>`;
+}
+
+/** ノードidから盤面座標（%）を得る（歩行アニメの起点・終点計算用） */
+function nodePct(run, id) {
+  const n = run.map.nodes[id];
+  return { x: (n.x / 1280 * 100), y: (n.y / 800 * 100) };
+}
+
+/** クリックしたマスへ、コマが上下に跳ねながら歩いて移動する演出。終わったら done() を呼ぶ。
+ * マップ画面が実際にDOM上にあるとき（＝マップから分岐先をクリックした瞬間）だけ再生し、
+ * それ以外（開始マスからの出発など、マップがまだ無い場面）は演出をスキップして即座に進む。 */
+function playerWalk(run, fromId, toId, done) {
+  const mapEl = runRoot().querySelector('.run-map');
+  if (!mapEl || fromId === toId) { done(); return; }
+  const tok = document.createElement('div');
+  const from = nodePct(run, fromId), to = nodePct(run, toId);
+  tok.className = 'player-token walking';
+  tok.style.left = from.x + '%'; tok.style.top = from.y + '%';
+  tok.innerHTML = '<img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()">';
+  const existing = mapEl.querySelector('.player-token');
+  if (existing) existing.remove();
+  mapEl.appendChild(tok);
+  void tok.offsetWidth;
+  requestAnimationFrame(function () { tok.style.left = to.x + '%'; tok.style.top = to.y + '%'; });
+  setTimeout(done, 460);
 }
 
 /* ================= ノード解決 ================= */
@@ -296,14 +409,16 @@ function renderResult() {
   const run = RUI.run;
   const win = run.outcome === 'win';
   const title = win ? 'クリア！' : run.outcome === 'retire' ? 'リタイヤ' : 'ゲームオーバー';
-  const returned = run.rentals.map(function (id) { return CARD_BY_ID[id].n; });
+  const returned = run.rentals.map(function (id) {
+    return '<span class="rental-badge-inline">借</span>' + esc(CARD_BY_ID[id].n);
+  });
   const gained = run.gainedCards.map(function (id) { return CARD_BY_ID[id].n; });
   runRoot().innerHTML = `
     <div class="node-panel">
       <h3 class="${win ? 'run-win' : 'run-lose'}">${title}</h3>
       <p>所持Ｇ：${run.gold}</p>
       ${gained.length ? `<p>獲得カード：${gained.map(esc).join('・')}</p>` : ''}
-      ${returned.length ? `<p>返却（レンタル）：${returned.map(esc).join('・')}</p>` : ''}
+      ${returned.length ? `<p>返却（レンタル）：${returned.join('・')}</p>` : ''}
       <button class="btn ok" data-act="back-home">エリア選択へ</button>
     </div>`;
 }
@@ -319,6 +434,28 @@ function runRender() {
   else if (RUI.view === 'map') renderMap();
   else if (RUI.view === 'node') renderNode();
   else if (RUI.view === 'result') renderResult();
+}
+
+/** confirm() は他ブラウザ機能とバッティングしタブレットで不安定なため、
+ * ゲーム内の簡易ダイアログに置き換える（M6.5a）。 */
+function showConfirm(message, onYes) {
+  const ov = document.createElement('div');
+  ov.className = 'cq-confirm-overlay';
+  const lines = String(message).split('\n').map(esc).join('<br>');
+  ov.innerHTML = `<div class="cq-confirm-box">
+    <p>${lines}</p>
+    <div class="cq-confirm-btns">
+      <button class="tiny" data-act="cq-confirm-no">やめる</button>
+      <button class="btn ok" data-act="cq-confirm-yes">リタイヤする</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function (ev) {
+    const t = ev.target.closest('[data-act]');
+    if (!t) return;
+    if (t.dataset.act === 'cq-confirm-yes') { ov.remove(); onYes(); }
+    else if (t.dataset.act === 'cq-confirm-no') ov.remove();
+  });
 }
 
 /* ================= 操作 ================= */
@@ -347,7 +484,7 @@ function runAct(act, id) {
       return runRender();
     }
     case 'pick-draft':
-      CQRun.applyDraft(run, +id);
+      CQRun.applyDraft(run, +id, CARD_BY_ID);
       runSave();
       return runRender();
     case 'depart':
@@ -358,13 +495,16 @@ function runAct(act, id) {
     case 'node': {
       const n = run.map.nodes[id];
       if (n.fog && !run.map.fog.cleared) { runFlash('霧の中は入ってみないと分かりません'); }
-      /* そのマスへ実際に進む（＝現在地を更新する）。これをしないと「解決はしたが
-       * 分岐を選んでいない」状態のまま両方の選択肢を同時に取れてしまう（2択の意味が崩れる） */
-      const adv = CQRun.advance(run, id);
-      if (!adv.ok) { runFlash(adv.reason); return runRender(); }
-      RUI.nodeId = id; RUI.view = 'node';
-      runSave();
-      return runRender();
+      const fromId = run.at;
+      return playerWalk(run, fromId, id, function () {
+        /* そのマスへ実際に進む（＝現在地を更新する）。これをしないと「解決はしたが
+         * 分岐を選んでいない」状態のまま両方の選択肢を同時に取れてしまう（2択の意味が崩れる） */
+        const adv = CQRun.advance(run, id);
+        if (!adv.ok) { runFlash(adv.reason); return runRender(); }
+        RUI.nodeId = id; RUI.view = 'node';
+        runSave();
+        runRender();
+      });
     }
     case 'battle-go': {
       const n = run.map.nodes[RUI.nodeId];
@@ -415,13 +555,14 @@ function runAct(act, id) {
       RUI.view = 'map'; runSave();
       return runRender();
     case 'retire':
-      if (!confirm('ここでリタイヤしますか？ ここまでの所持Ｇ・カードは持ち帰れます。')) return;
-      CQRun.retire(run);
-      CQRun.settle(run, RUI.meta);
-      CQSave.saveMeta(RUN_STORAGE, RUI.meta);
-      CQSave.clearRun(RUN_STORAGE);
-      RUI.view = 'result';
-      return runRender();
+      return showConfirm('ここでリタイヤしますか？\nここまでの所持Ｇ・カードは持ち帰れます。', function () {
+        CQRun.retire(run);
+        CQRun.settle(run, RUI.meta);
+        CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+        CQSave.clearRun(RUN_STORAGE);
+        RUI.view = 'result';
+        runRender();
+      });
     case 'back-home':
       RUI.run = null; RUI.view = 'areaSelect';
       return runRender();

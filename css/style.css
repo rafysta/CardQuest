@@ -722,7 +722,7 @@ td.nm{font-weight:800}
   cursor:pointer;text-align:center;
 }
 .draft-card:hover{border-color:var(--accent)}
-.dc-art{width:100%;height:100px;border-radius:8px;overflow:hidden;background:#1a2338;
+.dc-art{position:relative;width:100%;height:100px;border-radius:8px;overflow:hidden;background:#1a2338;
   display:flex;align-items:center;justify-content:center;margin-bottom:6px}
 .dc-art img{width:100%;height:100%;object-fit:cover}
 .dc-n{font-weight:800;font-size:14px}
@@ -730,40 +730,120 @@ td.nm{font-weight:800}
 .draft-note{color:var(--dim);font-size:13px;margin-top:14px;max-width:900px}
 .run-depart{margin-top:6px}
 
-/* ---- マップ本体（§4） ---- */
+/* ---- マップ本体（§4。2026-08-26 M6.5a：台座タイル・切り抜き・道の描画に刷新） ---- */
 .run-map{
   position:relative;flex:1;min-height:0;border-radius:16px;overflow:hidden;
   background-size:cover;background-position:center;border:1px solid var(--line);
 }
 .run-paths{position:absolute;inset:0;width:100%;height:100%}
-.path-line{stroke:#5a6b90;stroke-width:5;stroke-dasharray:2 12;stroke-linecap:round}
-.path-line.done{stroke:var(--accent);stroke-dasharray:none}
+/* 道は3層（濃い縁取り→路面→踏み跡の点線）で「道らしさ」を出す。マップ仕様書§4 */
+.road-under{fill:none;stroke:#241a10;stroke-width:15;stroke-linecap:round;opacity:.5}
+.road-fill{fill:none;stroke:#a9895f;stroke-width:9;stroke-linecap:round;opacity:.55}
+.road-tread{fill:none;stroke:#5c4326;stroke-width:2;stroke-dasharray:3 11;stroke-linecap:round;opacity:.65}
+.road-fill.done{stroke:var(--accent);opacity:.9}
+.road-tread.done{stroke:#3a2f06;opacity:.8}
+.road-under.done{opacity:.65}
 
+/* マスは「台座タイル」として描く。アイコン・敵・コマはタイルの上に立つ（黒い角丸カード枠は廃止） */
 .map-node{
-  position:absolute;transform:translate(-50%,-50%);
-  width:84px;height:84px;border-radius:16px;
-  background:rgba(10,16,30,.82);border:2px solid #3a4a70;
-  display:flex;align-items:center;justify-content:center;
-  animation:node-idle 3.2s ease-in-out infinite;
+  position:absolute;transform:translate(-50%,-62%);
+  width:112px;height:132px;
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
 }
-.map-node.boss{width:110px;height:110px;border-color:#7a2b2b}
-.map-node.pickable{border-color:var(--accent);box-shadow:0 0 0 4px rgba(250,204,21,.25);cursor:pointer}
-.map-node.done{opacity:.5;animation:none}
-.map-node.foggy{filter:brightness(.55) saturate(.4)}
-@keyframes node-idle{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-50%) scale(1.045)}}
+.map-node.boss{width:158px;height:180px}
 
+.node-tile{
+  width:80%;height:22px;border-radius:50%;flex:none;
+  background:radial-gradient(ellipse at center, rgba(12,10,6,.55) 0%, rgba(12,10,6,.24) 55%, transparent 78%);
+}
+.map-node.pickable .node-tile{
+  cursor:pointer;
+  background:radial-gradient(ellipse at center, rgba(250,204,21,.62) 0%, rgba(250,204,21,.24) 55%, transparent 78%);
+  animation:tile-pulse 1.7s ease-in-out infinite;
+}
+.map-node.done .node-tile{opacity:.4}
+@keyframes tile-pulse{0%,100%{opacity:.75}50%{opacity:1}}
+
+.node-figure{
+  position:relative;width:92px;height:92px;margin-bottom:-8px;
+  display:flex;align-items:center;justify-content:center;
+  animation:node-sway 3.6s ease-in-out infinite;
+}
+.map-node.pickable .node-figure{cursor:pointer}
+.map-node.boss .node-figure{width:134px;height:134px}
+.map-node.done .node-figure{animation:none;opacity:.55}
+.map-node.foggy .node-figure{filter:brightness(.55) saturate(.4)}
+@keyframes node-sway{0%,100%{transform:rotate(-1.1deg) scale(1)}50%{transform:rotate(1.1deg) scale(1.035)}}
+
+/* 敵・ボスは背景除去済みの切り抜き（tools/make-cutouts.py）をそのまま立たせる。枠は付けない */
+.node-cutout,.node-master-cutout{
+  width:100%;height:100%;object-fit:contain;
+  filter:drop-shadow(0 10px 8px rgba(0,0,0,.55));
+}
+.node-icon-img{width:62%;height:62%;object-fit:contain;filter:drop-shadow(0 6px 5px rgba(0,0,0,.5))}
+.node-icon{font-size:34px;filter:drop-shadow(0 4px 4px rgba(0,0,0,.5))}
+.node-silhouette{font-size:28px;color:#8a97b6;filter:brightness(.4)}
+/* 切り抜き未生成時のフォールバック（従来の枠付きカード絵） */
+.node-art-fallback{
+  width:84px;height:84px;border-radius:14px;overflow:hidden;background:#1a2338;
+  display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 3px #c0392b;
+}
+.node-art-fallback-img{width:100%;height:100%;object-fit:cover;border-radius:14px}
+
+/* マス解決パネル（戦闘導入・renderBattleNode）専用の枠付きプレビュー絵。
+ * マップ本体の表示（.node-cutout等）とは別物で、M6.5aでは未変更のまま維持する。 */
 .node-art{width:100%;height:100%;border-radius:14px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#1a2338}
 .node-art img{width:100%;height:100%;object-fit:cover}
 .node-art.strong{box-shadow:inset 0 0 0 3px #c0392b}
 .node-art.elite{box-shadow:inset 0 0 0 3px var(--accent)}
-.node-icon{font-size:34px}
-.node-silhouette{font-size:30px;color:#8a97b6;filter:brightness(.4)}
-.node-badge{position:absolute;top:-8px;right:-8px;font-size:18px}
-.node-pip{position:absolute;bottom:-6px;right:-6px;background:#0a1120;border:1px solid var(--line);
+
+.node-badge{position:absolute;top:-6px;right:2px;font-size:18px}
+.node-pip{position:absolute;bottom:0;right:-4px;background:#0a1120;border:1px solid var(--line);
   border-radius:10px;padding:1px 6px;font-size:12px;font-weight:800}
+
+/* プレイヤーのコマ：常時アイドルで小さく揺れ、移動時は上下に跳ねながら横へ滑る（マップ仕様書§4.2） */
+.player-token{
+  position:absolute;transform:translate(-50%,-96%);
+  width:58px;height:76px;z-index:6;pointer-events:none;
+}
+.player-token img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 8px 6px rgba(0,0,0,.55))}
+.player-token.idle{animation:player-idle 1.7s ease-in-out infinite}
+@keyframes player-idle{
+  0%,100%{transform:translate(-50%,-96%) translateY(0)}
+  50%{transform:translate(-50%,-96%) translateY(-6px)}
+}
+.player-token.walking{
+  transition:left .46s ease-in-out, top .46s ease-in-out;
+  animation:player-hop .46s ease-in-out infinite;
+}
+@keyframes player-hop{
+  0%,100%{transform:translate(-50%,-96%) translateY(0)}
+  50%{transform:translate(-50%,-96%) translateY(-15px)}
+}
 
 .run-log{position:absolute;left:16px;bottom:14px;font-size:12px;color:var(--dim);
   background:rgba(5,8,15,.7);border-radius:8px;padding:6px 10px;pointer-events:none}
+
+/* レンタル（おまかせドラフト）バッジ。マップ仕様書§1.2 */
+.rental-badge{
+  position:absolute;top:4px;left:4px;background:var(--accent);color:#241c00;
+  font-size:11px;font-weight:800;border-radius:6px;padding:1px 6px;z-index:2;
+}
+.rental-badge-inline{
+  display:inline-block;background:var(--accent);color:#241c00;font-size:11px;font-weight:800;
+  border-radius:6px;padding:0 5px;margin-right:4px;vertical-align:middle;
+}
+
+/* confirm() の代替ダイアログ（リタイヤ確認） */
+.cq-confirm-overlay{
+  position:fixed;inset:0;background:rgba(3,5,10,.72);display:flex;align-items:center;justify-content:center;z-index:50;
+}
+.cq-confirm-box{
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px 26px;
+  max-width:420px;text-align:center;
+}
+.cq-confirm-box p{line-height:1.6;margin-bottom:16px}
+.cq-confirm-btns{display:flex;gap:12px;justify-content:center}
 
 /* ---- マス解決パネル（宝箱・休憩・ショップ・換金・？・戦闘導入） ---- */
 .node-panel{

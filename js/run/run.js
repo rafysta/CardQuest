@@ -116,16 +116,18 @@
   }
 
   /** pickedId が targetId と同じ＝「変更しない」。それ以外はレンタルとして入れ替える
-   * （§1.2「所持済みが候補でも扱いはレンタルで統一」＝おまかせドラフトの入手は常にレンタル） */
-  function applyDraft(run, pickedId) {
+   * （§1.2「所持済みが候補でも扱いはレンタルで統一」＝おまかせドラフトの入手は常にレンタル）。
+   * cards はログ表示用（省略可・後方互換）：渡せばカード名で、渡さなければ従来どおりIDで出す。 */
+  function applyDraft(run, pickedId, cards) {
     const dp = run.draftPending;
     if (!dp) return false;
+    const name = function (id) { return cards && cards[id] ? cards[id].n : id; };
     if (pickedId !== dp.targetId) {
       if ((run.deck[dp.targetId] || 0) > 0) run.deck[dp.targetId] -= 1;
       run.rentals.push(pickedId);
-      run.log.push('draft: ' + dp.targetId + ' → ' + pickedId + '（レンタル）');
+      run.log.push('おまかせドラフト：' + name(dp.targetId) + ' → ' + name(pickedId) + '（レンタル）');
     } else {
-      run.log.push('draft: 変更しない（' + dp.targetId + '）');
+      run.log.push('おまかせドラフト：変更しない（' + name(dp.targetId) + '）');
     }
     run.draftDone += 1;
     run.draftPending = null;
@@ -239,7 +241,7 @@
     run.deck[cardId] = (run.deck[cardId] || 0) + 1;
     run.gainedCards.push(cardId);
     n.stock.splice(n.stock.indexOf(cardId), 1);
-    run.log.push('購入：' + cardId + '（-' + cost + 'Ｇ）');
+    run.log.push('購入：' + (cards[cardId] ? cards[cardId].n : cardId) + '（-' + cost + 'Ｇ）');
     return { ok: true, cost: cost };
   }
   function shopHeal(run, n) {
@@ -268,7 +270,7 @@
     const gold = c ? Math.max(10, Math.round(c.p * SELL_RATE)) : 0;
     run.deck[cardId] -= 1;
     run.gold += gold;
-    run.log.push('換金：' + cardId + '（+' + gold + 'Ｇ）');
+    run.log.push('換金：' + (cards[cardId] ? cards[cardId].n : cardId) + '（+' + gold + 'Ｇ）');
     return { ok: true, gold: gold };
   }
   function exchangeLeave(run, n) { n.cleared = true; }
