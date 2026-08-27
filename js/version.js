@@ -1,14 +1,21 @@
 /* CardQuest - バージョン情報と更新履歴 */
 'use strict';
 
-const APP_VERSION = '0.16.1';
-const APP_BUILD = '2026-08-26';
+const APP_VERSION = '0.16.2';
+const APP_BUILD = '2026-08-27';
 
 /**
  * 更新履歴(新しい順)
  * type: 'new' 新機能 / 'fix' 修正 / 'change' 変更
  */
 const CHANGELOG = [
+  {
+    version: '0.16.2',
+    date: '2026-08-27',
+    items: [
+      { type: 'new', text: '🔄 エリア選択画面の右下に「最初からやり直す」ボタンを追加しました（実装計画追補M6.6 WP2）。確認ダイアログで「はい」を選ぶと、記録をすべて消して最初からやり直せます' }
+    ]
+  },
   {
     version: '0.16.1',
     date: '2026-08-26',

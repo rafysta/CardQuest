@@ -2972,6 +2972,16 @@ t('cq_run：無ければnull、保存すれば読み戻せる、clearRunで消�
   eq(CQSave.loadRun(st), null, 'clearRunで消える');
 });
 
+t('cq_meta：clearMetaで消える（M6.6 WP2：最初からやり直す）', () => {
+  const st = mockStorage();
+  const m1 = CQSave.loadMeta(st, [8, 8, 180]);
+  CQSave.saveMeta(st, m1);
+  eq(CQSave.loadMeta(st, [1]).gold, 500, '保存直後は既定デッキ無視で読み戻る');
+  CQSave.clearMeta(st);
+  const m2 = CQSave.loadMeta(st, [1]);
+  eq(m2.deck, { 1: 1 }, 'clearMeta後はdefaultDeckIdsから作り直される');
+});
+
 t('壊れたcq_metaは初期化して復旧する', () => {
   const st = mockStorage();
   st.setItem('cq_meta', '{not json');

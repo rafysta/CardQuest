@@ -710,6 +710,14 @@ td.nm{font-weight:800}
 .area-tile-lock{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   text-align:center;padding:0 16px;font-size:14px;color:#e2c98c}
 
+/* 「最初からやり直す」（M6.6 WP2）。確認用の開発機能なので、隅に小さく・目立たない色で置く。
+ * #run-root は position:relative（css先頭）なのでこの絶対配置はエリア選択画面の右下に収まる。 */
+.area-reset-btn{
+  position:absolute;right:0;bottom:0;background:none;border:1px solid var(--line);
+  border-radius:8px;padding:5px 10px;font-size:11px;color:var(--dim);cursor:pointer;opacity:.6;
+}
+.area-reset-btn:hover{opacity:1;color:#e2a0a0;border-color:#7a2b2b}
+
 /* ---- 開始マス：案内・おまかせドラフト（§1.1〜1.2） ---- */
 .bubble{
   background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px 18px;

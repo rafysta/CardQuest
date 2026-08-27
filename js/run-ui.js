@@ -49,7 +49,8 @@ function renderAreaSelect() {
       <div class="run-hud-g">所持Ｇ：<b>${RUI.meta.gold}</b></div>
     </div>
     <h2 class="run-h2">冒険に出る</h2>
-    <div class="area-grid">${tiles}</div>`;
+    <div class="area-grid">${tiles}</div>
+    <button class="area-reset-btn" data-act="reset-progress">最初からやり直す</button>`;
 }
 
 /* ================= 開始マス（案内・おまかせドラフト） ================= */
@@ -440,7 +441,7 @@ function runRender() {
 
 /** confirm() は他ブラウザ機能とバッティングしタブレットで不安定なため、
  * ゲーム内の簡易ダイアログに置き換える（M6.5a）。 */
-function showConfirm(message, onYes) {
+function showConfirm(message, onYes, yesLabel) {
   const ov = document.createElement('div');
   ov.className = 'cq-confirm-overlay';
   const lines = String(message).split('\n').map(esc).join('<br>');
@@ -448,7 +449,7 @@ function showConfirm(message, onYes) {
     <p>${lines}</p>
     <div class="cq-confirm-btns">
       <button class="tiny" data-act="cq-confirm-no">やめる</button>
-      <button class="btn ok" data-act="cq-confirm-yes">リタイヤする</button>
+      <button class="btn ok" data-act="cq-confirm-yes">${esc(yesLabel || 'はい')}</button>
     </div>
   </div>`;
   /* #app の外（document.body直下）に position:fixed で置くと、画面が小さくて
@@ -569,10 +570,23 @@ function runAct(act, id) {
         CQSave.clearRun(RUN_STORAGE);
         RUI.view = 'result';
         runRender();
-      });
+      }, 'リタイヤする');
     case 'back-home':
       RUI.run = null; RUI.view = 'areaSelect';
       return runRender();
+    /* M6.6 WP2：確認用の開発機能（エリア選択画面右下）。誤爆防止のため確認ダイアログを1段挟む。
+     * 記録を消したら必ずリロードする（cq_meta が無い状態から runInit → loadMeta が既定デッキで
+     * 作り直すのに任せる。中途半端に RUI を作り替えるより確実）。 */
+    case 'reset-progress':
+      return showConfirm(
+        'すべての記録を消して最初から始めます。よろしいですか？',
+        function () {
+          CQSave.clearMeta(RUN_STORAGE);
+          CQSave.clearRun(RUN_STORAGE);
+          location.reload();
+        },
+        'はい'
+      );
   }
 }
 

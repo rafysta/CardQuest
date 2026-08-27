@@ -53,7 +53,14 @@
     try { storage.removeItem(RUN_KEY); } catch (e) { /* noop */ }
   }
 
-  const api = { loadMeta, saveMeta, loadRun, saveRun, clearRun, toDeckCounts };
+  /** cq_meta を削除する（M6.6 WP2：エリア選択画面の「最初からやり直す」）。
+   * cq_run と合わせて呼べば、次回読み込み時に loadMeta が既定デッキから作り直す＝完全な初期化になる。 */
+  function clearMeta(storage) {
+    if (!storage) return;
+    try { storage.removeItem(META_KEY); } catch (e) { /* noop */ }
+  }
+
+  const api = { loadMeta, saveMeta, clearMeta, loadRun, saveRun, clearRun, toDeckCounts };
   global.CQSave = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
