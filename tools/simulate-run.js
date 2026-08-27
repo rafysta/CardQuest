@@ -72,6 +72,8 @@ function checkRunInvariants(run, meta) {
   if (run.gold < 0) throw new Error('Ｇが負になった');
   if (run.lp < 0) throw new Error('ＬＰが負になった');
   Object.keys(run.deck).forEach((k) => { if (run.deck[k] < 0) throw new Error('所持デッキが負になった: ' + k); });
+  Object.keys(run.bookAdd || {}).forEach((k) => { if (run.bookAdd[k] < 0) throw new Error('本行き分が負になった: ' + k); });
+  if (meta.book) Object.keys(meta.book).forEach((k) => { if (meta.book[k] < 0) throw new Error('本が負になった: ' + k); });
   if (run.map.fog.active === false && run.map.fog.cleared !== true) throw new Error('霧なしランで cleared が立っていない');
   const seg = {};
   Object.values(run.map.nodes).forEach((n) => {
@@ -128,12 +130,24 @@ function playRun(areaId, seed, meta, rng) {
     const next = choices[rng.int(0, choices.length - 1)];
     CQRun.advance(run, next.id);
   }
+  const knownBefore = (meta.known || []).length;
   CQRun.settle(run, meta);
   checkRunInvariants(run, meta);
-  /* 清算後の所持デッキ(meta.deck)は run.deck の複製そのもの（レンタル配列は混ぜない）。
+  /* 清算後の所持デッキ(meta.deck)は run.deck の複製（レンタル配列は混ぜない）。
+   * M6.6 WP3：ただし空白(180)と0枚のキーは保存しないので、正の実カードだけを比べる。
    * ※ ドラフトで借りたカードを、その後に戦利品・購入で「本当に」入手するのは正常系
    *   （その場合は run.deck 側にも同じidが乗る＝レンタルと恒久所持が両立するのは仕様どおり） */
-  if (JSON.stringify(meta.deck) !== JSON.stringify(run.deck)) throw new Error('清算後の所持デッキが run.deck と一致しない');
+  const positive = (counts) => {
+    const out = {};
+    Object.keys(counts).sort((a, b) => a - b).forEach((k) => { if (counts[k] > 0 && +k !== CQRun.BLANK) out[k] = counts[k]; });
+    return out;
+  };
+  if (JSON.stringify(positive(meta.deck)) !== JSON.stringify(positive(run.deck))) throw new Error('清算後の所持デッキが run.deck と一致しない');
+  /* 移動モデルの不変条件：knownは減らない・ラン中の本行き分がbookへ全額入る */
+  if ((meta.known || []).length < knownBefore) throw new Error('清算でknown（記憶データ）が減った');
+  Object.keys(run.bookAdd || {}).forEach((k) => {
+    if ((meta.book[k] || 0) < run.bookAdd[k]) throw new Error('本行き分が清算でbookに入っていない: ' + k);
+  });
   return { run, battles, totalTurns };
 }
 

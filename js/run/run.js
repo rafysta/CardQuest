@@ -17,6 +17,8 @@
   const CQMap = need('map.js') || global.CQMap;
   const CQTurnRef = (typeof require === 'function' && typeof module !== 'undefined')
     ? require('../engine/turn.js') : global.CQTurn;
+  const CQCollection = (typeof require === 'function' && typeof module !== 'undefined')
+    ? require('../meta/collection.js') : global.CQCollection;
   const DECK_SIZE = (CQTurnRef && CQTurnRef.DECK_SIZE) || 40;
   const BLANK = 180;
 
@@ -72,11 +74,18 @@
 
   /* ---- ラン開始 ------------------------------------------------------------ */
 
-  /** cards: CARD_BY_ID / areaId / seed / meta: {deck, gold, cleared}（js/meta/save.js） */
+  /** cards: CARD_BY_ID / areaId / seed / meta: {book, deck, known, gold, cleared}（js/meta/save.js）
+   * M6.6 WP3：run.deck は保存デッキ（持ち出し分）のコピー。ラン中の増減はランに閉じ、
+   * 終了時に settle() でメタへ反映する。ラン中に「本」行きになったカードは run.bookAdd に
+   * 貯めておく（中断・再開でも失われないよう run 自体に持たせる＝cq_run に保存される）。 */
   function start(cards, areaId, seed, meta) {
     const area = CQAreas.get(areaId);
     if (!area) throw new Error('unknown area: ' + areaId);
-    const ownedIds = Object.keys(meta.deck).filter(function (k) { return meta.deck[k] > 0; }).map(Number);
+    /* ドラフトの「未入手優先」の基準は記憶データ（known）。旧形式のメタ（テスト・後方互換）では
+     * 従来どおり deck の種類で代用する。 */
+    const ownedIds = (meta.known && meta.known.length)
+      ? meta.known.slice()
+      : Object.keys(meta.deck).filter(function (k) { return meta.deck[k] > 0; }).map(Number);
     const map = CQMap.generate({ cards: cards, areaId: areaId, seed: seed, ownedIds: ownedIds });
     return {
       areaId: areaId, seed: seed, map: map,
@@ -84,6 +93,7 @@
       lp: 10, maxLp: 15,
       gold: meta.gold,
       deck: Object.assign({}, meta.deck),
+      bookAdd: {},
       rentals: [],
       gainedCards: [],
       draftDone: 0, draftPending: null,
@@ -91,14 +101,41 @@
     };
   }
 
+  /** ラン中の入手（戦利品・宝箱・購入・？イベント）。デッキに空きがあればデッキへ、
+   * 入らなければ（合計40・同種3枚制限）本行き＝run.bookAdd に貯める。どちらでも必ず貰える。
+   * WP7で「その場でデッキ／本を選ぶ画面」に置き換わるまでの自動振り分け。
+   * 戻り値は実際に入った先（'deck'|'book'）。 */
+  function gainCard(run, id) {
+    if (+id === BLANK) return null;
+    if (!run.bookAdd) run.bookAdd = {};   /* 旧形式の cq_run（中断中のラン）を再開した場合の保険 */
+    /* レンタルは空白の枠を埋めているので、空き枠の計算に数える（draftTarget と同じ理由） */
+    const rentals = run.rentals ? run.rentals.length : 0;
+    const hasSlot = CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE;
+    if (hasSlot && CQCollection.canAddToDeck(run.deck, id).ok) {
+      run.deck[id] = (run.deck[id] || 0) + 1;
+      run.gainedCards.push(id);
+      return 'deck';
+    }
+    run.bookAdd[id] = (run.bookAdd[id] || 0) + 1;
+    run.gainedCards.push(id);
+    return 'book';
+  }
+
   /* ---- おまかせドラフト（§1.2） -------------------------------------------- */
 
-  /** 今すぐ置き換えるとしたら、どのカードが対象になるか（空白優先→定価の低い順） */
+  /** 今すぐ置き換えるとしたら、どのカードが対象になるか（空白優先→定価の低い順）。
+   * M6.6 WP3：空白は実体として持たなくなった（40枚に満たない分が空白）ので、
+   * デッキ合計＋既に借りているレンタルが40未満なら空白が対象
+   * （レンタルは空白の枠を埋めるカードなので、空きの計算に数えないと40枚を超えてしまう）。
+   * 旧セーブに残る実体の空白(180)も同様に扱う。 */
   function draftTarget(run, cards) {
     if ((run.deck[BLANK] || 0) > 0) return BLANK;
+    const rentals = run.rentals ? run.rentals.length : 0;
+    if (CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE) return BLANK;
     let best = null;
     Object.keys(run.deck).forEach(function (k) {
       const id = +k;
+      if (id === BLANK) return;
       if ((run.deck[id] || 0) <= 0) return;
       const p = cards[id] ? cards[id].p : 0;
       if (best === null || p < (cards[best] ? cards[best].p : Infinity)) best = id;
@@ -123,7 +160,15 @@
     if (!dp) return false;
     const name = function (id) { return cards && cards[id] ? cards[id].n : id; };
     if (pickedId !== dp.targetId) {
-      if ((run.deck[dp.targetId] || 0) > 0) run.deck[dp.targetId] -= 1;
+      if ((run.deck[dp.targetId] || 0) > 0) {
+        run.deck[dp.targetId] -= 1;
+        /* M6.6 WP3：実カードを押し出した場合は消滅ではなく本行き（settleでメタのbookへ）。
+         * 空白(180)が対象のときは仮想の空きが埋まるだけなので何も足さない。 */
+        if (dp.targetId !== BLANK) {
+          if (!run.bookAdd) run.bookAdd = {};
+          run.bookAdd[dp.targetId] = (run.bookAdd[dp.targetId] || 0) + 1;
+        }
+      }
       run.rentals.push(pickedId);
       run.log.push('おまかせドラフト：' + name(dp.targetId) + ' → ' + name(pickedId) + '（レンタル）');
     } else {
@@ -194,7 +239,7 @@
     n.cleared = true;
     if (M.winner === 'self') {
       const loot = (M.loot || []).slice();
-      loot.forEach(function (id) { run.deck[id] = (run.deck[id] || 0) + 1; run.gainedCards.push(id); });
+      loot.forEach(function (id) { gainCard(run, id); });
       const base = n.enemy ? n.enemy.price : (CQAreas.get(run.areaId).bossPriceMax * 0.5);
       const mult = n.strength === 'strong' ? 1.25 : n.strength === 'elite' ? 1.5 : n.type === 'boss' ? 2 : 1;
       const gold = Math.round(base * 0.12 * mult) + loot.length * 10;
@@ -215,7 +260,7 @@
     if (n.opened) return { gold: 0, cardId: null };
     n.opened = true; n.cleared = true;
     run.gold += n.gold;
-    if (n.cardId != null) { run.deck[n.cardId] = (run.deck[n.cardId] || 0) + 1; run.gainedCards.push(n.cardId); }
+    if (n.cardId != null) gainCard(run, n.cardId);
     run.log.push('宝箱：Ｇ+' + n.gold + (n.cardId != null ? '・カード獲得' : ''));
     return { gold: n.gold, cardId: n.cardId };
   }
@@ -238,8 +283,7 @@
     const cost = shopPrice(cards, cardId);
     if (run.gold < cost) return { ok: false, reason: 'Ｇが足りません' };
     run.gold -= cost;
-    run.deck[cardId] = (run.deck[cardId] || 0) + 1;
-    run.gainedCards.push(cardId);
+    gainCard(run, cardId);
     n.stock.splice(n.stock.indexOf(cardId), 1);
     run.log.push('購入：' + (cards[cardId] ? cards[cardId].n : cardId) + '（-' + cost + 'Ｇ）');
     return { ok: true, cost: cost };
@@ -283,8 +327,7 @@
     if (eff.lp) { run.lp = Math.max(0, Math.min(run.maxLp, run.lp + eff.lp)); res.lp = eff.lp; }
     if (eff.gold) { run.gold = Math.max(0, run.gold + eff.gold); res.gold = eff.gold; }
     if (eff.draftCard && n.cardId != null) {
-      run.deck[n.cardId] = (run.deck[n.cardId] || 0) + 1;
-      run.gainedCards.push(n.cardId);
+      gainCard(run, n.cardId);
       res.cardId = n.cardId;
     }
     run.log.push('？：' + ev.text);
@@ -296,10 +339,22 @@
 
   function retire(run) { run.outcome = 'retire'; }
 
-  /** ランを終えて meta（永続所持データ）に反映する。レンタルは消滅（返却）＝ deck には残っているが
-   * run.deck 自体に混ぜていないので、そもそも meta に混入しない。 */
+  /** ランを終えて meta（永続所持データ）に反映する（M6.6 WP3：移動モデル）。
+   *   deck   … run.deck の複製が保存デッキになる（次のランへそのまま持ち越し）。
+   *            ラン中の売却で減った分は本に戻らない＝カードが世界から消える（§2-8）。
+   *            旧セーブ由来の実体の空白(180)はここで捨てる（空白は実体で持たない）。
+   *   book   … ラン中に本行きになった分（run.bookAdd）を加算。
+   *   known  … ラン中に入手した種類（run.gainedCards）を登録。
+   *            レンタル（run.rentals）は登録しない＝返却されて記憶にも残らない。 */
   function settle(run, meta) {
+    CQCollection.ensure(meta);
     meta.deck = Object.assign({}, run.deck);
+    delete meta.deck[BLANK];
+    Object.keys(meta.deck).forEach(function (k) { if (meta.deck[k] <= 0) delete meta.deck[k]; });
+    Object.keys(run.bookAdd || {}).forEach(function (k) {
+      if (run.bookAdd[k] > 0) meta.book[k] = (meta.book[k] || 0) + run.bookAdd[k];
+    });
+    (run.gainedCards || []).forEach(function (id) { CQCollection.registerKnown(meta, id); });
     meta.gold = run.gold;
     if (run.outcome === 'win' && meta.cleared.indexOf(run.areaId) < 0) meta.cleared.push(run.areaId);
     return meta;
@@ -307,7 +362,7 @@
 
   const api = {
     DECK_SIZE, BLANK, buildBattleDeck, buildBossDeck, buildPlayerDeck,
-    start, beginDraftRound, applyDraft, draftTarget, depart,
+    start, gainCard, beginDraftRound, applyDraft, draftTarget, depart,
     node, currentNode, choices, advance,
     battleSeed, battleSetup, reportBattle,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,

@@ -29,6 +29,7 @@ const CQAreas = require(path.join(root, 'js/run/areas.js'));
 const CQMap = require(path.join(root, 'js/run/map.js'));
 const CQRun = require(path.join(root, 'js/run/run.js'));
 const CQSave = require(path.join(root, 'js/meta/save.js'));
+const CQCollection = require(path.join(root, 'js/meta/collection.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
 /* ---- ミニ・テストハーネス ---- */
@@ -2831,11 +2832,11 @@ t('戦闘結果の反映：勝利で戦利品・Ｇが入り、ＬＰが引き�
   CQRun.depart(run);
   const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
   const fakeM = { winner: 'self', loot: [8, 8], players: { self: { lp: 7 } } };
-  const before = Object.assign({}, run.deck);
   const res = CQRun.reportBattle(run, n, fakeM);
   eq(res.win, true, '勝利フラグ');
   eq(n.cleared, true, 'マスが解決済みになる');
-  eq(run.deck[8], (before[8] || 0) + 2, '戦利品が所持デッキに加わる');
+  /* M6.6 WP3：スターターのデッキは40枚ちょうど＝満杯なので、戦利品は本行き（run.bookAdd）になる */
+  eq(run.bookAdd[8], 2, '満杯デッキでは戦利品は本行きになる');
   eq(run.gainedCards, [8, 8], '獲得リストにも入る');
   eq(run.lp, 7, 'ＬＰが戦闘後の値に更新される');
   eq(run.gold > 0, true, 'Ｇが増える');
@@ -2876,7 +2877,7 @@ t('宝箱：開封は1回だけ、Ｇとカードが入る', () => {
   const r1 = CQRun.openChest(run, n);
   eq(r1.gold, 100, '初回はゴールドが返る');
   eq(run.gold, before + 100, 'Ｇが増える');
-  eq(run.deck[41], 1, 'カードが入る');
+  eq(run.bookAdd[41], 1, 'カードが入る（満杯デッキでは本行き：M6.6 WP3）');
   const r2 = CQRun.openChest(run, n);
   eq(r2.gold, 0, '2回目は何も起きない');
   eq(run.gold, before + 100, 'Ｇは増えない');
@@ -2897,10 +2898,9 @@ t('ショップ：購入・回復・霧払いはＧが無いと断られる', ()
   eq(CQRun.shopHeal(run, n).ok, false, 'Ｇ不足で回復できない');
   eq(CQRun.shopClearFog(run, n).ok, false, 'Ｇ不足で霧払いできない');
   run.gold = 99999;
-  const before = Object.assign({}, run.deck);
   const buy = CQRun.shopBuy(run, CARD_BY_ID, n, 41);
   eq(buy.ok, true, '購入できる');
-  eq(run.deck[41], (before[41] || 0) + 1, '購入したカードが所持デッキに入る');
+  eq(run.bookAdd[41], 1, '購入したカードが入る（満杯デッキでは本行き：M6.6 WP3）');
   eq(n.stock.indexOf(41), -1, '品揃えから消える');
 });
 
@@ -2945,6 +2945,180 @@ t('ラン終了の清算：クリアするとエリアが解放リストに入�
   eq(settled.cleared.indexOf('grassland') >= 0, true, '草原がクリア済みになる');
 });
 
+/* ================= M6.6 WP3：本とデッキの移動モデル（js/meta/collection.js） ================= */
+section('M6.6 WP3: 本とデッキの移動モデル');
+
+/** 移動モデルの検証用メタ：本にピッグマン(8)×5・憑依解除(101)×4、デッキは空 */
+function bookMeta() {
+  const m = { book: { 8: 5, 101: 4 }, deck: {}, known: [8, 101], gold: 100, cleared: [] };
+  return m;
+}
+
+t('持ち出し（moveToDeck）：本が減り、デッキが増える。総所持数は不変', () => {
+  const m = bookMeta();
+  const r = CQCollection.moveToDeck(m, 101, 2);
+  eq(r.ok, true, '移動できる');
+  eq(m.book[101], 2, '本が2枚減る');
+  eq(m.deck[101], 2, 'デッキが2枚増える');
+  eq((m.book[101] || 0) + (m.deck[101] || 0), 4, '総所持数は変わらない');
+});
+
+t('返却（moveToBook）：デッキが減り、本が増える。0になったキーは消える', () => {
+  const m = bookMeta();
+  CQCollection.moveToDeck(m, 101, 2);
+  const r = CQCollection.moveToBook(m, 101, 2);
+  eq(r.ok, true, '戻せる');
+  eq(m.deck[101], undefined, 'デッキから消える（0のキーは残さない）');
+  eq(m.book[101], 4, '本に全部戻る');
+});
+
+t('持ち出しの制限：本に無いカードは持ち出せない', () => {
+  const m = bookMeta();
+  eq(CQCollection.moveToDeck(m, 41, 1).ok, false, '本に無いものは動かせない');
+  CQCollection.moveToDeck(m, 101, 4);
+  eq(CQCollection.moveToDeck(m, 101, 1).ok, false, '本が0枚になったらもう持ち出せない');
+});
+
+t('持ち出しの制限：同種3枚まで。ピッグマン(8)だけ無制限', () => {
+  const m = bookMeta();
+  const r101 = CQCollection.moveToDeck(m, 101, 4);
+  eq(r101.ok, false, '4枚目で断られる');
+  eq(r101.moved, 3, '3枚までは移動済み');
+  eq(m.deck[101], 3, 'デッキには3枚');
+  const r8 = CQCollection.moveToDeck(m, 8, 5);
+  eq(r8.ok, true, 'ピッグマンは5枚全部持ち出せる');
+  eq(m.deck[8], 5, '同種上限の例外');
+});
+
+t('持ち出しの制限：デッキ合計40枚まで。blankCount は残りの空白数', () => {
+  const m = { book: { 8: 50 }, deck: {}, known: [8], gold: 0, cleared: [] };
+  const r = CQCollection.moveToDeck(m, 8, 50);
+  eq(r.ok, false, '41枚目で断られる');
+  eq(r.moved, 40, '40枚までは移動済み');
+  eq(CQCollection.deckTotal(m), 40, 'デッキ合計40');
+  eq(CQCollection.blankCount(m), 0, '空白0枚');
+  CQCollection.moveToBook(m, 8, 3);
+  eq(CQCollection.blankCount(m), 3, '3枚戻せば空白3枚');
+});
+
+t('入手（addCard）：knownに登録され、destに入る。デッキ満杯なら本へ回る', () => {
+  const m = { book: {}, deck: {}, known: [], gold: 0, cleared: [] };
+  const r1 = CQCollection.addCard(m, 41, 'book');
+  eq(r1.dest, 'book', '本行き');
+  eq(m.book[41], 1, '本に入る');
+  eq(m.known, [41], 'knownに登録');
+  const r2 = CQCollection.addCard(m, 41, 'deck');
+  eq(r2.dest, 'deck', 'デッキ行き');
+  eq(m.deck[41], 1, 'デッキに入る');
+  m.deck[41] = 3;                                  /* 同種上限まで埋める */
+  const r3 = CQCollection.addCard(m, 41, 'deck');
+  eq(r3.dest, 'book', '同種上限で入らなければ本へ回る（カードは必ず貰える）');
+  eq(CQCollection.addCard(m, 180, 'book').ok, false, '空白は実体を持たないので入手できない');
+});
+
+t('売却（sellFromDeck）：デッキから1枚消えてＧが増える。本は不変・knownに残る', () => {
+  const m = bookMeta();
+  CQCollection.moveToDeck(m, 101, 3);
+  const r = CQCollection.sellFromDeck(m, 101, 250);
+  eq(r.ok, true, '売れる');
+  eq(m.deck[101], 2, 'デッキから1枚消える');
+  eq(m.book[101], 1, '本にあるカードは影響を受けない');
+  eq(m.gold, 350, 'Ｇが増える');
+  eq(m.known.indexOf(101) >= 0, true, '売ってもknown（記憶データ）からは消えない');
+  eq(CQCollection.sellFromDeck(m, 8, 100).ok, false, 'デッキに無いカードは売れない');
+});
+
+t('旧セーブの移行：旧deckは全部bookへ・knownに種類を登録・deckは空・空白は捨てる', () => {
+  const st = mockStorage();
+  st.setItem('cq_meta', JSON.stringify({ deck: { 8: 2, 41: 1, 180: 3 }, gold: 700, cleared: ['grassland'] }));
+  const m = CQSave.loadMeta(st, [1]);
+  eq(m.book, { 8: 2, 41: 1 }, '旧deckがbookへ移る（空白180は捨てる）');
+  eq(m.deck, {}, '保存デッキは空になる');
+  eq(m.known.slice().sort((a, b) => a - b), [8, 41], '種類がknownに登録される');
+  eq(m.gold, 700, 'Ｇは維持');
+  eq(m.cleared, ['grassland'], 'クリア済みエリアは維持');
+});
+
+t('ラン中の入手：デッキに空きがあればデッキへ、満杯なら本行き（run.bookAdd）', () => {
+  const meta = { book: {}, deck: { 8: 1 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 21, meta);
+  eq(CQRun.gainCard(run, 41), 'deck', '空きがあればデッキへ');
+  eq(run.deck[41], 1, 'run.deckに入る');
+  run.deck[41] = 3;
+  eq(CQRun.gainCard(run, 41), 'book', '同種3枚を超える分は本行き');
+  eq(run.bookAdd[41], 1, 'run.bookAddに貯まる');
+  eq(run.gainedCards, [41, 41], 'どちらもgainedCardsには入る');
+});
+
+t('レンタルは空白の枠を埋める：空き枠の計算に数えられ、40枚を超えない', () => {
+  /* デッキ39枚＋レンタル1枚＝実質40枚。ここからのドラフト対象は空白ではなく実カードになり、
+   * 入手も本行きになる（40枚超過で戦闘デッキから黙って切り捨てられるのを防ぐ） */
+  const meta = { book: {}, deck: { 8: 39 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 27, meta);
+  run.rentals.push(70);
+  eq(CQRun.draftTarget(run, CARD_BY_ID) !== 180, true, '実質満杯ならドラフト対象は実カード');
+  eq(CQRun.gainCard(run, 41), 'book', '実質満杯なら入手は本行き');
+  const deck = CQRun.buildPlayerDeck(run);
+  eq(deck.length, CQRun.DECK_SIZE, '戦闘デッキは40枚ちょうど');
+  eq(deck.indexOf(70) >= 0, true, 'レンタルが戦闘デッキに必ず入っている');
+});
+
+t('清算（settle）：bookAddがbookへ・gainedCardsがknownへ・レンタルは登録されない', () => {
+  const meta = { book: {}, deck: { 8: 1 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 22, meta);
+  CQRun.gainCard(run, 41);            /* デッキ行き */
+  run.deck[41] = 3;
+  CQRun.gainCard(run, 41);            /* 本行き */
+  run.rentals.push(70);               /* レンタル */
+  CQRun.settle(run, meta);
+  eq(meta.deck[41], 3, '保存デッキはrun.deckの複製');
+  eq(meta.book[41], 1, '本行き分がbookへ加算される');
+  eq(meta.known.indexOf(41) >= 0, true, '入手した種類がknownに登録される');
+  eq(meta.known.indexOf(70), -1, 'レンタルはknownに登録されない（返却）');
+});
+
+t('清算（settle）：ラン中の売却は本に戻らない（カードが世界から消える）', () => {
+  /* WP9（換金所リメイク）の注意事項の先取り回帰テスト：初版の誤解（売ると本からも減る／
+   * 売った分が本に戻る）を防ぐ。売却はrun.deckから減らすだけ→settleでmeta.deckに複製→
+   * meta.bookは終始不変、が正しい。 */
+  const meta = { book: { 101: 2 }, deck: { 101: 3 }, known: [101], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 23, meta);
+  const r = CQRun.sell(run, CARD_BY_ID, 101);
+  eq(r.ok, true, '売れる');
+  CQRun.settle(run, meta);
+  eq(meta.deck[101], 2, '売った1枚はデッキから消えたまま');
+  eq(meta.book[101], 2, '本には戻らない・本からも減らない');
+  eq(meta.known.indexOf(101) >= 0, true, '売ってもknownには残る');
+});
+
+t('清算（settle）：旧セーブ由来の実体の空白(180)はmeta.deckに残さない', () => {
+  const meta = { book: {}, deck: { 8: 1 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 24, meta);
+  run.deck[180] = 2;                  /* 旧cq_runの再開を模す */
+  CQRun.settle(run, meta);
+  eq(meta.deck[180], undefined, '空白は実体で保存しない');
+});
+
+t('ドラフトの空白は仮想：デッキが40枚未満なら対象は空白。実カードの押し出しは本行き', () => {
+  const meta = { book: {}, deck: { 8: 3 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 25, meta);
+  const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+  eq(dp.targetId, 180, '40枚未満なら空白が対象（実体が無くても）');
+  CQRun.applyDraft(run, dp.options[0], CARD_BY_ID);
+  eq(run.deck[8], 3, '実カードは減らない');
+  eq(run.rentals.length, 1, 'レンタルが入る');
+  /* 満杯デッキ：押し出された実カードは消滅ではなく本行き */
+  const meta2 = freshMeta();          /* スターター40枚＝満杯 */
+  const run2 = CQRun.start(CARD_BY_ID, 'grassland', 26, meta2);
+  const dp2 = CQRun.beginDraftRound(run2, CARD_BY_ID);
+  eq(dp2.targetId !== 180, true, '満杯なら最安の実カードが対象');
+  const target = dp2.targetId;
+  const before = run2.deck[target];
+  CQRun.applyDraft(run2, dp2.options[0], CARD_BY_ID);
+  eq(run2.deck[target], before - 1, '押し出されてデッキから減る');
+  eq(run2.bookAdd[target], 1, '消滅ではなく本行きになる');
+});
+
 /* ================= M6 ラン：セーブ（js/meta/save.js） ================= */
 section('M6 ラン: セーブ');
 
@@ -2956,7 +3130,9 @@ function mockStorage() {
 t('cq_meta：無ければ既定デッキから初期化、あれば保存した内容を読む', () => {
   const st = mockStorage();
   const m1 = CQSave.loadMeta(st, [8, 8, 180]);
-  eq(m1.deck, { 8: 2, 180: 1 }, '既定デッキから多重集合を作る');
+  eq(m1.deck, { 8: 2 }, '既定デッキから多重集合を作る（空白180は実体で持たない：M6.6 WP3）');
+  eq(m1.book, {}, '本は空で始まる');
+  eq(m1.known, [8], '既定デッキの種類がknownに登録される');
   m1.gold = 777;
   CQSave.saveMeta(st, m1);
   const m2 = CQSave.loadMeta(st, [1]);
