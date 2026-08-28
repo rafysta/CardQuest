@@ -8,25 +8,90 @@
 'use strict';
 
 const RUN_STORAGE = (typeof localStorage !== 'undefined') ? localStorage : null;
-/* 見本デッキ（js/layout.js の SAMPLE_DECK と同じ）。cq_meta が無い最初の1回だけ、
- * 所持デッキの初期値として使う。 */
-const RUN_STARTER_DECK = [
-  8, 1, 3, 2, 5, 7, 9, 19, 20, 22, 31, 70, 58, 65, 66, 67, 71, 73, 10, 17,
-  151, 158, 167, 169, 171, 172, 173, 177, 178, 179, 181, 183, 199,
-  101, 104, 113, 117, 136, 143, 145
+/* スターターセット（実装計画追補M6.6 §2-2・2026-08-27確定。8種28枚）。cq_meta が無い
+ * 最初の1回だけ、本（book）の初期値として使う（WP1）。世界観上は「本に残った前の持ち主の
+ * 書き残しを受け継ぐ」として説明する（台本§5-1）。tests/run.js・tools/simulate-run.js にも
+ * 同じ内容がある（意図的な重複。値を変えるときは3箇所とも直すこと）。 */
+const STARTER_BOOK = [
+  8, 8, 8, 8, 8, 8, 8, 8, 8, 8,        /* ピッグマン (U) ×10 */
+  101, 101, 101,                       /* 憑依解除 (M) ×3 */
+  108, 108,                            /* 強制開放 (M) ×2 */
+  113, 113,                            /* 透視 (M) ×2 */
+  153, 153, 153,                       /* 魔力の盾 (S) ×3 */
+  165, 165,                            /* 孤高の戦士 (S) ×2 */
+  193, 193, 193,                       /* 赤の聖霊陣 (S) ×3 */
+  194, 194, 194                        /* 青の聖霊陣 (S) ×3 */
 ];
 
-const RUI = { view: 'areaSelect', run: null, meta: null, nodeId: null, draft: null, flash: '' };
+const RUI = {
+  view: 'areaSelect', run: null, meta: null, nodeId: null, draft: null, flash: '',
+  openingStep: 0, openingIntroDone: false, openingFadeOut: false
+};
 
 function runRoot() { return document.getElementById('run-root'); }
 function runSave() { if (RUI.run) CQSave.saveRun(RUN_STORAGE, RUI.run); }
 function runFlash(msg) { RUI.flash = msg; }
 
 function runInit() {
-  RUI.meta = CQSave.loadMeta(RUN_STORAGE, RUN_STARTER_DECK);
+  RUI.meta = CQSave.loadMeta(RUN_STORAGE, STARTER_BOOK);
   const saved = CQSave.loadRun(RUN_STORAGE);
   if (saved && !saved.outcome) { RUI.run = saved; RUI.view = 'map'; }
-  else { RUI.run = null; RUI.view = 'areaSelect'; }
+  else if (!RUI.meta.openingSeen) {
+    /* 初回起動のみ（M6.6 WP1）：目覚めの場面へ。§4 WP2「最初からやり直す」→リロード後もここを通る。 */
+    RUI.run = null; RUI.view = 'opening';
+    RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
+  } else { RUI.run = null; RUI.view = 'areaSelect'; }
+  runRender();
+}
+
+/* ================= 目覚めの場面（M6.6 WP1・初回起動のみ） =================
+ *
+ * 台本§5-1（本文の台本には未統合。M6.5c の lore.js ができるまではここに直書きする——
+ * §0-9進捗ログに申し送り済み）。フロー：暗転→ assets/ui/awakening.png がゆっくりフェードイン
+ * （.opening-scene の黒背景がそのまま「暗転」を兼ねる）→ 右側に amber_calm/down の肖像が
+ * 少し遅れてフェードイン → 台本10個をタップ送り → 最後の後にフェードアウト → エリア選択へ。
+ * 背景・肖像のフェードインは初回描画時だけ再生する（RUI.openingIntroDone で以後は
+ * intro-done クラスにより即表示に切り替え、タップのたびに要素を作り直しても再生し直さない）。 */
+
+const OPENING_SCRIPT = [
+  { tag: 'calm', text: '起きたか。' },
+  { tag: 'calm', text: '名も、来し方も、覚えていない。\nそういう顔をしている。' },
+  { tag: 'calm', text: '私はアンバー。\nこの本に憑いている。' },
+  { tag: 'calm', text: 'ここはソウルゲート。\n渡れなかった魂が溜まる島だ。' },
+  { tag: 'calm', text: '島の魂は、鎮めて書き留めれば呼べる。\nそれをする者を、記録者と呼ぶ。' },
+  { tag: 'down', text: '……お前も、しばらくは出られん。' },
+  { tag: 'calm', text: '自分が誰だったか知りたければ、\nまずは書け。' },
+  { tag: 'down', text: '白紙ばかりだが、書き残しが少しある。\n……前の持ち主の分だ。' },
+  { tag: 'calm', text: '受け継いでおけ。\n最初は、それで足りる。' },
+  { tag: 'calm', text: '行くぞ。今日の巡り先を選べ。' }
+];
+
+function renderOpening() {
+  const step = Math.min(RUI.openingStep || 0, OPENING_SCRIPT.length - 1);
+  const entry = OPENING_SCRIPT[step];
+  const portrait = entry.tag === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
+  const lines = String(entry.text).split('\n').map(esc).join('<br>');
+  const cls = 'opening-scene' + (RUI.openingIntroDone ? ' intro-done' : '') + (RUI.openingFadeOut ? ' fade-out' : '');
+  runRoot().innerHTML = `
+    <div class="${cls}">
+      <img class="opening-bg" src="assets/ui/awakening.png" alt="" draggable="false"
+        onerror="this.style.display='none'">
+      <button class="opening-skip" data-act="opening-skip">スキップ</button>
+      <img class="opening-portrait" src="${portrait}" alt="" draggable="false" onerror="this.remove()">
+      <div class="opening-bubble-wrap" data-act="opening-next">
+        <div class="bubble opening-bubble">${lines}</div>
+        <div class="opening-tap-hint">タップして進む</div>
+      </div>
+    </div>`;
+}
+
+/** 目覚めの場面を終える（最後まで見た／スキップした、どちらもここに来る）。
+ * openingSeen を立てて保存し、以後は起動しても出ない。 */
+function finishOpening() {
+  RUI.meta.openingSeen = true;
+  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+  RUI.view = 'areaSelect';
+  RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
   runRender();
 }
 
@@ -432,7 +497,8 @@ function runRender() {
   const el = runRoot();
   if (!el) return;
   if (RUI.run && RUI.run.outcome) RUI.view = 'result';
-  if (RUI.view === 'areaSelect') renderAreaSelect();
+  if (RUI.view === 'opening') renderOpening();
+  else if (RUI.view === 'areaSelect') renderAreaSelect();
   else if (RUI.view === 'start') renderStart();
   else if (RUI.view === 'map') renderMap();
   else if (RUI.view === 'node') renderNode();
@@ -484,6 +550,22 @@ if (typeof window !== 'undefined') window.onRunBattleOver = onRunBattleOver;
 function runAct(act, id) {
   const run = RUI.run;
   switch (act) {
+    case 'opening-next': {
+      RUI.openingIntroDone = true;
+      const next = (RUI.openingStep || 0) + 1;
+      if (next >= OPENING_SCRIPT.length) {
+        /* 最後の吹き出しの後はフェードアウトしてからエリア選択へ（§4 WP1のフロー） */
+        RUI.openingFadeOut = true;
+        runRender();
+        setTimeout(finishOpening, 620);
+        return;
+      }
+      RUI.openingStep = next;
+      return runRender();
+    }
+    case 'opening-skip':
+      /* 「押したら即マップ選択へ」（§4 WP1）。タップ送り終了時のフェードアウトは挟まない */
+      return finishOpening();
     case 'go-start': {
       const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
       RUI.run = CQRun.start(CARD_BY_ID, id, seed, RUI.meta);

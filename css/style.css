@@ -697,6 +697,45 @@ td.nm{font-weight:800}
 .run-hud-g,.run-hud-lp,.run-hud-area{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px 12px}
 .run-retire{margin-left:auto;background:#3a1414;border:1px solid #7a2b2b;color:#ffb4b4;border-radius:8px;padding:6px 12px}
 
+/* ---- 目覚めの場面（M6.6 WP1・初回起動のみ） ----
+ * #app（1280×800固定）の中に position:absolute で全面に置く。cq-confirm-overlay と同じ理由・
+ * 同じ直し方（#appのtransform:scaleと一緒に縮む）。地の黒背景がそのまま「暗転」を兼ねる。 */
+.opening-scene{
+  position:absolute;inset:0;z-index:900;overflow:hidden;background:#05070d;
+}
+.opening-bg{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 32%;
+  opacity:0;transform:scale(1.06);
+  animation:openingBgIn 2s ease-out forwards;
+}
+/* 初回描画のときだけフェードインを再生する。以後は同じ場面を何度も描き直す（タップ送りの
+ * たびに innerHTML を作り直す）ので、intro-done が付いたら最初から表示済みの状態にして
+ * 背景・肖像が毎回点滅するのを防ぐ（run-ui.js の RUI.openingIntroDone）。 */
+.opening-scene.intro-done .opening-bg{opacity:1;transform:scale(1);animation:none}
+@keyframes openingBgIn{ to{opacity:1;transform:scale(1)} }
+
+.opening-portrait{
+  position:absolute;right:9%;top:13%;width:300px;max-width:34%;pointer-events:none;
+  filter:drop-shadow(0 14px 26px rgba(0,0,0,.55));
+  opacity:0;
+  animation:openingPortraitIn 1s ease-out .9s forwards;
+}
+.opening-scene.intro-done .opening-portrait{opacity:1;animation:none}
+@keyframes openingPortraitIn{ to{opacity:1} }
+
+.opening-skip{
+  position:absolute;top:16px;right:16px;z-index:2;
+  background:rgba(5,8,15,.55);border:1px solid var(--line);color:var(--dim);
+  border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;
+}
+.opening-skip:hover{color:#fff;border-color:var(--accent)}
+
+.opening-bubble-wrap{position:absolute;left:6%;right:6%;bottom:8%;cursor:pointer;z-index:1}
+.opening-bubble{max-width:none;margin-bottom:6px;background:rgba(10,14,24,.9)}
+.opening-tap-hint{text-align:right;font-size:12px;color:var(--dim);padding-right:6px}
+
+.opening-scene.fade-out{opacity:0;transition:opacity .6s ease-in}
+
 /* ---- エリア選択（§6） ---- */
 .area-grid{display:flex;gap:18px;flex-wrap:wrap}
 .area-tile{

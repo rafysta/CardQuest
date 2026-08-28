@@ -30,11 +30,35 @@ const CQAreas = require(path.join(root, 'js/run/areas.js'));
 const CQMap = require(path.join(root, 'js/run/map.js'));
 const CQRun = require(path.join(root, 'js/run/run.js'));
 const CQSave = require(path.join(root, 'js/meta/save.js'));
+const CQCollection = require(path.join(root, 'js/meta/collection.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
-const STARTER = [8, 1, 3, 2, 5, 7, 9, 19, 20, 22, 31, 70, 58, 65, 66, 67, 71, 73, 10, 17,
-  151, 158, 167, 169, 171, 172, 173, 177, 178, 179, 181, 183, 199,
-  101, 104, 113, 117, 136, 143, 145];
+/* スターターセット（M6.6 §2-2確定。js/run-ui.js の STARTER_BOOK・tests/run.js と同じ内容）。
+ * WP1から「本」へ入って始まる。値を変えたら3箇所とも直すこと。 */
+const STARTER = [
+  8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+  101, 101, 101,
+  108, 108,
+  113, 113,
+  153, 153, 153,
+  165, 165,
+  193, 193, 193,
+  194, 194, 194
+];
+
+/** M6.6 WP1：スターターは「本」に入って始まり、デッキ編集画面（WP4）が無いとまだ持ち出せない。
+ * simulateはヘッドレスでUIを経由できないので、本にあるカードを（同種3枚・ピッグマン無制限の
+ * 制限内で）機械的にデッキへ持ち出してから出発する——本物のプレイヤー操作の代用。
+ * WP4が入ったら、そこでの実際の選択ロジックに置き換える。 */
+function autoCarryOut(meta) {
+  Object.keys(meta.book).forEach((k) => {
+    const id = +k;
+    let guard = meta.book[id] || 0;
+    while (guard-- > 0 && (meta.book[id] || 0) > 0) {
+      if (!CQCollection.moveToDeck(meta, id, 1).ok) break;
+    }
+  });
+}
 
 function mockStorage() {
   const m = {};
@@ -84,6 +108,7 @@ function checkRunInvariants(run, meta) {
 }
 
 function playRun(areaId, seed, meta, rng) {
+  autoCarryOut(meta);   /* M6.6 WP1：デッキ編集画面（WP4）の代用。出発前に本から持ち出す */
   const run = CQRun.start(CARD_BY_ID, areaId, seed, meta);
   for (let i = 0; i < 3; i++) {
     const dp = CQRun.beginDraftRound(run, CARD_BY_ID);

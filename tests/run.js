@@ -2778,7 +2778,14 @@ section('M6 ラン: 進行管理');
 const STARTER = [8, 1, 3, 2, 5, 7, 9, 19, 20, 22, 31, 70, 58, 65, 66, 67, 71, 73, 10, 17,
   151, 158, 167, 169, 171, 172, 173, 177, 178, 179, 181, 183, 199,
   101, 104, 113, 117, 136, 143, 145];
-function freshMeta() { return CQSave.loadMeta(null, STARTER); }
+/** テスト用：40枚ちょうど「デッキに入った」メタを作る（M6.6 WP3のgainCard／ドラフトの
+ * 押し出しロジックなど、デッキが満杯であることを前提に組んだテストの多くがこれを使う）。
+ * M6.6 WP1でCQSave.loadMetaの初期化は「本」へ入れる正式仕様になったため、
+ * ここでは loadMeta を経由せず直接デッキ入りのメタを組み立てる（本物の初回起動の挙動は
+ * 別途「本とデッキの移動モデル」節の「スターターセット」テストで検証する）。 */
+function freshMeta() {
+  return { book: {}, deck: CQSave.toDeckCounts(STARTER), known: STARTER.slice(), gold: 500, cleared: [], openingSeen: true };
+}
 
 t('ラン開始：マップと初期状態が揃う', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 123, freshMeta());
@@ -3037,6 +3044,36 @@ t('旧セーブの移行：旧deckは全部bookへ・knownに種類を登録・d
   eq(m.known.slice().sort((a, b) => a - b), [8, 41], '種類がknownに登録される');
   eq(m.gold, 700, 'Ｇは維持');
   eq(m.cleared, ['grassland'], 'クリア済みエリアは維持');
+  eq(m.openingSeen, true, '旧形式からの移行＝既存プレイヤーなので目覚めは出さない（M6.6 WP1）');
+});
+
+t('新形式でもopeningSeenが無い既存セーブ（WP3時代）は「見た」扱いにする', () => {
+  const st = mockStorage();
+  st.setItem('cq_meta', JSON.stringify({ book: {}, deck: { 8: 5 }, known: [8], gold: 500, cleared: [] }));
+  const m = CQSave.loadMeta(st, [1]);
+  eq(m.openingSeen, true, 'openingSeenが無い新形式セーブは目覚めを出さない（既存データがある以上）');
+});
+
+t('スターターセット（M6.6 §2-2確定）：8種28枚が本へ・デッキ空・Ｇ0で始まる '
+  + '（js/run-ui.js の STARTER_BOOK と同じ内容。値を変えたら3箇所とも直すこと）', () => {
+  const STARTER_BOOK = [
+    8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+    101, 101, 101,
+    108, 108,
+    113, 113,
+    153, 153, 153,
+    165, 165,
+    193, 193, 193,
+    194, 194, 194
+  ];
+  eq(STARTER_BOOK.length, 28, 'スターターは28枚');
+  const st = mockStorage();
+  const m = CQSave.loadMeta(st, STARTER_BOOK);
+  eq(m.book, { 8: 10, 101: 3, 108: 2, 113: 2, 153: 3, 165: 2, 193: 3, 194: 3 }, '本に8種28枚が入る');
+  eq(m.deck, {}, 'デッキは空で始まる（WP4のデッキ編集で持ち出すまで）');
+  eq(m.known.slice().sort((a, b) => a - b), [8, 101, 108, 113, 153, 165, 193, 194], '8種がknownに登録される');
+  eq(m.gold, 0, 'Ｇは0で始まる');
+  eq(m.openingSeen, false, '目覚めは未視聴で始まる');
 });
 
 t('ラン中の入手：デッキに空きがあればデッキへ、満杯なら本行き（run.bookAdd）', () => {
@@ -3130,9 +3167,11 @@ function mockStorage() {
 t('cq_meta：無ければ既定デッキから初期化、あれば保存した内容を読む', () => {
   const st = mockStorage();
   const m1 = CQSave.loadMeta(st, [8, 8, 180]);
-  eq(m1.deck, { 8: 2 }, '既定デッキから多重集合を作る（空白180は実体で持たない：M6.6 WP3）');
-  eq(m1.book, {}, '本は空で始まる');
+  eq(m1.book, { 8: 2 }, '既定デッキ（180=空白は無視）が本へ入る（M6.6 WP1で正式仕様に変更）');
+  eq(m1.deck, {}, 'デッキは空で始まる');
   eq(m1.known, [8], '既定デッキの種類がknownに登録される');
+  eq(m1.gold, 0, 'Ｇは0で始まる（M6.6 WP1）');
+  eq(m1.openingSeen, false, '目覚めは未視聴で始まる');
   m1.gold = 777;
   CQSave.saveMeta(st, m1);
   const m2 = CQSave.loadMeta(st, [1]);
@@ -3152,17 +3191,18 @@ t('cq_meta：clearMetaで消える（M6.6 WP2：最初からやり直す）', ()
   const st = mockStorage();
   const m1 = CQSave.loadMeta(st, [8, 8, 180]);
   CQSave.saveMeta(st, m1);
-  eq(CQSave.loadMeta(st, [1]).gold, 500, '保存直後は既定デッキ無視で読み戻る');
+  eq(CQSave.loadMeta(st, [1]).gold, 0, '保存直後は既定デッキ無視で読み戻る（Ｇも保存値のまま）');
   CQSave.clearMeta(st);
   const m2 = CQSave.loadMeta(st, [1]);
-  eq(m2.deck, { 1: 1 }, 'clearMeta後はdefaultDeckIdsから作り直される');
+  eq(m2.book, { 1: 1 }, 'clearMeta後はdefaultDeckIdsから作り直される（本へ入る）');
+  eq(m2.openingSeen, false, 'リセット後は目覚めがまた出る');
 });
 
 t('壊れたcq_metaは初期化して復旧する', () => {
   const st = mockStorage();
   st.setItem('cq_meta', '{not json');
   const m = CQSave.loadMeta(st, [8]);
-  eq(m.deck, { 8: 1 }, '壊れていても既定デッキから復旧する');
+  eq(m.book, { 8: 1 }, '壊れていても既定デッキから復旧する（本へ入る）');
 });
 
 /* ================= 結果 ================= */
