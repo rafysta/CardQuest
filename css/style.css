@@ -767,18 +767,36 @@ td.nm{font-weight:800}
 }
 .bubble::before{content:'';position:absolute;left:28px;top:-9px;border:9px solid transparent;border-bottom-color:var(--panel2)}
 
-/* 開始マスのアンバー（M6.6 WP4）。目覚めの場面（.opening-scene）と同じ肖像＋吹き出しの
- * 組み方だが、あちらは全画面の一枚絵の上に置くのに対し、こちらはラン画面の中に収める。 */
-.amber-scene{position:relative;flex:1;min-height:0;display:flex;align-items:flex-end;padding-bottom:6%}
-.amber-portrait{
-  position:absolute;right:8%;top:4%;width:280px;max-width:32%;pointer-events:none;
-  filter:drop-shadow(0 14px 26px rgba(0,0,0,.55));
-  -webkit-mask-image:linear-gradient(to bottom, #000 65%, transparent 96%);
-  mask-image:linear-gradient(to bottom, #000 65%, transparent 96%);
-  animation:openingPortraitIn .5s ease-out forwards;opacity:0;
+/* 開始マスのアンバー（M6.6 WP4）。2026-08-28 本人指定で、暗転ではなく**マップの上に重ねる**。
+ * 吹き出しはマップ上部に半透明で置き、下半分に並ぶマス（y=415〜675）を隠さない。
+ * マップ仕様書§4.3「吹き出しは共通部品」に沿う作りで、M6.5cで❓イベント等にも流用できる。 */
+.amber-overlay{
+  position:absolute;inset:0;z-index:10;cursor:pointer;
+  display:flex;flex-direction:column;align-items:stretch;
+  padding:16px 20px;
 }
-.amber-bubble-wrap{position:relative;z-index:1;width:100%;cursor:pointer}
-.amber-bubble{max-width:none;margin-bottom:6px;background:rgba(10,14,24,.92)}
+.amber-skip{
+  position:absolute;top:14px;right:16px;z-index:2;
+  background:rgba(5,8,15,.62);border:1px solid var(--line);color:var(--dim);
+  border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;
+}
+.amber-skip:hover{color:#fff;border-color:var(--accent)}
+.amber-row{display:flex;align-items:flex-start;gap:14px;max-width:900px}
+.amber-face{
+  width:96px;height:96px;flex:none;border-radius:50%;object-fit:cover;object-position:center 12%;
+  border:2px solid rgba(190,205,235,.35);
+  box-shadow:0 8px 20px rgba(0,0,0,.6);
+  background:rgba(10,14,24,.7);
+}
+/* 半透明の吹き出し（背景のマップが透けて見える程度に留める） */
+.amber-bubble{
+  flex:1;min-width:0;position:relative;
+  background:rgba(8,12,22,.74);border:1px solid rgba(190,205,235,.28);border-radius:14px;
+  padding:14px 18px;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
+}
+.amber-lines{font-size:17px;line-height:1.7}
+.amber-tap-hint{text-align:right;font-size:12px;color:var(--dim);margin-top:6px}
 
 /* ---- おまかせドラフト（§4 WP4：カードは画面高さの約40%・全情報を出す） ---- */
 .draft-head{font-size:17px;margin:4px 0 12px}
@@ -807,31 +825,71 @@ td.nm{font-weight:800}
 /* ---- 持ち出し＝デッキ編集（§4 WP4-2） ----
  * 既存のデッキ編集画面（screen-deck）の見た目を流用しつつ、こちらは「本↔デッキの移動」。
  * 1280×800の中で表が最大限スクロールできるよう、上の帯を固定して残りを表に渡す。 */
-.carry-head{display:flex;align-items:center;gap:16px;margin-bottom:12px;flex:none;min-height:44px}
+.carry-head{display:flex;align-items:center;gap:16px;margin-bottom:10px;flex:none;min-height:44px}
 .carry-title{font-size:20px;font-weight:800;flex:none}
-.carry-counts{display:flex;gap:14px;align-items:baseline;margin-left:auto;font-size:14px}
-.carry-counts b{font-size:18px}
+.carry-counts{display:flex;gap:14px;align-items:baseline;margin-left:auto;font-size:14px;color:var(--dim)}
+.carry-counts b{font-size:18px;color:var(--fg)}
 .carry-blank{color:var(--dim)}
 .carry-done{flex:none;white-space:nowrap;padding:10px 18px;font-size:15px}
-.carry-tabs{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex:none}
+/* 左＝表／右＝カードの詳細（screen-deck の .deck-wrap と同じ二段組み） */
+.carry-wrap{flex:1;min-height:0;display:flex;gap:14px}
+.carry-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.carry-detail{
+  width:300px;flex:none;overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;
+}
+.carry-detail-empty{color:var(--dim);font-size:13px;padding:20px 4px;text-align:center}
+.carry-detail-counts{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;
+  margin:10px 0;font-size:13px;color:var(--dim)}
+.carry-detail-counts b{font-size:17px;color:var(--fg)}
+.carry-detail-note{font-size:11px}
+
+.carry-tabs{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex:none}
 /* .only-btn は本来デッキ編集画面の表ヘッダ内で使う部品で width:100% が入っている。
  * ここでは横並びのボタンとして使うので、幅を内容なりに戻す。 */
 .carry-tabs .dtab{flex:none}
 .carry-tabs .only-btn{flex:none;width:auto;padding:0 16px}
 .carry-hint{color:var(--dim);font-size:12px;margin-left:auto;white-space:nowrap}
+.carry-colbar{margin-bottom:6px;flex:none}
 .carry-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:12px}
 .carry-table{width:100%;border-collapse:collapse;font-size:14px}
 .carry-table thead th{
   position:sticky;top:0;z-index:1;background:var(--panel);
-  text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--dim);
+  text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--dim);
 }
-.carry-table td{padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
+.carry-table thead tr.filters th{top:34px;padding:4px 8px 6px}
+.carry-table thead th.sortable{cursor:pointer;user-select:none}
+.carry-table thead th.sortable:hover{color:#fff}
+.carry-table thead th .arrow{margin-left:4px;color:var(--accent)}
+.carry-table td{padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
+.carry-table tbody tr{cursor:pointer}
+.carry-table tbody tr:hover{background:rgba(255,255,255,.05)}
 .carry-table tr.in-deck{background:rgba(250,204,21,.07)}
-.carry-table .num{text-align:right;width:70px}
+.carry-table tr.in-deck:hover{background:rgba(250,204,21,.12)}
+.carry-table tr.on{outline:2px solid var(--accent);outline-offset:-2px}
+/* 数字の列は右寄せ。見出しも同じ側に寄せないと、数字と見出しがズレて読めない
+ * （2026-08-28 本人指摘：「デッキ」の見出しが本の数字寄りにあってズレていた）。 */
+.carry-table .num{text-align:right}
+.carry-table thead th.num{text-align:right}
 .carry-table .ef-cell{color:var(--dim);font-size:12px}
 /* 本が0＝もう持ち出せない（デッキに全部出ているか、売り切った）。数字を落として気づかせる */
 .carry-book.zero{color:#5a6478}
+.carry-deck.has{color:var(--accent);font-weight:800}
 .carry-empty{color:var(--dim);text-align:center;padding:28px 0}
+/* 本とデッキのあいだの移動ボタン。◀＝デッキ→本／▶＝本→デッキ（向きがそのまま意味になる） */
+.carry-table th.carry-move,.carry-table td.carry-move{padding-left:2px;padding-right:2px}
+.carry-arrows{display:flex;gap:4px;justify-content:center}
+.carry-arrow{
+  width:40px;height:28px;border-radius:7px;font-size:15px;line-height:1;
+  background:var(--panel2);border:1px solid var(--line);color:#cfe0f5;cursor:pointer;
+}
+.carry-arrow:hover:not(:disabled){border-color:var(--accent);color:#fff;background:#1c2740}
+.carry-arrow:disabled{opacity:.28;cursor:default}
+.carry-table .rng{display:flex;gap:4px}
+.carry-table .filters input{
+  width:100%;min-width:0;background:#0c1526;border:1px solid var(--line);color:var(--fg);
+  border-radius:6px;padding:3px 6px;font-size:12px;
+}
 
 /* ---- 出発の明転（§4 WP4「暗転→明転のtransition」） ----
  * ドラフトを終えた瞬間にマップを黒で覆った状態から始め、0.6秒で透明にする。 */

@@ -31,7 +31,12 @@ const RUI = {
   /* 開始マスの段階（M6.6 WP4）：'guide'（案内）→'carry'（持ち出し）→'draft'（ドラフト）。
    * guide/carry の作業用の状態もここに持つ（cq_run には保存しない＝再開時は組み直す）。 */
   startStage: null, guide: null, guideStep: 0,
-  carryTab: 'U', carryOnly: false,
+  /* 持ち出し画面の表の状態（タブ・並べ替え・絞り込み・表示列・選択中のカード）。
+   * 表示列は screen-deck と同じくグループ（U／MS）ごとに持つ。 */
+  carryTab: 'U', carryOnly: false, carrySel: null,
+  carrySort: { key: 'p', asc: true },
+  carryFilters: {},
+  carryShown: { U: {}, MS: {} },
   /* 出発の明転を1度だけ再生するためのフラグ（§4 WP4「暗転→明転のtransition」） */
   mapFadeIn: false
 };
@@ -43,10 +48,23 @@ function runFlash(msg) { RUI.flash = msg; }
 /** 開始マスに入る（または中断からそこへ戻る）ときの段階を決める（M6.6 WP4）。
  * fresh＝ラン開始直後なら案内から。再開のときは、案内は見た後なので持ち出しから
  * （ドラフトが始まっていればドラフトから）再開する。 */
+/** 持ち出し画面の表の状態を初期化する（表示列は各列定義の def どおりに戻す）。 */
+function carryResetTable() {
+  RUI.carryTab = 'U';
+  RUI.carryOnly = false;
+  RUI.carrySel = null;
+  RUI.carrySort = { key: 'p', asc: true };
+  RUI.carryFilters = {};
+  RUI.carryShown = { U: {}, MS: {} };
+  Object.keys(CARRY_COLS).forEach(function (g) {
+    CARRY_COLS[g].forEach(function (c) { RUI.carryShown[g][c.k] = c.def; });
+  });
+}
+
 function enterStartNode(fresh) {
   const run = RUI.run;
   RUI.guideStep = 0;
-  RUI.carryTab = 'U'; RUI.carryOnly = false;
+  carryResetTable();
   if (fresh) {
     RUI.guide = buildStartGuide(run, RUI.meta);
     RUI.startStage = RUI.guide.length ? 'guide' : 'carry';
@@ -185,17 +203,23 @@ function buildStartGuide(run, meta) {
   return out;
 }
 
-/** アンバーの吹き出し1つ（肖像＋本文＋タップ送り）。目覚めの場面と同じ見た目の共通部品。 */
+/** アンバーの吹き出し1つ（肖像＋本文＋タップ送り）。マップの上に重ねる前提の部品。
+ * 2026-08-28 本人指定：暗転ではなく**マップを出したまま、上部に半透明の吹き出し**を出す。
+ * 「道は二つに分かれる」といった案内が、その場の実際のマップを見ながら読める。
+ * ※ マップ仕様書§4.3の「吹き出しは共通部品」に沿った作り。M6.5cで❓イベント・敵/NPCの
+ *   一言にも同じものを使えるよう、face（calm/down）とタップ送りだけを引数にしてある。 */
 function amberBubbleHTML(bubble, opts) {
   const o = opts || {};
   const portrait = bubble.face === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
   const lines = bubble.lines.map(esc).join('<br>');
-  return `<div class="amber-scene">
-    <img class="amber-portrait" src="${portrait}" alt="" draggable="false" onerror="this.remove()">
-    ${o.skipAct ? `<button class="opening-skip" data-act="${o.skipAct}">スキップ</button>` : ''}
-    <div class="amber-bubble-wrap" ${o.nextAct ? `data-act="${o.nextAct}"` : ''}>
-      <div class="bubble amber-bubble">${lines}</div>
-      ${o.nextAct ? '<div class="opening-tap-hint">タップして進む</div>' : ''}
+  return `<div class="amber-overlay" ${o.nextAct ? `data-act="${o.nextAct}"` : ''}>
+    ${o.skipAct ? `<button class="amber-skip" data-act="${o.skipAct}">スキップ</button>` : ''}
+    <div class="amber-row">
+      <img class="amber-face" src="${portrait}" alt="" draggable="false" onerror="this.remove()">
+      <div class="amber-bubble">
+        <div class="amber-lines">${lines}</div>
+        ${o.nextAct ? '<div class="amber-tap-hint">タップして進む</div>' : ''}
+      </div>
     </div>
   </div>`;
 }
@@ -204,8 +228,9 @@ function renderStartGuide() {
   const script = RUI.guide || [];
   const b = script[Math.min(RUI.guideStep || 0, script.length - 1)];
   if (!b) return finishStartGuide();
-  runRoot().innerHTML = startHudHTML(RUI.run)
-    + amberBubbleHTML(b, { nextAct: 'guide-next', skipAct: 'guide-skip' });
+  /* 案内中のマップは「見せるだけ」＝マスは押せない（まだ出発していないので選べない）。 */
+  runRoot().innerHTML = mapHudHTML(RUI.run, false)
+    + mapBoardHTML(RUI.run, false, amberBubbleHTML(b, { nextAct: 'guide-next', skipAct: 'guide-skip' }));
 }
 
 /** 案内を終えて②持ち出しへ。ヒントは見せた時点で立てる（二度と出さない・台本§5）。 */
@@ -242,62 +267,220 @@ const CARRY_TABS = [
   { t: 'S', label: '✚ 技能' }
 ];
 
+/* 列の定義（デッキ編集画面 screen-deck の ALL_COLS と同じ考え方）。
+ *   fixed … 消せない列（カード名・本・移動・デッキ）
+ *   def   … 既定で表示する
+ *   type  … text＝含む文字で絞る／range＝≧≦で絞る／move＝◀▶ボタン（並べ替え・絞り込みなし）
+ * モンスターと魔法・技能で持っている項目が違うので、2つのグループに分ける。 */
+const CARRY_COLS = {
+  U: [
+    { k: 'n', label: 'カード名', w: 200, type: 'text', fixed: true, def: true },
+    { k: 'a', label: '攻撃力', w: 84, type: 'range', def: true },
+    { k: 'd', label: '防御力', w: 84, type: 'range', def: true },
+    { k: 'ch', label: 'ＣＨ数', w: 78, type: 'range', def: false },
+    { k: 'lv', label: '召還Ｌｖ', w: 84, type: 'range', def: false },
+    { k: 'e', label: '特殊能力', w: 0, type: 'text', def: true },
+    { k: 'p', label: '価格', w: 88, type: 'range', def: false },
+    { k: 'book', label: '本', w: 62, type: 'range', fixed: true, def: true },
+    { k: 'move', label: '', w: 96, type: 'move', fixed: true, def: true },
+    { k: 'deck', label: 'デッキ', w: 70, type: 'range', fixed: true, def: true }
+  ],
+  MS: [
+    { k: 'n', label: 'カード名', w: 200, type: 'text', fixed: true, def: true },
+    { k: 'e', label: '効果', w: 0, type: 'text', def: true },
+    { k: 'p', label: '価格', w: 96, type: 'range', def: false },
+    { k: 'book', label: '本', w: 62, type: 'range', fixed: true, def: true },
+    { k: 'move', label: '', w: 96, type: 'move', fixed: true, def: true },
+    { k: 'deck', label: 'デッキ', w: 70, type: 'range', fixed: true, def: true }
+  ]
+};
+
+function carryGrp() { return (RUI.carryTab === 'U') ? 'U' : 'MS'; }
+function carryCols() {
+  const g = carryGrp();
+  return CARRY_COLS[g].filter(function (c) { return RUI.carryShown[g][c.k]; });
+}
+
+/** 表に出す行。既知のカードだけ・所持0でも出す（§4 WP4-2）。
+ * 本/デッキの枚数は行ごとの派生値なので、絞り込み・並べ替えのためにここで載せておく。 */
 function carryRows() {
   const meta = RUI.meta;
-  const known = (meta.known || []).slice();
-  return known
+  const g = carryGrp();
+  const f = RUI.carryFilters;
+  const rows = (meta.known || [])
     .map(function (id) { return CARD_BY_ID[id]; })
     .filter(function (c) { return c && c.t === (RUI.carryTab || 'U'); })
-    .filter(function (c) {
-      if (!RUI.carryOnly) return true;
-      return (meta.deck[c.id] || 0) > 0;        /* 「デッキに入れたものだけ」表示 */
+    .map(function (c) {
+      const o = Object.create(c);
+      o.book = meta.book[c.id] || 0;
+      o.deck = meta.deck[c.id] || 0;
+      return o;
     })
-    .sort(function (a, b) { return (a.p || 0) - (b.p || 0) || a.id - b.id; });
+    .filter(function (c) {
+      if (RUI.carryOnly && c.deck <= 0) return false;
+      for (let i = 0; i < CARRY_COLS[g].length; i++) {
+        const col = CARRY_COLS[g][i];
+        if (col.type === 'text' && f[col.k]) {
+          if (String(c[col.k] || '').indexOf(f[col.k]) < 0) return false;
+        }
+        if (col.type === 'range') {
+          const mn = parseFloat(f[col.k + '_min']), mx = parseFloat(f[col.k + '_max']);
+          const v = Number(c[col.k]);
+          if (!isNaN(mn) && !(v >= mn)) return false;
+          if (!isNaN(mx) && !(v <= mx)) return false;
+        }
+      }
+      return true;
+    });
+  const key = RUI.carrySort.key, asc = RUI.carrySort.asc;
+  rows.sort(function (x, y) {
+    const a = x[key], b = y[key];
+    const r = (typeof a === 'number' && typeof b === 'number')
+      ? a - b : String(a == null ? '' : a).localeCompare(String(b == null ? '' : b), 'ja');
+    return (asc ? r : -r) || (x.id - y.id);
+  });
+  return rows;
+}
+
+/** 1行分のセル。◀＝デッキ→本（置いていく）／▶＝本→デッキ（持ち出す）。
+ * 2026-08-28 本人指定：−＋ではなく三角にし、本とデッキの数字の**あいだ**に置いて
+ * 「どちらへ動くか」が向きで分かるようにする。 */
+function carryRowHTML(c, cols) {
+  const meta = RUI.meta;
+  const canAdd = c.book > 0 && CQCollection.canAddToDeck(meta.deck, c.id).ok;
+  const cells = cols.map(function (col) {
+    if (col.k === 'move') {
+      return `<td class="carry-move"><div class="carry-arrows">
+        <button class="carry-arrow" data-act="carry-to-book" data-id="${c.id}" ${c.deck === 0 ? 'disabled' : ''}
+          title="デッキから本へ戻す">◀</button>
+        <button class="carry-arrow" data-act="carry-to-deck" data-id="${c.id}" ${canAdd ? '' : 'disabled'}
+          title="本からデッキへ持ち出す">▶</button>
+      </div></td>`;
+    }
+    if (col.k === 'book') return `<td class="num carry-book ${c.book === 0 ? 'zero' : ''}">${c.book}</td>`;
+    if (col.k === 'deck') return `<td class="num carry-deck ${c.deck > 0 ? 'has' : ''}">${c.deck}</td>`;
+    if (col.k === 'n') return `<td class="nm"><span class="chip ${c.t}">${TYPE_MARK[c.t]}</span>${esc(c.n)}</td>`;
+    if (col.k === 'e') return `<td class="ef-cell">${esc(c.e || '')}</td>`;
+    if (col.type === 'range') return `<td class="num">${c[col.k] == null ? '' : c[col.k]}</td>`;
+    return `<td>${esc(String(c[col.k] == null ? '' : c[col.k]))}</td>`;
+  }).join('');
+  return `<tr class="${c.deck > 0 ? 'in-deck' : ''} ${c.id === RUI.carrySel ? 'on' : ''}"
+    data-act="carry-pick" data-id="${c.id}">${cells}</tr>`;
+}
+
+/** 右の詳細ペイン（screen-deck の .detail と同じ体裁）。イラストと全項目を出す。 */
+function carryDetailHTML() {
+  const c = CARD_BY_ID[RUI.carrySel];
+  if (!c) return '<div class="carry-detail-empty">カードを選ぶと、ここに絵と詳細が出ます。</div>';
+  const meta = RUI.meta;
+  const stat = c.t === 'U'
+    ? `<span>攻撃力 ${c.a}</span><span>防御力 ${c.d}</span>
+       <span>ＣＨ ${c.ch}</span><span>召還Ｌｖ ${c.lv}</span><span>${c.p} G</span>`
+    : `<span>${TYPE_NAME[c.t]}</span><span>${c.p} G</span>`;
+  return `
+    <div class="big ${c.t}">
+      <div class="bigart">${artInner(c)}</div>
+      <div class="bn">${esc(c.n)}</div>
+      <div class="bstat">${stat}</div>
+      <div class="btext">${esc(c.e || '')}</div>
+    </div>
+    <div class="carry-detail-counts">
+      <span>本 <b>${meta.book[c.id] || 0}</b></span>
+      <span>デッキ <b>${meta.deck[c.id] || 0}</b></span>
+      ${+c.id === CQCollection.PIG ? '<span class="carry-detail-note">枚数制限なし</span>'
+      : `<span class="carry-detail-note">同じカードは${CQCollection.KIND_MAX}枚まで</span>`}
+    </div>
+    <div class="obt"><h4>入手方法</h4>
+      <div class="obtain">${esc(c.g || '')}</div></div>`;
+}
+
+/** 表の中身（行・件数・詳細）だけを描き直す。絞り込みの入力欄が再描画で
+ * フォーカスを失わないよう、入力のたびに全画面を作り直さないための入口。 */
+function carryRefreshBody() {
+  const root = runRoot();
+  const tb = root.querySelector('.carry-table tbody');
+  const detail = root.querySelector('.carry-detail');
+  const counts = root.querySelector('.carry-counts');
+  if (!tb) return renderCarryOut();
+  const cols = carryCols();
+  const rows = carryRows();
+  tb.innerHTML = rows.length
+    ? rows.map(function (c) { return carryRowHTML(c, cols); }).join('')
+    : `<tr><td colspan="${cols.length}" class="carry-empty">条件に合うカードがありません。</td></tr>`;
+  if (detail) detail.innerHTML = carryDetailHTML();
+  if (counts) {
+    counts.innerHTML = `<span>${rows.length} 種を表示</span>
+      <span>デッキ <b>${CQCollection.deckTotal(RUI.meta)}</b>／${CQCollection.DECK_MAX}</span>
+      <span class="carry-blank">空白カード <b>${CQCollection.blankCount(RUI.meta)}</b>枚</span>`;
+  }
 }
 
 function renderCarryOut() {
-  const meta = RUI.meta, run = RUI.run;
-  const total = CQCollection.deckTotal(meta);
-  const blanks = CQCollection.blankCount(meta);
+  const meta = RUI.meta;
+  const g = carryGrp();
+  const cols = carryCols();
   const rows = carryRows();
   const tabs = CARRY_TABS.map(function (t) {
     return `<button class="dtab ${t.t} ${RUI.carryTab === t.t ? 'on' : ''}"
       data-act="carry-tab" data-id="${t.t}">${t.label}</button>`;
   }).join('');
-  const body = rows.map(function (c) {
-    const inBook = meta.book[c.id] || 0;
-    const inDeck = meta.deck[c.id] || 0;
-    const canAdd = inBook > 0 && CQCollection.canAddToDeck(meta.deck, c.id).ok;
-    return `<tr class="${inDeck > 0 ? 'in-deck' : ''}">
-      <td class="nm"><span class="chip ${c.t}">${TYPE_MARK[c.t]}</span>${esc(c.n)}</td>
-      <td class="ef-cell">${esc(c.e || '')}</td>
-      <td class="num carry-book ${inBook === 0 ? 'zero' : ''}">${inBook}</td>
-      <td><div class="cnt">
-        <button data-act="carry-minus" data-id="${c.id}" ${inDeck === 0 ? 'disabled' : ''}>−</button>
-        <span class="v">${inDeck}</span>
-        <button data-act="carry-plus" data-id="${c.id}" ${canAdd ? '' : 'disabled'}>＋</button>
-      </div></td>
-    </tr>`;
+  /* 表示する列の切り替え（screen-deck の colbar と同じ操作感） */
+  const colbar = '<span class="cap">表示する列</span>' + CARRY_COLS[g].map(function (c) {
+    if (!c.label) return '';
+    return `<button class="colchip ${RUI.carryShown[g][c.k] ? 'on' : ''} ${c.fixed ? 'fixed' : ''}"
+      ${c.fixed ? 'disabled' : `data-act="carry-col" data-id="${c.k}"`}>${c.label}</button>`;
   }).join('');
+  /* 見出し（クリックで並べ替え）と、その下の絞り込み行 */
+  const head = cols.map(function (c) {
+    const arrow = RUI.carrySort.key === c.k ? `<span class="arrow">${RUI.carrySort.asc ? '▲' : '▼'}</span>` : '';
+    const w = c.w ? ` style="width:${c.w}px"` : '';
+    const numish = (c.type === 'range') ? ' num' : '';
+    if (c.type === 'move') return `<th class="carry-move"${w}></th>`;
+    return `<th class="sortable${numish}"${w} data-act="carry-sort" data-id="${c.k}">${c.label}${arrow}</th>`;
+  }).join('');
+  const filterRow = cols.map(function (c) {
+    if (c.type === 'text') {
+      return `<th><input class="carry-f" data-f="${c.k}" placeholder="含む文字"
+        value="${esc(RUI.carryFilters[c.k] || '')}"></th>`;
+    }
+    if (c.type === 'range') {
+      return `<th><div class="rng">
+        <input class="carry-f" data-f="${c.k}_min" placeholder="≧" value="${esc(RUI.carryFilters[c.k + '_min'] || '')}">
+        <input class="carry-f" data-f="${c.k}_max" placeholder="≦" value="${esc(RUI.carryFilters[c.k + '_max'] || '')}">
+      </div></th>`;
+    }
+    return '<th class="carry-move"></th>';
+  }).join('');
+  const body = rows.length
+    ? rows.map(function (c) { return carryRowHTML(c, cols); }).join('')
+    : `<tr><td colspan="${cols.length}" class="carry-empty">条件に合うカードがありません。</td></tr>`;
+
   runRoot().innerHTML = `
     <div class="carry-head">
       <div class="carry-title">持ち出すカードを選ぶ</div>
       <div class="carry-counts">
-        <span>デッキ <b>${total}</b>／${CQCollection.DECK_MAX}</span>
-        <span class="carry-blank">空白カード <b>${blanks}</b>枚</span>
+        <span>${rows.length} 種を表示</span>
+        <span>デッキ <b>${CQCollection.deckTotal(meta)}</b>／${CQCollection.DECK_MAX}</span>
+        <span class="carry-blank">空白カード <b>${CQCollection.blankCount(meta)}</b>枚</span>
       </div>
       <button class="btn ok carry-done" data-act="carry-done">デッキの編集を終える</button>
     </div>
-    <div class="carry-tabs">
-      ${tabs}
-      <button class="only-btn ${RUI.carryOnly ? 'on' : ''}" data-act="carry-only">デッキ入りのみ</button>
-      <span class="carry-hint">「本」＝街に置いてある残り。＋で持ち出し、−で置いていく。</span>
-    </div>
-    <div class="carry-scroll">
-      <table class="carry-table">
-        <thead><tr><th>カード名</th><th>効果</th><th class="num">本</th><th>デッキ</th></tr></thead>
-        <tbody>${body || '<tr><td colspan="4" class="carry-empty">このタイプのカードはまだ持っていません。</td></tr>'}</tbody>
-      </table>
+    <div class="carry-wrap">
+      <div class="carry-main">
+        <div class="carry-tabs">
+          ${tabs}
+          <button class="only-btn ${RUI.carryOnly ? 'on' : ''}" data-act="carry-only">デッキ入りのみ</button>
+          <span class="carry-hint">「本」＝街に置いてある残り。▶で持ち出し、◀で置いていく。</span>
+        </div>
+        <div class="colbar carry-colbar">${colbar}</div>
+        <div class="carry-scroll">
+          <table class="carry-table">
+            <thead><tr>${head}</tr><tr class="filters">${filterRow}</tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="detail carry-detail">${carryDetailHTML()}</div>
     </div>`;
 }
 
@@ -571,29 +754,40 @@ function playerTokenHTML(run, walking) {
       onerror="this.replaceWith(document.createTextNode('🚶'))"></div>`;
 }
 
-function renderMap() {
-  const run = RUI.run, area = CQAreas.get(run.areaId);
-  const pickable = runChoiceIds(run);
+/** マップの盤面（背景・道・マス・コマ・霧）。開始マスの案内でも同じ絵を敷くので部品にしてある。
+ * interactive=false のときはマスに data-act を付けない（＝出発前は押せない）。 */
+function mapBoardHTML(run, interactive, extra) {
+  const area = CQAreas.get(run.areaId);
+  const pickable = interactive ? runChoiceIds(run) : [];
   const nodesHTML = run.map.order.map(function (id) {
     const n = run.map.nodes[id];
-    const can = pickable.indexOf(id) >= 0 && !n.cleared;
+    const can = interactive && pickable.indexOf(id) >= 0 && !n.cleared;
     const done = n.cleared;
     const delay = ((id.charCodeAt(1) * 37) % 900) / 1000;
     return `<div class="map-node ${n.type} ${n.strength || ''} ${can ? 'pickable' : ''} ${done ? 'done' : ''} ${n.fog && !run.map.fog.cleared ? 'foggy' : ''}"
         style="left:${(n.x / 1280 * 100).toFixed(2)}%; top:${(n.y / 800 * 100).toFixed(2)}%; animation-delay:${delay}s"
-        data-act="node" data-id="${id}">
+        ${interactive ? `data-act="node" data-id="${id}"` : ''}>
       <div class="node-figure">${nodeFigureHTML(n, run)}</div>
       <div class="node-tile"></div>
     </div>`;
   }).join('');
-  /* HUD（マップ仕様書§4「上部はHUD（エリア名・ＬＰ・Ｇ・リタイヤ）約70px」）。
-   * エリア名を主役に置き、ＬＰは残量が一目で分かるゲージ付き、Ｇは数字を大きく。
-   * 霧が出ている日は名前の右に印を出す（霧払いを買うと消える）。 */
+  return `<div class="run-map" style="background-image:url('${area.bg}')">
+      ${pathSvg(run)}
+      ${nodesHTML}
+      ${playerTokenHTML(run, false)}
+      ${fogLayerHTML(run)}
+      ${extra || ''}
+    </div>`;
+}
+
+/** マップ画面のHUD（マップ仕様書§4「上部はHUD（エリア名・ＬＰ・Ｇ・リタイヤ）約70px」）。
+ * 開始マスの案内でも同じ帯を出す（リタイヤは出発前なので隠す）。 */
+function mapHudHTML(run, withRetire) {
+  const area = CQAreas.get(run.areaId);
   const inFog = run.map.fog.active && !run.map.fog.cleared;
   const lpPct = Math.max(0, Math.min(100, run.lp / run.maxLp * 100));
   const lpLow = run.lp <= Math.max(1, Math.round(run.maxLp * 0.3));
-  runRoot().innerHTML = `
-    <div class="map-hud">
+  return `<div class="map-hud">
       <div class="map-hud-area">
         <span class="map-hud-area-name">${esc(area.name)}</span>
         ${inFog ? '<span class="map-hud-fog">霧の中</span>' : ''}
@@ -606,16 +800,18 @@ function renderMap() {
         </div>
         <div class="map-hud-g"><span class="map-hud-g-icon">Ｇ</span><b>${run.gold}</b></div>
       </div>
-      <button class="map-hud-retire" data-act="retire">リタイヤ</button>
-    </div>
-    <div class="run-map" style="background-image:url('${area.bg}')">
-      ${pathSvg(run)}
-      ${nodesHTML}
-      ${playerTokenHTML(run, false)}
-      ${fogLayerHTML(run)}
-      ${RUI.mapFadeIn ? '<div class="map-fade-in"></div>' : ''}
-    </div>
-    <div class="run-log">${(run.log.slice(-3).map(function (l) { return '<div>・' + esc(l) + '</div>'; })).join('')}</div>`;
+      ${withRetire ? '<button class="map-hud-retire" data-act="retire">リタイヤ</button>' : ''}
+    </div>`;
+}
+
+function renderMap() {
+  const run = RUI.run;
+  /* HUD（マップ仕様書§4「上部はHUD（エリア名・ＬＰ・Ｇ・リタイヤ）約70px」）。
+   * エリア名を主役に置き、ＬＰは残量が一目で分かるゲージ付き、Ｇは数字を大きく。
+   * 霧が出ている日は名前の右に印を出す（霧払いを買うと消える）。 */
+  runRoot().innerHTML = mapHudHTML(run, true)
+    + mapBoardHTML(run, true, RUI.mapFadeIn ? '<div class="map-fade-in"></div>' : '')
+    + `<div class="run-log">${(run.log.slice(-3).map(function (l) { return '<div>・' + esc(l) + '</div>'; })).join('')}</div>`;
   /* 溶ける演出は1度だけ。アニメが終わる頃にフラグを下ろす（以後の描画では霧そのものを出さない）。
    * ここで再描画はしない——CSSが opacity:0 まで持っていって forwards で止まるため、
    * 消えた見た目のまま次の操作（マスを選ぶ等）の描画で自然に居なくなる。 */
@@ -897,21 +1093,42 @@ function runAct(act, id) {
     }
     case 'guide-skip':
       return finishStartGuide();
-    case 'carry-tab':
+    case 'carry-tab': {
+      if (RUI.carryTab === id) return;
       RUI.carryTab = id;
+      /* タブでカードの種類が変わると列の顔ぶれも変わるので、並べ替えの基準を安全な既定へ戻す
+       * （モンスターで「攻撃力」に並べたまま魔法タブへ行くと、その列が無くて意味を失うため）。 */
+      const cols = CARRY_COLS[carryGrp()];
+      if (!cols.some(function (c) { return c.k === RUI.carrySort.key; })) {
+        RUI.carrySort = { key: 'p', asc: true };
+      }
+      RUI.carrySel = null;
       return runRender();
+    }
     case 'carry-only':
       RUI.carryOnly = !RUI.carryOnly;
       return runRender();
-    case 'carry-plus': {
+    case 'carry-col':
+      RUI.carryShown[carryGrp()][id] = !RUI.carryShown[carryGrp()][id];
+      return runRender();
+    case 'carry-sort':
+      if (RUI.carrySort.key === id) RUI.carrySort.asc = !RUI.carrySort.asc;
+      else RUI.carrySort = { key: id, asc: true };
+      return runRender();
+    case 'carry-pick':
+      RUI.carrySel = +id;
+      return carryRefreshBody();
+    case 'carry-to-deck': {
       const r = CQCollection.moveToDeck(RUI.meta, +id, 1);
       if (!r.ok) runFlash(r.reason);
-      return runRender();
+      RUI.carrySel = +id;
+      return carryRefreshBody();
     }
-    case 'carry-minus': {
+    case 'carry-to-book': {
       const r = CQCollection.moveToBook(RUI.meta, +id, 1);
       if (!r.ok) runFlash(r.reason);
-      return runRender();
+      RUI.carrySel = +id;
+      return carryRefreshBody();
     }
     case 'carry-done':
       return finishCarryOut();
@@ -1012,26 +1229,52 @@ function runAct(act, id) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', function () {
+/** 持ち出し画面の絞り込み欄の入力を拾う。
+ * ここだけ全画面の再描画（runRender）を使わず表の中身だけ差し替えるのが要点——
+ * 1文字打つたびに innerHTML を作り直すと入力欄が消えてフォーカスが飛ぶため。
+ * 日本語入力の変換中（composition中）は確定するまで絞り込まない。 */
+function bindCarryFilters(el) {
+  let composing = false;
+  el.addEventListener('compositionstart', function (ev) {
+    if (ev.target.classList && ev.target.classList.contains('carry-f')) composing = true;
+  });
+  el.addEventListener('compositionend', function (ev) {
+    const t = ev.target;
+    if (!t.classList || !t.classList.contains('carry-f')) return;
+    composing = false;
+    RUI.carryFilters[t.dataset.f] = t.value;
+    carryRefreshBody();
+  });
+  el.addEventListener('input', function (ev) {
+    const t = ev.target;
+    if (!t.classList || !t.classList.contains('carry-f')) return;
+    if (composing) return;
+    RUI.carryFilters[t.dataset.f] = t.value;
+    carryRefreshBody();
+  });
+}
+
+/** ラン画面の入力を配線して起動する。DOMContentLoaded と「もう発火済み」の両方から
+ * 呼ばれるので、dataset.bound で一度きりにしてある
+ * （以前は2か所に同じ配線をコピーしていて、絞り込み欄の配線を片方に足し忘れると
+ *   実際に走るほうに入らない、という取りこぼしが起きた）。 */
+function bootRunUI() {
   const el = runRoot();
-  if (!el) return;
+  if (!el || el.dataset.bound) return;
+  el.dataset.bound = '1';
   el.addEventListener('click', function (ev) {
     const t = ev.target.closest('[data-act]');
     if (!t) return;
     runAct(t.dataset.act, t.dataset.id);
   });
+  bindCarryFilters(el);
   runInit();
-});
-/* DOMContentLoaded がすでに発火済み（scriptがbody末尾にあるため通常はここに来る）場合の保険 */
-if (document.readyState !== 'loading') {
-  const el = runRoot();
-  if (el && !el.dataset.bound) {
-    el.dataset.bound = '1';
-    el.addEventListener('click', function (ev) {
-      const t = ev.target.closest('[data-act]');
-      if (!t) return;
-      runAct(t.dataset.act, t.dataset.id);
-    });
-    runInit();
-  }
 }
+
+document.addEventListener('DOMContentLoaded', function () {
+  bootRunUI();
+});
+/* DOMContentLoaded がすでに発火済みだった場合の保険。
+ * （このスクリプトはbody末尾に置いてあるので、実際には readyState はまだ 'loading' で、
+ *   通常は上の DOMContentLoaded 側が走る。dataset.bound で二重登録を防いでいる。） */
+if (document.readyState !== 'loading') bootRunUI();

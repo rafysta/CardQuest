@@ -117,8 +117,11 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   // --- 2) 草原を選ぶ → 開始マスの新フロー（M6.6 WP4：案内→持ち出し→ドラフト→暗転明け） ---
   const grassTile = await page.$$eval('.area-tile', (els) => els.findIndex((e) => !e.classList.contains('locked')));
   (await page.$$('.area-tile'))[grassTile].click();
-  await wait(() => page.$('.amber-scene'));
-  ok('草原を選ぶとアンバーの案内が出る（WP4）', !!(await page.$('.amber-scene')));
+  await wait(() => page.$('.amber-overlay'));
+  ok('草原を選ぶとアンバーの案内が出る（WP4）', !!(await page.$('.amber-overlay')));
+  /* 2026-08-28 本人指定：案内は暗転ではなくマップの上に重ねる */
+  ok('案内の背景にマップが出ている', !!(await page.$('.amber-overlay')) && !!(await page.$('.run-map')));
+  ok('案内中のマスは押せない（出発前）', (await page.$$('.map-node[data-act="node"]')).length === 0);
   await page.waitForTimeout(600);
   await shot('start-guide');
   await page.click('[data-act="guide-skip"]');
@@ -133,22 +136,40 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   }));
   ok('初回は本28枚・デッキ0枚から始まる（§2-2）',
     startCounts.book === 28 && startCounts.deck === 0, JSON.stringify(startCounts));
-  /* ＋を1回押して「本が減りデッキが増える」＝移動モデルであることを確かめる */
-  const plus = await page.$('[data-act="carry-plus"]:not([disabled])');
-  await plus.click();
+  /* ▶を1回押して「本が減りデッキが増える」＝移動モデルであることを確かめ、
+   * ◀で元に戻ることも見る（2026-08-28 本人指定で −＋ から ◀▶ に変更） */
+  const toDeck = await page.$('[data-act="carry-to-deck"]:not([disabled])');
+  await toDeck.click();
   await page.waitForTimeout(150);
   const afterOne = await page.evaluate(() => ({
     book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
   }));
-  ok('＋で本が1枚減りデッキが1枚増える（複製ではなく移動）',
+  ok('▶で本が1枚減りデッキが1枚増える（複製ではなく移動）',
     afterOne.book === startCounts.book - 1 && afterOne.deck === startCounts.deck + 1,
     JSON.stringify(startCounts) + '→' + JSON.stringify(afterOne));
+  const toBook = await page.$('[data-act="carry-to-book"]:not([disabled])');
+  await toBook.click();
+  await page.waitForTimeout(150);
+  const backAgain = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
+  }));
+  ok('◀でデッキから本へ戻せる',
+    backAgain.book === startCounts.book && backAgain.deck === startCounts.deck,
+    JSON.stringify(backAgain));
+  /* カードを選ぶと右の詳細ペインに絵と詳細が出る（2026-08-28 本人指定） */
+  await page.click('.carry-table tbody tr');
+  await page.waitForTimeout(150);
+  ok('カードを選ぶと右に詳細が出る', !!(await page.$('.carry-detail .bigart img')));
+  /* 見出しクリックで並べ替え・絞り込み欄が使えること */
+  ok('見出しに並べ替えが付いている', (await page.$$('.carry-table thead th.sortable')).length > 0);
+  ok('絞り込み欄がある', (await page.$$('.carry-table .filters input')).length > 0);
+  ok('表示する列を切り替えられる', (await page.$$('[data-act="carry-col"]')).length > 0);
   /* 残りも全部持ち出す（各タブを回る）。本が空になり、デッキが28枚になるはず */
   for (const tab of ['U', 'M', 'S']) {
     await page.click(`[data-act="carry-tab"][data-id="${tab}"]`);
     await page.waitForTimeout(80);
     for (let guard = 0; guard < 60; guard++) {
-      const b = await page.$('[data-act="carry-plus"]:not([disabled])');
+      const b = await page.$('[data-act="carry-to-deck"]:not([disabled])');
       if (!b) break;
       await b.click();
       await page.waitForTimeout(25);
