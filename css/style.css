@@ -715,9 +715,12 @@ td.nm{font-weight:800}
 @keyframes openingBgIn{ to{opacity:1;transform:scale(1)} }
 
 .opening-portrait{
-  position:absolute;right:9%;top:13%;width:300px;max-width:34%;pointer-events:none;
+  position:absolute;right:25%;top:13%;width:300px;max-width:34%;pointer-events:none;
   filter:drop-shadow(0 14px 26px rgba(0,0,0,.55));
   opacity:0;
+  /* 足元にかけて透明にし、本から立ちのぼっているように見せる（横幅16%左寄せと合わせて2026-08-28調整） */
+  -webkit-mask-image:linear-gradient(to bottom, #000 65%, transparent 96%);
+  mask-image:linear-gradient(to bottom, #000 65%, transparent 96%);
   animation:openingPortraitIn 1s ease-out .9s forwards;
 }
 .opening-scene.intro-done .opening-portrait{opacity:1;animation:none}
