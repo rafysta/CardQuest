@@ -214,10 +214,6 @@ function nodeFigureHTML(n, run) {
   }
   /* 霧の中の非戦闘マスは「？」（マップ仕様書§5）。何のマスかは入るまで分からない。 */
   if (hiddenHere) return '<div class="node-silhouette">？</div>';
-  /* ？イベントのマスだけ発注アイコンが無い（マップ仕様書§8「？・開始はHTML/CSS」）。
-   * 絵文字のままだと他のマスと画づくりが揃わず1つだけ浮くので、道と同じ土の色の
-   * 立て札として描く（M6.5b）。 */
-  if (n.type === 'question') return '<div class="node-question">？</div>';
   const imgSrc = NODE_ICON_IMG[n.type];
   if (imgSrc) {
     return `<img src="${imgSrc}" class="node-icon-img" alt="" draggable="false"
@@ -226,8 +222,9 @@ function nodeFigureHTML(n, run) {
   return `<div class="node-icon">${NODE_ICON[n.type]}</div>`;
 }
 
-/** 道を1本描く（縁取り＋路面＋踏み跡の3層。ゆるいベジェで直線を避ける。マップ仕様書§4）。
- * state は '' ／ 'done'（通ってきた道）／ 'pick'（いま選べる道）／ 'dim'（選ばなかった枝）。 */
+/** 道を1本描く（ゆるいベジェで直線を避ける。マップ仕様書§4）。
+ * state は '' ／ 'done'（通ってきた道）／ 'pick'（いま選べる道）／ 'dim'（選ばなかった枝）。
+ * 2026-08-28 本人指定：縁取りと中央の踏み跡（点線）は無しにして、路面1本だけで描く。 */
 function roadSeg(x1, y1, x2, y2, state) {
   const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
   const dx = x2 - x1, dy = y2 - y1;
@@ -235,11 +232,8 @@ function roadSeg(x1, y1, x2, y2, state) {
   const nx = -dy / len, ny = dx / len;
   const bow = Math.min(26, len * 0.09);   /* M6.5b：直線に見えないよう反りを強めた */
   const cx = mx + nx * bow, cy = my + ny * bow;
-  const cls = state || '';
   const d = `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
-  return `<path d="${d}" class="road-under ${cls}"/>` +
-    `<path d="${d}" class="road-fill ${cls}"/>` +
-    `<path d="${d}" class="road-tread ${cls}"/>`;
+  return `<path d="${d}" class="road-fill ${state || ''}"/>`;
 }
 
 /** そのマスに「もう居た」か（踏破済み、または今まさに立っている）。道の状態判定の土台。 */
@@ -293,11 +287,11 @@ function pathSvg(run) {
           : group.some(function (s) { return roadVisited(run, s); }) ? 'dim' : '';
       segs.push(roadSeg(midX, midY, t.x, t.y, st));
     });
-    /* 合流点そのものを「広がった土の辻」として描く（M6.5b）。
+    /* 合流点そのものを「土の辻」として描く（M6.5b）。
      * 2本入って2本出る接合部は、線を引くだけだと幾何学的にどうしてもＸの交差にしか見えない。
-     * 中心に道と同じ色の楕円を敷くことで「ここで道が一度1つに集まっている」と読めるようにする。 */
-    joints.push(`<ellipse cx="${midX}" cy="${midY}" rx="36" ry="22" class="road-joint-under"/>`
-      + `<ellipse cx="${midX}" cy="${midY}" rx="30" ry="17" class="road-joint"/>`);
+     * 中心に道と同じ色を敷くことで「ここで道が一度1つに集まっている」と読めるようにする。
+     * 2026-08-28 本人指定：縁取り無し・楕円ではなく真円・大きさは半分。 */
+    joints.push(`<circle cx="${midX}" cy="${midY}" r="15" class="road-joint"/>`);
     mergedSig[sig] = true;
   });
   Object.values(nodes).forEach(function (n) {

@@ -786,35 +786,24 @@ td.nm{font-weight:800}
   background-size:cover;background-position:center;border:1px solid var(--line);
 }
 .run-paths{position:absolute;inset:0;width:100%;height:100%}
-/* 道は3層（濃い縁取り→路面→踏み跡の点線）で「道らしさ」を出す。マップ仕様書§4。
- * M6.5b で配色を調整：以前は縁取りが黒に寄りすぎ・路面が薄すぎて、砂地の背景の上では
- * 全体が「灰色のパイプ」に見えていた。縁取りを土の焦茶に、路面を明るい砂色に寄せ、
- * それぞれ不透明度を上げて、背景の土の道と同じ物として読めるようにしてある。 */
-.road-under{fill:none;stroke:#3d2b18;stroke-width:19;stroke-linecap:round;opacity:.44}
-.road-fill{fill:none;stroke:#c9a878;stroke-width:12;stroke-linecap:round;opacity:.8}
-.road-tread{fill:none;stroke:#6b4f2c;stroke-width:2.5;stroke-dasharray:3 12;stroke-linecap:round;opacity:.5}
+/* 道は路面1本だけで描く。マップ仕様書§4。
+ * 当初は「濃い縁取り＋路面＋踏み跡の点線」の3層だったが、2026-08-28 本人指定により
+ * 縁取りと中央の点線を廃止（背景の1枚絵に描かれた道の上に線が乗ると硬く見えるため）。
+ * 少し透かして幅を持たせ、背景の土の道に溶けるようにしてある。 */
+.road-fill{fill:none;stroke:#c9a878;stroke-width:14;stroke-linecap:round;opacity:.7}
 /* 道の3状態（マップ仕様書§4・M6.5b）。
  *   done … 通ってきた道。踏み固められた濃い土色にして「歩いた跡」に見せる
  *   pick … いま選べる道。ここだけ強調色（＝目が最初に行くのは常に「次にできること」）
- *   dim  … 通り過ぎて選ばなかった枝。薄く落として画面から引く */
-.road-under.done{stroke:#2e2011;opacity:.6}
-.road-fill.done{stroke:#8f7048;opacity:.9}
-.road-tread.done{stroke:#4a3720;opacity:.75}
-
-.road-under.pick{opacity:.6}
-.road-fill.pick{stroke:var(--accent);opacity:.95}
-.road-tread.pick{stroke:#3a2f06;opacity:.85}
-
-/* 減光しすぎるとマップ全体の形（どこで分かれてどこで合流するか）まで読めなくなるので、
- * 「選べないことは分かるが構造は見える」くらいに留める。 */
-.road-under.dim{opacity:.24}
-.road-fill.dim{opacity:.4}
-.road-tread.dim{opacity:.2}
+ *   dim  … 通り過ぎて選ばなかった枝。薄く落として画面から引く
+ *          （減光しすぎるとマップ全体の形まで読めなくなるので、構造は見える程度に留める） */
+.road-fill.done{stroke:#8f7048;opacity:.8}
+.road-fill.pick{stroke:var(--accent);opacity:.85}
+.road-fill.dim{opacity:.34}
 /* 分岐の合流点に敷く「土の辻」（M6.5b）。2本入って2本出る接合部は線だけだと必ずＸの交差に
- * 見えてしまうので、中心に道と同じ色の広場を置いて「ここで一度1本に集まる」と読ませる。
- * 道より後に描画して上に載せ、4本の線の端を飲み込ませている（run-ui.js の pathSvg）。 */
-.road-joint-under{fill:#3d2b18;opacity:.44}
-.road-joint{fill:#c9a878;opacity:.8}
+ * 見えてしまうので、中心に道と同じ色を置いて「ここで一度1本に集まる」と読ませる。
+ * 道より後に描画して上に載せ、4本の線の端を飲み込ませている（run-ui.js の pathSvg）。
+ * 2026-08-28 本人指定：縁取り無し・真円・大きさは半分（道幅より少し広いだけの控えめな辻）。 */
+.road-joint{fill:#c9a878;opacity:.7}
 
 /* マスは「台座タイル」として描く。アイコン・敵・コマはタイルの上に立つ（黒い角丸カード枠は廃止）。
  * サイズは3段階（2026-08-26 本人指定：ボス以外を拡大・精鋭は通常より大きく）：
@@ -863,21 +852,9 @@ td.nm{font-weight:800}
 /* 非戦闘マス（宝箱・ショップ・休憩・換金・？）のアイコン：台座に近い位置まで大きく下げて
  * 表示する（2026-08-26 本人指摘：アイコンと台座が離れていて浮いて見える）。 */
 .node-icon-img{width:80%;height:80%;object-fit:contain;filter:drop-shadow(0 4px 3px rgba(0,0,0,.5));align-self:flex-end}
-/* 絵文字フォールバック（アイコンPNGが読めなかったとき）。上と同じ詰め方だと逆に台座へ
- * 近づきすぎた（2026-08-26 本人指摘）ので少し離す。 */
+/* ？（question）はテキスト絵文字のため上と同じ詰め方だと逆に台座へ近づきすぎた
+ * （2026-08-26 本人指摘）。少し離す。 */
 .node-icon{font-size:36px;line-height:1;filter:drop-shadow(0 3px 3px rgba(0,0,0,.5));align-self:flex-end;margin-bottom:30px}
-/* ？イベントのマスの立て札（M6.5b）。発注アイコンが無い唯一のマスなので、絵文字ではなく
- * 道と同じ土の色（.road-fill／.road-joint と同系）の板として描き、他のマスと画を揃える。 */
-.node-question{
-  align-self:flex-end;margin-bottom:22px;
-  width:62px;height:62px;border-radius:14px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:34px;font-weight:800;line-height:1;color:#3b2a16;
-  background:linear-gradient(180deg,#e0c295 0%,#c9a878 55%,#ab8a5c 100%);
-  border:3px solid #6b4f2c;
-  box-shadow:0 5px 10px rgba(0,0,0,.5), inset 0 2px 3px rgba(255,255,255,.35);
-  text-shadow:0 1px 0 rgba(255,255,255,.35);
-}
 /* 霧の中の敵・ボス（マップ仕様書§5）。切り抜きをそのまま真っ黒に潰して影法師にする。
  * カースの心霊加工（img.curse-art）と同じ「元の絵をCSSフィルタだけで別物に見せる」やり方で、
  * 形だけ分かって正体は分からない状態を作る。上に載る霧のベールで縁がさらにぼける。 */
