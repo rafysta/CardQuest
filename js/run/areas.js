@@ -21,11 +21,20 @@
     101, 104, 113, 117, 136, 143, 145
   ];
 
+  /* 座標補正テーブル（M6.5b）。マップ仕様書§4の基準座標（js/run/map.js の COL_X／ROW_Y）に対する
+   * エリアごとの微調整で、背景の1枚絵に描かれた道の高さへノード列を寄せるためのもの。
+   * up／down／mid は各行のyに足すピクセル数（正＝下へ）。省略時は0。
+   * 1画面固定（1280×800・スクロールなし）は不変で、ここで動かすのは数px〜数十pxの範囲だけ。
+   * 新しいエリアを足すときは、まず 0 のまま出してスクショを見てから詰めるのがよい。 */
+  const LAYOUT_DEFAULT = { up: 0, down: 0, mid: 0 };
+
   const DEFS = {
     grassland: {
       id: 'grassland', name: '草原', tag: '草原', order: 0,
       bg: 'assets/map/bg_grassland.png', master: 'assets/masters/m_grassland.png',
       unlock: null,                 // 常に解放
+      /* 草原の背景は地平線が高く、手前の砂地が広い。基準座標のままでちょうど道に乗る。 */
+      layout: { up: 0, down: 0, mid: 0 },
       fog: { chance: 0 },           // マップ仕様書§5：草原は霧なし（初期値）
       priceMax: 2200,               // 通常・強敵プールの上限（このエリアの「入門」らしさの目安）
       eliteMin: 1200,               // 精鋭プールの下限
@@ -36,6 +45,9 @@
       id: 'forest', name: '森', tag: '森', order: 1,
       bg: 'assets/map/bg_forest.png', master: 'assets/masters/m_forest.png',
       unlock: 'grassland',          // 草原クリアで解放
+      /* 森は下生えが手前まで迫っていて、明るい地面が草原より上・かつ狭い。
+       * 上段を少し下げ、下段を少し上げて、開けた地面の帯の中に2行を収める。 */
+      layout: { up: 16, down: -18, mid: 0 },
       fog: { chance: 0.5 },         // マップ仕様書§5：森は初期値50%
       priceMax: 4200,
       eliteMin: 1800,
@@ -47,6 +59,12 @@
 
   function list() { return ORDER.map(function (id) { return DEFS[id]; }); }
   function get(id) { return DEFS[id] || null; }
+
+  /** そのエリアの座標補正（M6.5b）。未定義のエリア・未定義の行は 0 として扱う。 */
+  function layout(areaId) {
+    const def = DEFS[areaId];
+    return Object.assign({}, LAYOUT_DEFAULT, (def && def.layout) || {});
+  }
 
   /** そのエリアの解放条件を満たしているか（cleared＝クリア済みエリアidの配列） */
   function isUnlocked(areaId, cleared) {
@@ -72,7 +90,7 @@
     return res;
   }
 
-  const api = { DEFS, ORDER, SUPPORT_SHELL, list, get, isUnlocked, enemyPool };
+  const api = { DEFS, ORDER, SUPPORT_SHELL, LAYOUT_DEFAULT, list, get, layout, isUnlocked, enemyPool };
   global.CQAreas = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

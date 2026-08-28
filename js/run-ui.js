@@ -25,7 +25,9 @@ const STARTER_BOOK = [
 
 const RUI = {
   view: 'areaSelect', run: null, meta: null, nodeId: null, draft: null, flash: '',
-  openingStep: 0, openingIntroDone: false, openingFadeOut: false
+  openingStep: 0, openingIntroDone: false, openingFadeOut: false,
+  /* 霧払いを買った直後だけ true。次にマップを描いたときに溶ける演出を1度再生して戻す（M6.5b） */
+  fogDissolving: false
 };
 
 function runRoot() { return document.getElementById('run-root'); }
@@ -193,21 +195,29 @@ if (typeof window !== 'undefined') window.masterCutoutFallback = masterCutoutFal
 function nodeFigureHTML(n, run) {
   /* 開始マスにはアイコンを何も置かない（2026-08-26 本人指定）。台座タイルだけが残る。 */
   if (n.type === 'start') return '';
+  const hiddenHere = !nodeVisible(n, run);
   if (n.type === 'battle') {
-    const hidden = !nodeVisible(n, run);
-    if (hidden) return '<div class="node-silhouette">？</div>';
+    /* 霧の中の戦闘マスは「敵の形は見えるが正体は分からない」＝切り抜きをそのまま
+     * シルエット加工して出す（マップ仕様書§5。以前は一律「？」で、何がいるのか
+     * まったく伝わらなかった）。体数ピップは霧では出さない（同§5）。 */
     const badge = n.strength === 'elite' ? '<span class="node-badge elite">⭐</span>' : '';
-    const pip = n.enemy ? `<span class="node-pip">×${n.enemy.count}</span>` : '';
-    return `<img src="assets/cutouts/${n.enemy.id}.png" class="node-cutout" alt="" draggable="false"
-      onerror="nodeArtFallback(this, ${n.enemy.id})">${badge}${pip}`;
+    const pip = (n.enemy && !hiddenHere) ? `<span class="node-pip">×${n.enemy.count}</span>` : '';
+    if (!n.enemy) return hiddenHere ? '<div class="node-silhouette">？</div>' : '';
+    return `<img src="assets/cutouts/${n.enemy.id}.png" class="node-cutout${hiddenHere ? ' silhouette' : ''}"
+      alt="" draggable="false" onerror="nodeArtFallback(this, ${n.enemy.id})">${hiddenHere ? '' : badge}${pip}`;
   }
   if (n.type === 'boss') {
     const area = CQAreas.get(run.areaId);
-    return `<img src="assets/masters/m_${run.areaId}_cut.png" class="node-master-cutout" alt="" draggable="false"
+    return `<img src="assets/masters/m_${run.areaId}_cut.png"
+      class="node-master-cutout${hiddenHere ? ' silhouette' : ''}" alt="" draggable="false"
       onerror="masterCutoutFallback(this, '${area.master}')">`;
   }
-  const hidden = !nodeVisible(n, run);
-  if (hidden) return '<div class="node-silhouette">？</div>';
+  /* 霧の中の非戦闘マスは「？」（マップ仕様書§5）。何のマスかは入るまで分からない。 */
+  if (hiddenHere) return '<div class="node-silhouette">？</div>';
+  /* ？イベントのマスだけ発注アイコンが無い（マップ仕様書§8「？・開始はHTML/CSS」）。
+   * 絵文字のままだと他のマスと画づくりが揃わず1つだけ浮くので、道と同じ土の色の
+   * 立て札として描く（M6.5b）。 */
+  if (n.type === 'question') return '<div class="node-question">？</div>';
   const imgSrc = NODE_ICON_IMG[n.type];
   if (imgSrc) {
     return `<img src="${imgSrc}" class="node-icon-img" alt="" draggable="false"
@@ -216,19 +226,34 @@ function nodeFigureHTML(n, run) {
   return `<div class="node-icon">${NODE_ICON[n.type]}</div>`;
 }
 
-/** 道を1本描く（縁取り＋路面＋踏み跡の3層。ゆるいベジェで直線を避ける。マップ仕様書§4） */
-function roadSeg(x1, y1, x2, y2, done) {
+/** 道を1本描く（縁取り＋路面＋踏み跡の3層。ゆるいベジェで直線を避ける。マップ仕様書§4）。
+ * state は '' ／ 'done'（通ってきた道）／ 'pick'（いま選べる道）／ 'dim'（選ばなかった枝）。 */
+function roadSeg(x1, y1, x2, y2, state) {
   const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
   const dx = x2 - x1, dy = y2 - y1;
   const len = Math.hypot(dx, dy) || 1;
   const nx = -dy / len, ny = dx / len;
-  const bow = Math.min(16, len * 0.05);
+  const bow = Math.min(26, len * 0.09);   /* M6.5b：直線に見えないよう反りを強めた */
   const cx = mx + nx * bow, cy = my + ny * bow;
-  const cls = done ? 'done' : '';
+  const cls = state || '';
   const d = `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
   return `<path d="${d}" class="road-under ${cls}"/>` +
     `<path d="${d}" class="road-fill ${cls}"/>` +
     `<path d="${d}" class="road-tread ${cls}"/>`;
+}
+
+/** そのマスに「もう居た」か（踏破済み、または今まさに立っている）。道の状態判定の土台。 */
+function roadVisited(run, n) { return !!(n && (n.cleared || n.id === run.at)); }
+
+/** 辺 a→b の見え方を決める（マップ仕様書§4「通過済みは色を変える・選べる辺はハイライト・
+ * 選ばなかった枝は減光」。M6.5bで3状態に整理した）。
+ * 判定の要：両端とも「居たことがある」なら実際に歩いた道。合流点があるので、
+ * 片方の枝だけ踏んだ場合に反対側の枝が通過済みに見えないよう、両端を見るのが効く。 */
+function roadState(run, a, b, pickable) {
+  if (roadVisited(run, a) && roadVisited(run, b)) return 'done';
+  if (a && a.id === run.at && b && pickable.indexOf(b.id) >= 0) return 'pick';
+  if (roadVisited(run, a)) return 'dim';
+  return '';
 }
 
 /** 経路の描画。セグメント境界（各枝の出口2つ→次の入口2つ、同一のconnectsTo）は
@@ -236,6 +261,7 @@ function roadSeg(x1, y1, x2, y2, done) {
  * ロジック（connectsTo）自体には一切手を入れない。純粋に描画だけの処理。 */
 function pathSvg(run) {
   const nodes = run.map.nodes;
+  const pickable = runChoiceIds(run);
   const bySig = {};
   Object.values(nodes).forEach(function (n) {
     if (n.connectsTo.length === 2) {
@@ -244,6 +270,7 @@ function pathSvg(run) {
     }
   });
   const segs = [];
+  const joints = [];
   const mergedSig = {};
   Object.keys(bySig).forEach(function (sig) {
     const group = bySig[sig];
@@ -252,9 +279,25 @@ function pathSvg(run) {
     const targetA = nodes[ids[0]], targetB = nodes[ids[1]];
     const midX = (group[0].x + group[1].x) / 2 + (targetA.x + targetB.x - group[0].x - group[1].x) / 4;
     const midY = (targetA.y + targetB.y) / 2;
-    group.forEach(function (src) { segs.push(roadSeg(src.x, src.y, midX, midY, src.cleared)); });
-    segs.push(roadSeg(midX, midY, targetA.x, targetA.y, targetA.cleared));
-    segs.push(roadSeg(midX, midY, targetB.x, targetB.y, targetB.cleared));
+    /* 合流点で切れるので、辺の状態は「入り口側（src→辻）」と「出口側（辻→次のマス）」で別々に見る。
+     * 入り口側はそのsrcを通ったか、出口側はその行き先へ進んだかで決まる。 */
+    group.forEach(function (src) {
+      const st = (roadVisited(run, src) && (roadVisited(run, targetA) || roadVisited(run, targetB))) ? 'done'
+        : (src.id === run.at && (pickable.indexOf(targetA.id) >= 0 || pickable.indexOf(targetB.id) >= 0)) ? 'pick'
+          : roadVisited(run, src) ? 'dim' : '';
+      segs.push(roadSeg(src.x, src.y, midX, midY, st));
+    });
+    [targetA, targetB].forEach(function (t) {
+      const st = roadVisited(run, t) ? 'done'
+        : (group.some(function (s) { return s.id === run.at; }) && pickable.indexOf(t.id) >= 0) ? 'pick'
+          : group.some(function (s) { return roadVisited(run, s); }) ? 'dim' : '';
+      segs.push(roadSeg(midX, midY, t.x, t.y, st));
+    });
+    /* 合流点そのものを「広がった土の辻」として描く（M6.5b）。
+     * 2本入って2本出る接合部は、線を引くだけだと幾何学的にどうしてもＸの交差にしか見えない。
+     * 中心に道と同じ色の楕円を敷くことで「ここで道が一度1つに集まっている」と読めるようにする。 */
+    joints.push(`<ellipse cx="${midX}" cy="${midY}" rx="36" ry="22" class="road-joint-under"/>`
+      + `<ellipse cx="${midX}" cy="${midY}" rx="30" ry="17" class="road-joint"/>`);
     mergedSig[sig] = true;
   });
   Object.values(nodes).forEach(function (n) {
@@ -262,10 +305,29 @@ function pathSvg(run) {
     if (sig && mergedSig[sig]) return;
     n.connectsTo.forEach(function (toId) {
       const t = nodes[toId];
-      segs.push(roadSeg(n.x, n.y, t.x, t.y, n.cleared));
+      segs.push(roadSeg(n.x, n.y, t.x, t.y, roadState(run, n, t, pickable)));
     });
   });
-  return `<svg class="run-paths" viewBox="0 0 1280 800" preserveAspectRatio="none">${segs.join('')}</svg>`;
+  /* 辻は道より後に描いて上に載せる（道の端を隠して1つの広場に見せるため） */
+  return `<svg class="run-paths" viewBox="0 0 1280 800" preserveAspectRatio="none">${segs.join('')}${joints.join('')}</svg>`;
+}
+
+/** 霧のレイヤー（マップ仕様書§5）。範囲は第2セグメント以降＝霧のかかったマスのうち
+ * いちばん左のものの手前から右端まで。左端はグラデーションで自然に薄れさせる。
+ * 2枚を別々の速さで漂わせて奥行きを出す。霧払いを買った直後は dissolving を付けて溶かす。 */
+function fogLayerHTML(run) {
+  const fog = run.map.fog;
+  if (!fog.active) return '';
+  if (fog.cleared && !RUI.fogDissolving) return '';
+  const foggyX = Object.values(run.map.nodes).filter(function (n) { return n.fog; }).map(function (n) { return n.x; });
+  if (!foggyX.length) return '';
+  /* いちばん左の霧マスの少し手前から霧が立ちこめている、という見え方にする */
+  const startPct = Math.max(0, (Math.min.apply(null, foggyX) - 150) / 1280 * 100);
+  return `<div class="fog-layer${RUI.fogDissolving ? ' dissolving' : ''}"
+      style="--fog-start:${startPct.toFixed(1)}%">
+    <div class="fog-band fog-band-a"></div>
+    <div class="fog-band fog-band-b"></div>
+  </div>`;
 }
 
 function runChoiceIds(run) {
@@ -298,19 +360,39 @@ function renderMap() {
       <div class="node-tile"></div>
     </div>`;
   }).join('');
+  /* HUD（マップ仕様書§4「上部はHUD（エリア名・ＬＰ・Ｇ・リタイヤ）約70px」）。
+   * エリア名を主役に置き、ＬＰは残量が一目で分かるゲージ付き、Ｇは数字を大きく。
+   * 霧が出ている日は名前の右に印を出す（霧払いを買うと消える）。 */
+  const inFog = run.map.fog.active && !run.map.fog.cleared;
+  const lpPct = Math.max(0, Math.min(100, run.lp / run.maxLp * 100));
+  const lpLow = run.lp <= Math.max(1, Math.round(run.maxLp * 0.3));
   runRoot().innerHTML = `
-    <div class="run-hud">
-      <div class="run-hud-g">Ｇ：<b>${run.gold}</b></div>
-      <div class="run-hud-lp">♥ ${run.lp}／${run.maxLp}</div>
-      <div class="run-hud-area">${esc(area.name)}${run.map.fog.active && !run.map.fog.cleared ? '　🌫 霧の中' : ''}</div>
-      <button class="tiny run-retire" data-act="retire">リタイヤ</button>
+    <div class="map-hud">
+      <div class="map-hud-area">
+        <span class="map-hud-area-name">${esc(area.name)}</span>
+        ${inFog ? '<span class="map-hud-fog">霧の中</span>' : ''}
+      </div>
+      <div class="map-hud-stats">
+        <div class="map-hud-lp ${lpLow ? 'low' : ''}">
+          <span class="map-hud-lp-icon">♥</span>
+          <span class="map-hud-lp-num"><b>${run.lp}</b><small>／${run.maxLp}</small></span>
+          <span class="map-hud-lp-bar"><i style="width:${lpPct.toFixed(1)}%"></i></span>
+        </div>
+        <div class="map-hud-g"><span class="map-hud-g-icon">Ｇ</span><b>${run.gold}</b></div>
+      </div>
+      <button class="map-hud-retire" data-act="retire">リタイヤ</button>
     </div>
     <div class="run-map" style="background-image:url('${area.bg}')">
       ${pathSvg(run)}
       ${nodesHTML}
       ${playerTokenHTML(run, false)}
+      ${fogLayerHTML(run)}
     </div>
     <div class="run-log">${(run.log.slice(-3).map(function (l) { return '<div>・' + esc(l) + '</div>'; })).join('')}</div>`;
+  /* 溶ける演出は1度だけ。アニメが終わる頃にフラグを下ろす（以後の描画では霧そのものを出さない）。
+   * ここで再描画はしない——CSSが opacity:0 まで持っていって forwards で止まるため、
+   * 消えた見た目のまま次の操作（マスを選ぶ等）の描画で自然に居なくなる。 */
+  if (RUI.fogDissolving) setTimeout(function () { RUI.fogDissolving = false; }, 1500);
 }
 
 /** ノードidから盤面座標（%）を得る（歩行アニメの起点・終点計算用） */
@@ -624,6 +706,9 @@ function runAct(act, id) {
     case 'shop-fog': {
       const r = CQRun.shopClearFog(run, run.map.nodes[RUI.nodeId]);
       if (!r.ok) runFlash(r.reason);
+      /* 霧が晴れる瞬間はマップを見ていない（ショップの画面にいる）ので、次にマップへ戻ったとき
+       * 1度だけ溶ける演出を再生する（マップ仕様書§5「opacityで溶ける演出」）。 */
+      if (r.ok) RUI.fogDissolving = true;
       runSave();
       return runRender();
     }

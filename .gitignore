@@ -3,3 +3,5 @@ Thumbs.db
 node_modules/
 *.log
 _to_delete/
+# スクショ検収の出力（tools/verify-run.js。毎回撮り直すのでコミットしない）
+tmp/

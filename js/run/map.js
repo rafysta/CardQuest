@@ -42,14 +42,18 @@
     { id: 'stray', text: '迷い込んだログの欠片を回収した。手ごろな一枚が手に入りそうだ。', effect: { draftCard: true } }
   ];
 
-  /* ---- 座標（§4：1280×800・1画面固定） --------------------------------- */
-  const COL_X = [90, 280, 450, 620, 790, 960, 1130, 1170 + 100];   /* 開始…関門2マス目・ボスは後で上書き */
-  COL_X[7] = 1210;
+  /* ---- 座標（§4：1280×800・1画面固定） ---------------------------------
+   * 列ピッチは仕様の「約160px」に合わせて等間隔に取り直した（M6.5b）。
+   * 旧配置は関門2マス目(1130)とボス(1210)が80pxしか離れておらず、ボスの絵（158px幅）が
+   * 隣のマスと重なったうえ右端で見切れていた。ボスは 1186 まで戻し、他の列を詰めて
+   * 均等な7区間にしてある。ノード幅の半分（ボス79px）を足しても画面内に収まる。
+   * 行yは基準値。エリアごとの微調整は js/run/areas.js の layout（背景の道に合わせる補正）で行う。 */
+  const COL_X = [76, 240, 398, 556, 714, 872, 1030, 1186];   /* 開始・S1×2・S2×2・関門×2・ボス */
   const ROW_Y = { up: 415, down: 675, mid: 545 };
 
-  function place(node, col, row) {
+  function place(node, col, row, layout) {
     node.col = col; node.row = row;
-    node.x = COL_X[col]; node.y = ROW_Y[row];
+    node.x = COL_X[col]; node.y = ROW_Y[row] + ((layout && layout[row]) || 0);
     return node;
   }
 
@@ -175,6 +179,7 @@
     const rng = (typeof require === 'function' && typeof module !== 'undefined' ? require('../engine/rng.js') : global.CQRng)
       .create(opts.seed);
     const pool = CQAreas.enemyPool(opts.cards, area.id);
+    const layout = CQAreas.layout(area.id);   /* 背景の道に合わせた行yの補正（M6.5b・§4） */
     const fogActive = rng.next() < area.fog.chance;
 
     const [tplA, tplB] = pickSegTemplates(rng);
@@ -188,7 +193,7 @@
       n.id = id; n.seg = seg; n.branch = branch; n.slot = slot;
       n.fog = fogActive && seg !== null && seg >= 1;   // §5：開始と第1セグメントは常に見える
       n.connectsTo = [];
-      place(n, col, row);
+      place(n, col, row, layout);
       nodes[id] = n;
       return id;
     }
