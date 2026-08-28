@@ -74,6 +74,37 @@
     return (cleared || []).indexOf(def.unlock) >= 0;
   }
 
+  /* マスターレベル（ゲーム仕様書§6.2・原作準拠）。記憶データ＝一度でも入手した種類数で決まる。
+   * 20種→Lv2・52種→Lv3・100種→Lv4・168種→Lv5。ショップの品揃え段階はこのレベルと同じ数字
+   * （原作カードデータの g テキスト「コレクション段階n〜」の n がその段階）。 */
+  const MASTER_LEVEL_STEPS = [20, 52, 100, 168];
+
+  /** 記憶データ（known）の種類数からマスターレベルを出す（1〜5）。 */
+  function masterLevel(knownCount) {
+    let lv = 1;
+    MASTER_LEVEL_STEPS.forEach(function (need) { if ((knownCount || 0) >= need) lv += 1; });
+    return lv;
+  }
+
+  /** いまショップで買える魔法・技能（M6.6 WP4・おまかせドラフト2回目の候補プール）。
+   * 原作の g テキストに「コレクション段階n〜」とあるものが段階nで解放される販売品なので、
+   * n ≦ 現在のマスターレベル のカードを拾う。価格昇順。 */
+  function shopSpellPool(cards, level) {
+    const lv = level || 1;
+    const res = [];
+    Object.keys(cards).forEach(function (k) {
+      const c = cards[k];
+      if (c.t !== 'M' && c.t !== 'S') return;
+      if (typeof c.p !== 'number' || c.p <= 0) return;
+      if (typeof c.g !== 'string') return;
+      const m = c.g.match(/コレクション段階(\d+)/);
+      if (!m || +m[1] > lv) return;
+      res.push({ id: c.id, price: c.p });
+    });
+    res.sort(function (a, b) { return a.price - b.price; });
+    return res;
+  }
+
   /** そのエリアの敵プール（type='U'・マスターズソウル(64)を除く・定価がこのエリアの上限以下・
    * 原作の戦利品ドロップ表(gテキスト)にエリア名を含むもの）。価格昇順。 */
   function enemyPool(cards, areaId) {
@@ -90,7 +121,10 @@
     return res;
   }
 
-  const api = { DEFS, ORDER, SUPPORT_SHELL, LAYOUT_DEFAULT, list, get, layout, isUnlocked, enemyPool };
+  const api = {
+    DEFS, ORDER, SUPPORT_SHELL, LAYOUT_DEFAULT, MASTER_LEVEL_STEPS,
+    list, get, layout, isUnlocked, enemyPool, masterLevel, shopSpellPool
+  };
   global.CQAreas = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

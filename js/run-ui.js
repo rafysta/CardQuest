@@ -27,18 +27,46 @@ const RUI = {
   view: 'areaSelect', run: null, meta: null, nodeId: null, draft: null, flash: '',
   openingStep: 0, openingIntroDone: false, openingFadeOut: false,
   /* 霧払いを買った直後だけ true。次にマップを描いたときに溶ける演出を1度再生して戻す（M6.5b） */
-  fogDissolving: false
+  fogDissolving: false,
+  /* 開始マスの段階（M6.6 WP4）：'guide'（案内）→'carry'（持ち出し）→'draft'（ドラフト）。
+   * guide/carry の作業用の状態もここに持つ（cq_run には保存しない＝再開時は組み直す）。 */
+  startStage: null, guide: null, guideStep: 0,
+  carryTab: 'U', carryOnly: false,
+  /* 出発の明転を1度だけ再生するためのフラグ（§4 WP4「暗転→明転のtransition」） */
+  mapFadeIn: false
 };
 
 function runRoot() { return document.getElementById('run-root'); }
 function runSave() { if (RUI.run) CQSave.saveRun(RUN_STORAGE, RUI.run); }
 function runFlash(msg) { RUI.flash = msg; }
 
+/** 開始マスに入る（または中断からそこへ戻る）ときの段階を決める（M6.6 WP4）。
+ * fresh＝ラン開始直後なら案内から。再開のときは、案内は見た後なので持ち出しから
+ * （ドラフトが始まっていればドラフトから）再開する。 */
+function enterStartNode(fresh) {
+  const run = RUI.run;
+  RUI.guideStep = 0;
+  RUI.carryTab = 'U'; RUI.carryOnly = false;
+  if (fresh) {
+    RUI.guide = buildStartGuide(run, RUI.meta);
+    RUI.startStage = RUI.guide.length ? 'guide' : 'carry';
+  } else {
+    RUI.guide = null;
+    RUI.startStage = (run.draftDone > 0 || run.draftPending) ? 'draft' : 'carry';
+  }
+}
+
 function runInit() {
   RUI.meta = CQSave.loadMeta(RUN_STORAGE, STARTER_BOOK);
   const saved = CQSave.loadRun(RUN_STORAGE);
-  if (saved && !saved.outcome) { RUI.run = saved; RUI.view = 'map'; }
-  else if (!RUI.meta.openingSeen) {
+  if (saved && !saved.outcome) {
+    RUI.run = saved;
+    /* 出発済みかどうかで戻り先を変える（M6.6 WP4）。開始マスは案内＋持ち出し＋ドラフトと
+     * 長くなったので、その途中で再読み込みしてもマップへ飛ばされないようにする
+     * （depart() が開始マスを cleared にするので、それが出発済みの印になる）。 */
+    if (saved.map.nodes[saved.map.start].cleared) { RUI.view = 'map'; }
+    else { RUI.view = 'start'; enterStartNode(false); }
+  } else if (!RUI.meta.openingSeen) {
     /* 初回起動のみ（M6.6 WP1）：目覚めの場面へ。§4 WP2「最初からやり直す」→リロード後もここを通る。 */
     RUI.run = null; RUI.view = 'opening';
     RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
@@ -120,40 +148,244 @@ function renderAreaSelect() {
     <button class="area-reset-btn" data-act="reset-progress">最初からやり直す</button>`;
 }
 
-/* ================= 開始マス（案内・おまかせドラフト） ================= */
+/* ================= 開始マス（M6.6 WP4） =================
+ *
+ * 『実装計画追補M6.6』§4 WP4 の新フロー：
+ *   ① アンバーの案内（吹き出し・タップ送り・スキップ可）
+ *   ② 持ち出し＝デッキ編集（本→デッキへ移す。ここが唯一の編集機会）
+ *   ③ おまかせドラフト（最大2回・空白がある時だけ）
+ *   ④ 出発ボタンは置かず、暗転→明転でそのままマップへ
+ * 段階は RUI.startStage（'guide'|'carry'|'draft'）で持つ。 */
 
-function draftCardMini(id, isRental) {
-  const c = CARD_BY_ID[id];
-  return `<div class="draft-card" data-act="pick-draft" data-id="${id}">
-    <div class="dc-art">${artInner(c, 4)}${isRental ? '<span class="rental-badge">借</span>' : ''}</div>
-    <div class="dc-n">${esc(c.n)}</div>
-    <div class="dc-e">${esc(c.e || '')}</div>
+/* ---- ① アンバーの案内 ---- */
+
+/** この開始マスで出す吹き出しを組み立てる（台本§3.1/§4.1・§3.2/§4.2・§4.3、
+ * 追補§5-2のマスター紹介と特殊効果、§5-3の持ち出しヒント）。
+ * 初回かどうかは cq_meta.visits（ラン開始時に加算済み）で判定する。 */
+function buildStartGuide(run, meta) {
+  const L = CQLore.LORE;
+  const area = L.areas[run.areaId];
+  if (!area) return [];
+  const firstVisit = CQSave.visitCount(meta, run.areaId) <= 1;
+  let out = firstVisit ? area.first.slice() : CQLore.pickOne(area.repeat).slice();
+  /* 初回のみ、このエリアのマスターがどんな相手かを一言（追補§5-2） */
+  if (firstVisit && area.masterIntro) out = out.concat(area.masterIntro);
+  /* 霧の日は追加で1つ（台本§4.3） */
+  if (run.map.fog.active && !run.map.fog.cleared && area.fog) out = out.concat(area.fog);
+  /* 戦場ルールが付いている日も追加で1つ。おじゃま虫の日は専用の文に差し替える（追補§5-2） */
+  const rules = [];
+  Object.values(run.map.nodes).forEach(function (n) {
+    (n.fieldRules || []).forEach(function (r) { rules.push(r.id); });
+  });
+  if (rules.length) {
+    out = out.concat(rules.indexOf('pestCard') >= 0 ? L.common.pest : L.common.fieldRule);
+  }
+  /* 持ち出しの説明は一度だけ（§5-3）。②のデッキ編集の直前に出したいので最後に足す */
+  if (!CQSave.hintSeen(meta, 'carryOut')) out = out.concat(L.hints.carryOut);
+  return out;
+}
+
+/** アンバーの吹き出し1つ（肖像＋本文＋タップ送り）。目覚めの場面と同じ見た目の共通部品。 */
+function amberBubbleHTML(bubble, opts) {
+  const o = opts || {};
+  const portrait = bubble.face === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
+  const lines = bubble.lines.map(esc).join('<br>');
+  return `<div class="amber-scene">
+    <img class="amber-portrait" src="${portrait}" alt="" draggable="false" onerror="this.remove()">
+    ${o.skipAct ? `<button class="opening-skip" data-act="${o.skipAct}">スキップ</button>` : ''}
+    <div class="amber-bubble-wrap" ${o.nextAct ? `data-act="${o.nextAct}"` : ''}>
+      <div class="bubble amber-bubble">${lines}</div>
+      ${o.nextAct ? '<div class="opening-tap-hint">タップして進む</div>' : ''}
+    </div>
   </div>`;
 }
 
-function renderStart() {
-  const run = RUI.run, area = CQAreas.get(run.areaId);
-  if (run.draftDone >= 3) {
-    runRoot().innerHTML = `
-      <div class="run-hud"><div class="run-hud-g">所持Ｇ：<b>${run.gold}</b>　ＬＰ：<b>${run.lp}</b></div></div>
-      <div class="bubble">これで準備は整った。${esc(area.name)}へ出発しよう。</div>
-      <button class="btn ok run-depart" data-act="depart">出発する</button>`;
-    return;
-  }
-  if (!run.draftPending) RUI.draft = CQRun.beginDraftRound(run, CARD_BY_ID);
-  const dp = run.draftPending;
-  const target = CARD_BY_ID[dp.targetId];
-  const opts = dp.options.map(function (id) { return draftCardMini(id, true); }).join('');
+function renderStartGuide() {
+  const script = RUI.guide || [];
+  const b = script[Math.min(RUI.guideStep || 0, script.length - 1)];
+  if (!b) return finishStartGuide();
+  runRoot().innerHTML = startHudHTML(RUI.run)
+    + amberBubbleHTML(b, { nextAct: 'guide-next', skipAct: 'guide-skip' });
+}
+
+/** 案内を終えて②持ち出しへ。ヒントは見せた時点で立てる（二度と出さない・台本§5）。 */
+function finishStartGuide() {
+  CQSave.markHint(RUI.meta, 'carryOut');
+  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+  RUI.startStage = 'carry';
+  RUI.guide = null; RUI.guideStep = 0;
+  runRender();
+}
+
+function startHudHTML(run) {
+  return `<div class="run-hud"><div class="run-hud-g">所持Ｇ：<b>${run.gold}</b></div>
+    <div class="run-hud-lp">♥ ${run.lp}／${run.maxLp}</div></div>`;
+}
+
+/* ---- ② 持ち出し（デッキ編集） ----
+ *
+ * §4 WP4-2。既存のデッキ編集画面（screen-deck）は独立した開発用の画面で、独自の deck 変数を
+ * 持っている。ここで必要なのは「本↔デッキの移動」という別のデータモデルなので、
+ * あちらのロジックは触らず、**見た目の作り（表・タイプタブ・詳細ペイン）だけ流用**して
+ * ラン画面の中に作る。移動そのものは js/meta/collection.js（WP3で新設）に任せる。
+ *
+ * 表示の規則：
+ *   - 既知（known）のカードだけを出す。**所持0でも出す**（売り切った／全部デッキに出した
+ *     カードが一覧から消えないように）。未入手カードは出さない
+ *   - 「本」＝持ち出せる残り、「デッキ」＝持ち出し済み、の2値を同時に見せる
+ *   - 同種3枚まで（ピッグマン(8)だけ無制限）・合計40枚まで。上限は＋ボタンの活殺で示す
+ */
+
+const CARRY_TABS = [
+  { t: 'U', label: '⚔ モンスター' },
+  { t: 'M', label: '✦ 魔法' },
+  { t: 'S', label: '✚ 技能' }
+];
+
+function carryRows() {
+  const meta = RUI.meta;
+  const known = (meta.known || []).slice();
+  return known
+    .map(function (id) { return CARD_BY_ID[id]; })
+    .filter(function (c) { return c && c.t === (RUI.carryTab || 'U'); })
+    .filter(function (c) {
+      if (!RUI.carryOnly) return true;
+      return (meta.deck[c.id] || 0) > 0;        /* 「デッキに入れたものだけ」表示 */
+    })
+    .sort(function (a, b) { return (a.p || 0) - (b.p || 0) || a.id - b.id; });
+}
+
+function renderCarryOut() {
+  const meta = RUI.meta, run = RUI.run;
+  const total = CQCollection.deckTotal(meta);
+  const blanks = CQCollection.blankCount(meta);
+  const rows = carryRows();
+  const tabs = CARRY_TABS.map(function (t) {
+    return `<button class="dtab ${t.t} ${RUI.carryTab === t.t ? 'on' : ''}"
+      data-act="carry-tab" data-id="${t.t}">${t.label}</button>`;
+  }).join('');
+  const body = rows.map(function (c) {
+    const inBook = meta.book[c.id] || 0;
+    const inDeck = meta.deck[c.id] || 0;
+    const canAdd = inBook > 0 && CQCollection.canAddToDeck(meta.deck, c.id).ok;
+    return `<tr class="${inDeck > 0 ? 'in-deck' : ''}">
+      <td class="nm"><span class="chip ${c.t}">${TYPE_MARK[c.t]}</span>${esc(c.n)}</td>
+      <td class="ef-cell">${esc(c.e || '')}</td>
+      <td class="num carry-book ${inBook === 0 ? 'zero' : ''}">${inBook}</td>
+      <td><div class="cnt">
+        <button data-act="carry-minus" data-id="${c.id}" ${inDeck === 0 ? 'disabled' : ''}>−</button>
+        <span class="v">${inDeck}</span>
+        <button data-act="carry-plus" data-id="${c.id}" ${canAdd ? '' : 'disabled'}>＋</button>
+      </div></td>
+    </tr>`;
+  }).join('');
   runRoot().innerHTML = `
-    <div class="run-hud"><div class="run-hud-g">所持Ｇ：<b>${run.gold}</b></div></div>
-    <div class="bubble">${esc(area.name)}へようこそ。${area.fog.chance > 0 ? 'この土地は霧が出ることがある。ショップで払える。' : ''}
-      道中で使える「おまかせドラフト」で、まだ持っていないカードをレンタルできる（${dp.round + 1}／3回目）。</div>
-    <div class="draft-row">
-      ${opts}
-      ${draftCardMini(dp.targetId, false)}
+    <div class="carry-head">
+      <div class="carry-title">持ち出すカードを選ぶ</div>
+      <div class="carry-counts">
+        <span>デッキ <b>${total}</b>／${CQCollection.DECK_MAX}</span>
+        <span class="carry-blank">空白カード <b>${blanks}</b>枚</span>
+      </div>
+      <button class="btn ok carry-done" data-act="carry-done">デッキの編集を終える</button>
     </div>
-    <p class="draft-note">入れ替え対象：<b>${esc(target.n)}</b>（自動選択。空白がなければいちばん安いカードから）。
-      いちばん右の「${esc(target.n)}」を選べば変更しません。選んだカードはこのラン限定のレンタルです。</p>`;
+    <div class="carry-tabs">
+      ${tabs}
+      <button class="only-btn ${RUI.carryOnly ? 'on' : ''}" data-act="carry-only">デッキ入りのみ</button>
+      <span class="carry-hint">「本」＝街に置いてある残り。＋で持ち出し、−で置いていく。</span>
+    </div>
+    <div class="carry-scroll">
+      <table class="carry-table">
+        <thead><tr><th>カード名</th><th>効果</th><th class="num">本</th><th>デッキ</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="4" class="carry-empty">このタイプのカードはまだ持っていません。</td></tr>'}</tbody>
+      </table>
+    </div>`;
+}
+
+/** 持ち出しを終えてドラフトへ。ここで run.deck を meta.deck に同期するのが要点：
+ * run.deck は CQRun.start() の時点で meta.deck を複製したものなので、そのあと編集した分を
+ * 反映しないとランが古いデッキで始まってしまう（ラン中の増減はランに閉じ、
+ * 最後に settle() が run.deck をメタへ書き戻す、という流れは従来どおり）。 */
+function finishCarryOut() {
+  RUI.run.deck = Object.assign({}, RUI.meta.deck);
+  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+  RUI.startStage = 'draft';
+  runSave();
+  runRender();
+}
+
+/* ---- ③ おまかせドラフト ---- */
+
+/** ドラフトの候補カード1枚。§4 WP4「モンスターはA/D/CH・召還Lv・効果・価格まで全情報を出す」
+ * ため、バトル画面のカード描画ではなく専用の大きめカードで描く（画面高さの約40%）。 */
+function draftCardBig(id, isRental) {
+  const c = CARD_BY_ID[id];
+  const stat = c.t === 'U'
+    ? `<span>Ａ ${c.a}</span><span>Ｄ ${c.d}</span><span>ＣＨ ${c.ch}</span><span>Ｌｖ ${c.lv}</span>`
+    : `<span>${TYPE_NAME[c.t]}</span>`;
+  return `<div class="draft-card ${c.t}" data-act="pick-draft" data-id="${id}">
+    <div class="dc-art">${artInner(c, 4)}${isRental ? '<span class="rental-badge">借</span>' : ''}</div>
+    <div class="dc-n">${esc(c.n)}</div>
+    <div class="dc-stat">${stat}</div>
+    <div class="dc-e">${esc(c.e || '')}</div>
+    <div class="dc-p">${c.p}Ｇ</div>
+  </div>`;
+}
+
+/** 「変更しない」＝空白のまま残す枠。候補3枚と視覚的に区別する（§4 WP4）。 */
+function draftKeepCardHTML(targetId) {
+  const c = CARD_BY_ID[targetId];
+  const isBlank = +targetId === CQRun.BLANK;
+  return `<div class="draft-card keep" data-act="pick-draft" data-id="${targetId}">
+    <div class="dc-art">${artInner(c, 4)}</div>
+    <div class="dc-n">${isBlank ? '空白のまま' : esc(c.n) + ' を残す'}</div>
+    <div class="dc-stat"><span>変更しない</span></div>
+    <div class="dc-e">${isBlank ? '枠を埋めずにおく。' : esc(c.e || '')}</div>
+  </div>`;
+}
+
+const DRAFT_ROUND_NOTE = [
+  'この土地で狩れるモンスターだ。借りて試せる。',
+  'いま街で手が届く魔法と技能だ。借りて試せる。'
+];
+
+function renderStartDraft() {
+  const run = RUI.run;
+  const dp = run.draftPending;
+  if (!dp) return departToMap();          /* 空白が無い等でドラフトが発生しないときは出発 */
+  const opts = dp.options.map(function (id) { return draftCardBig(id, true); }).join('');
+  runRoot().innerHTML = startHudHTML(run) + `
+    <div class="draft-head">
+      <b>おまかせドラフト</b>（${dp.round + 1}／${CQRun.DRAFT_ROUNDS}）
+      <span class="draft-sub">${esc(DRAFT_ROUND_NOTE[dp.round] || '')}</span>
+    </div>
+    <div class="draft-row">${opts}${draftKeepCardHTML(dp.targetId)}</div>
+    <p class="draft-note">選んだカードは<b>このラン限定のレンタル</b>です（記憶データには入らず、
+      探索が終わると返却されます）。デッキの空白1枚と入れ替わります。</p>`;
+}
+
+/* ---- ④ 出発（暗転→明転） ---- */
+
+/** ドラフトを終えた（または発生しなかった）ので、そのままマップへ。
+ * 出発ボタンは置かない（§4 WP4）。黒オーバーレイのフェードでマップに繋ぐ。 */
+function departToMap() {
+  CQRun.depart(RUI.run);
+  RUI.view = 'map';
+  RUI.startStage = null;
+  RUI.mapFadeIn = true;                   /* 次のマップ描画で明転を1度だけ再生する */
+  runSave();
+  runRender();
+}
+
+function renderStart() {
+  const run = RUI.run;
+  if (RUI.startStage === 'guide') return renderStartGuide();
+  if (RUI.startStage === 'carry') return renderCarryOut();
+  /* 'draft'：次の回を用意する。空白が無ければ null が返り、そのまま出発する */
+  if (!run.draftPending) {
+    const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+    if (!dp) return departToMap();
+  }
+  return renderStartDraft();
 }
 
 /* ================= マップ画面 ================= */
@@ -381,12 +613,15 @@ function renderMap() {
       ${nodesHTML}
       ${playerTokenHTML(run, false)}
       ${fogLayerHTML(run)}
+      ${RUI.mapFadeIn ? '<div class="map-fade-in"></div>' : ''}
     </div>
     <div class="run-log">${(run.log.slice(-3).map(function (l) { return '<div>・' + esc(l) + '</div>'; })).join('')}</div>`;
   /* 溶ける演出は1度だけ。アニメが終わる頃にフラグを下ろす（以後の描画では霧そのものを出さない）。
    * ここで再描画はしない——CSSが opacity:0 まで持っていって forwards で止まるため、
    * 消えた見た目のまま次の操作（マスを選ぶ等）の描画で自然に居なくなる。 */
   if (RUI.fogDissolving) setTimeout(function () { RUI.fogDissolving = false; }, 1500);
+  /* 出発の明転も1度だけ（§4 WP4）。黒を被せた状態から opacity を0まで落とす */
+  if (RUI.mapFadeIn) setTimeout(function () { RUI.mapFadeIn = false; }, 900);
 }
 
 /** ノードidから盤面座標（%）を得る（歩行アニメの起点・終点計算用） */
@@ -644,18 +879,44 @@ function runAct(act, id) {
       return finishOpening();
     case 'go-start': {
       const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+      /* 訪問回数を先に加算してからランを作る。案内の「初回3つ／2回目以降1つ」の
+       * 判定に使う（加算後の値が1なら初回。中断・再開しても揺れない）。 */
+      CQSave.markVisit(RUI.meta, id);
+      CQSave.saveMeta(RUN_STORAGE, RUI.meta);
       RUI.run = CQRun.start(CARD_BY_ID, id, seed, RUI.meta);
       RUI.view = 'start';
+      enterStartNode(true);
       runSave();
       return runRender();
     }
+    case 'guide-next': {
+      const next = (RUI.guideStep || 0) + 1;
+      if (next >= (RUI.guide || []).length) return finishStartGuide();
+      RUI.guideStep = next;
+      return runRender();
+    }
+    case 'guide-skip':
+      return finishStartGuide();
+    case 'carry-tab':
+      RUI.carryTab = id;
+      return runRender();
+    case 'carry-only':
+      RUI.carryOnly = !RUI.carryOnly;
+      return runRender();
+    case 'carry-plus': {
+      const r = CQCollection.moveToDeck(RUI.meta, +id, 1);
+      if (!r.ok) runFlash(r.reason);
+      return runRender();
+    }
+    case 'carry-minus': {
+      const r = CQCollection.moveToBook(RUI.meta, +id, 1);
+      if (!r.ok) runFlash(r.reason);
+      return runRender();
+    }
+    case 'carry-done':
+      return finishCarryOut();
     case 'pick-draft':
       CQRun.applyDraft(run, +id, CARD_BY_ID);
-      runSave();
-      return runRender();
-    case 'depart':
-      CQRun.depart(run);
-      RUI.view = 'map';
       runSave();
       return runRender();
     case 'node': {

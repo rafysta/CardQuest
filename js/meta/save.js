@@ -6,6 +6,9 @@
  *   known:       [cardId, ...]    一度でも入手した種類（記憶データ）。減らない
  *   openingSeen: boolean          目覚めの場面（WP1）を見た後は true。既存セーブは初回ロードで
  *                                 自動的に true 扱いにする（新規プレイヤーだけに見せる演出のため）
+ *   visits:      {areaId: count}  エリアごとの訪問回数（WP4）。開始マスの案内を
+ *                                 「初回3つ／2回目以降1つ」で出し分けるのに使う
+ *   seenHints:   {key: true}      一度だけ出すヒント（台本§5）。出したらキーを立てる
  *   gold / cleared / …           その他のメタ
  * cq_run … 中断中のランのオートセーブ（js/run/run.js の run オブジェクトそのもの）
  *
@@ -67,7 +70,41 @@
       book[id] = (book[id] || 0) + 1;
       if (known.indexOf(+id) < 0) known.push(+id);
     });
-    return { book: book, deck: {}, known: known, gold: 0, cleared: [], openingSeen: false };
+    return {
+      book: book, deck: {}, known: known, gold: 0, cleared: [],
+      openingSeen: false, visits: {}, seenHints: {}
+    };
+  }
+
+  /** 後から足したフィールドを「無ければ初期化」で埋める（破壊的変更をしないための入口）。
+   * 既存セーブ・旧形式からの移行・新規初期化のすべてがここを通る。 */
+  function ensureFields(m) {
+    if (!m.visits || typeof m.visits !== 'object') m.visits = {};       /* WP4：エリア訪問回数 */
+    if (!m.seenHints || typeof m.seenHints !== 'object') m.seenHints = {}; /* WP4：一度だけのヒント */
+    return m;
+  }
+
+  /** そのエリアに何回入ったか（0＝まだ一度も。WP4の案内の出し分けに使う）。 */
+  function visitCount(meta, areaId) {
+    return ((meta && meta.visits) ? meta.visits[areaId] : 0) || 0;
+  }
+
+  /** エリアに入ったことを記録する（ラン開始時に1回だけ呼ぶ）。 */
+  function markVisit(meta, areaId) {
+    if (!meta.visits) meta.visits = {};
+    meta.visits[areaId] = (meta.visits[areaId] || 0) + 1;
+    return meta.visits[areaId];
+  }
+
+  /** そのヒントをもう出したか。 */
+  function hintSeen(meta, key) {
+    return !!(meta && meta.seenHints && meta.seenHints[key]);
+  }
+
+  /** ヒントを出したことを記録する。 */
+  function markHint(meta, key) {
+    if (!meta.seenHints) meta.seenHints = {};
+    meta.seenHints[key] = true;
   }
 
   /** cq_meta を読む。無ければ defaultDeckIds（カードIDの配列・重複可）から初期状態を作る。
@@ -82,9 +119,9 @@
         if (m && m.book) {                                        /* 新形式 */
           CQCollection.ensure(m);
           if (m.openingSeen == null) m.openingSeen = true;
-          return m;
+          return ensureFields(m);
         }
-        if (m && m.deck) return migrate(m);                       /* 旧形式 → 移行 */
+        if (m && m.deck) return ensureFields(migrate(m));          /* 旧形式 → 移行 */
       }
     } catch (e) { /* 壊れたデータは初期化して復旧する */ }
     return initialMeta(defaultDeckIds);
@@ -119,7 +156,10 @@
     try { storage.removeItem(RUN_KEY); } catch (e) { /* noop */ }
   }
 
-  const api = { loadMeta, saveMeta, clearMeta, loadRun, saveRun, clearRun, toDeckCounts, migrate, initialMeta };
+  const api = {
+    loadMeta, saveMeta, clearMeta, loadRun, saveRun, clearRun, toDeckCounts, migrate, initialMeta,
+    ensureFields, visitCount, markVisit, hintSeen, markHint
+  };
   global.CQSave = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

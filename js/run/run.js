@@ -21,6 +21,9 @@
     ? require('../meta/collection.js') : global.CQCollection;
   const DECK_SIZE = (CQTurnRef && CQTurnRef.DECK_SIZE) || 40;
   const BLANK = 180;
+  /* おまかせドラフトの回数（マップ仕様書§1.2は3回だったが、実装計画追補M6.6 §2-4で
+   * 最大2回に変更。1回目＝エリアの敵／2回目＝いま買える魔法・技能）。 */
+  const DRAFT_ROUNDS = 2;
 
   /* ---- デッキ組み立て ---------------------------------------------------- */
 
@@ -143,10 +146,24 @@
     return best;
   }
 
+  /** 空白の枠が残っているか（＝おまかせドラフトが発生する条件。§2-4・WP4）。
+   * 実体の空白(180)が旧セーブに残っている場合も、40枚に満たない仮想の空白も、どちらも見る。 */
+  function hasBlankSlot(run) {
+    if ((run.deck[BLANK] || 0) > 0) return true;
+    const rentals = run.rentals ? run.rentals.length : 0;
+    return CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE;
+  }
+
+  /** 次のドラフトを始める。M6.6 WP4で **3回→最大2回**・**空白がある時だけ発生**に変更。
+   * 空白が無ければ null を返す＝呼び出し側はドラフトを飛ばして出発する。
+   * 「空白が1枚だけの時：1回目で埋めたら2回目は発生しない／空白を残したら2回目が発生」という
+   * §4 WP4 の要求は、毎回ここで空きを見直すことで自然に満たされる。 */
   function beginDraftRound(run, cards) {
-    if (run.draftDone >= 3) return null;
+    if (run.draftDone >= DRAFT_ROUNDS) return null;
+    if (!hasBlankSlot(run)) return null;
     const idx = run.draftDone;
     const options = (run.map.draftPools[idx] || []).slice();
+    if (!options.length) return null;         /* 候補が用意できなかった回は飛ばす */
     const targetId = draftTarget(run, cards);
     run.draftPending = { round: idx, options: options, targetId: targetId };
     return run.draftPending;
@@ -361,8 +378,8 @@
   }
 
   const api = {
-    DECK_SIZE, BLANK, buildBattleDeck, buildBossDeck, buildPlayerDeck,
-    start, gainCard, beginDraftRound, applyDraft, draftTarget, depart,
+    DECK_SIZE, BLANK, DRAFT_ROUNDS, buildBattleDeck, buildBossDeck, buildPlayerDeck,
+    start, gainCard, beginDraftRound, applyDraft, draftTarget, hasBlankSlot, depart,
     node, currentNode, choices, advance,
     battleSeed, battleSetup, reportBattle,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,

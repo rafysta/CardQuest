@@ -34,12 +34,13 @@ const { chromium } = require('playwright');
 const URL = process.env.CQ_URL || 'http://localhost:8321/index.html';
 const SHOT_DIR = process.env.CQ_SHOTS || path.join(__dirname, '..', 'tmp', 'verify-run');
 
-/* WP4（開始マスのデッキ編集画面）が入るまでの仮の橋渡し。M6.6 WP1でスターターは「本」に
- * 入って始まるようになり、デッキが空のままではランを始められない。本物のプレイヤー操作の
- * 代わりに、ここでは持ち出し済みのデッキを直接こしらえる（tools/simulate-run.js の
- * autoCarryOut と同じ役どころ）。WP4が入ったら、その画面を操作する形に置き換えること。 */
+/* スターター（M6.6 §2-2）。WP4からは**本に入った状態**を作り、持ち出し画面を実際に操作して
+ * デッキを組む——これが §4 WP4 の受け入れ基準「初回プレイで『本28枚・デッキ0枚』から
+ * 40枚を組んで出発できること」そのものの検証になる（v0.16.5までは画面が無かったので
+ * 持ち出し済みのデッキを直接こしらえていた）。 */
 const STARTER = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 101, 101, 101, 108, 108, 113, 113,
   153, 153, 153, 165, 165, 193, 193, 193, 194, 194, 194];
+const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 §2-4） */
 
 (async () => {
   fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -91,14 +92,14 @@ const STARTER = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 101, 101, 101, 108, 108, 113, 113
     await wait(() => page.$('.area-grid'));
   }
 
-  /* WP4が無いあいだの仮の持ち出し（冒頭のコメント参照）。ここから先は「デッキ40枚を持って
-   * 出発できる状態のプレイヤー」として検証する。 */
+  /* スターターを「本」に入れた初回状態から始める（持ち出し画面をここで実際に操作する）。
+   * 目覚めだけは撮り終えたので openingSeen は立てておく。 */
   await page.evaluate((starter) => {
-    const deck = {};
-    starter.forEach((id) => { deck[id] = (deck[id] || 0) + 1; });
+    const book = {};
+    starter.forEach((id) => { book[id] = (book[id] || 0) + 1; });
     localStorage.setItem('cq_meta', JSON.stringify({
-      book: {}, deck: deck, known: Array.from(new Set(starter)),
-      gold: 500, cleared: [], openingSeen: true
+      book: book, deck: {}, known: Array.from(new Set(starter)),
+      gold: 500, cleared: [], openingSeen: true, visits: {}, seenHints: {}
     }));
     localStorage.removeItem('cq_run');
   }, STARTER);
@@ -113,26 +114,78 @@ const STARTER = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 101, 101, 101, 108, 108, 113, 113
   ok('森はロック表示', !!forestLocked);
   await shot('area-select');
 
-  // --- 2) 草原を選ぶ → おまかせドラフト ---
+  // --- 2) 草原を選ぶ → 開始マスの新フロー（M6.6 WP4：案内→持ち出し→ドラフト→暗転明け） ---
   const grassTile = await page.$$eval('.area-tile', (els) => els.findIndex((e) => !e.classList.contains('locked')));
   (await page.$$('.area-tile'))[grassTile].click();
-  await wait(() => page.$('.draft-row'));
-  ok('草原を選ぶとドラフト画面が出る', !!(await page.$('.draft-row')));
-  await shot('start-node-draft');
+  await wait(() => page.$('.amber-scene'));
+  ok('草原を選ぶとアンバーの案内が出る（WP4）', !!(await page.$('.amber-scene')));
+  await page.waitForTimeout(600);
+  await shot('start-guide');
+  await page.click('[data-act="guide-skip"]');
 
-  for (let i = 0; i < 3; i++) {
-    const before = await page.evaluate(() => RUI.run.draftDone);
-    const cards = await page.$$('.draft-card');
-    if (!cards.length) break;
-    await cards[0].click();
-    await wait(async () => (await page.evaluate(() => RUI.run.draftDone)) !== before);
+  await wait(() => page.$('.carry-scroll'));
+  ok('案内のあとに持ち出し（デッキ編集）が出る（WP4）', !!(await page.$('.carry-scroll')));
+  /* 既知のカードだけ・所持0でも出る、という表示規則をざっと確かめる */
+  ok('持ち出し画面に既知のカードが並ぶ', (await page.$$('.carry-table tbody tr')).length > 0);
+  await shot('start-carry');
+  const startCounts = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
+  }));
+  ok('初回は本28枚・デッキ0枚から始まる（§2-2）',
+    startCounts.book === 28 && startCounts.deck === 0, JSON.stringify(startCounts));
+  /* ＋を1回押して「本が減りデッキが増える」＝移動モデルであることを確かめる */
+  const plus = await page.$('[data-act="carry-plus"]:not([disabled])');
+  await plus.click();
+  await page.waitForTimeout(150);
+  const afterOne = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
+  }));
+  ok('＋で本が1枚減りデッキが1枚増える（複製ではなく移動）',
+    afterOne.book === startCounts.book - 1 && afterOne.deck === startCounts.deck + 1,
+    JSON.stringify(startCounts) + '→' + JSON.stringify(afterOne));
+  /* 残りも全部持ち出す（各タブを回る）。本が空になり、デッキが28枚になるはず */
+  for (const tab of ['U', 'M', 'S']) {
+    await page.click(`[data-act="carry-tab"][data-id="${tab}"]`);
+    await page.waitForTimeout(80);
+    for (let guard = 0; guard < 60; guard++) {
+      const b = await page.$('[data-act="carry-plus"]:not([disabled])');
+      if (!b) break;
+      await b.click();
+      await page.waitForTimeout(25);
+    }
   }
-  ok('3回のドラフトを終えると出発ボタンが出る', !!(await page.$('[data-act="depart"]')),
-     'draftDone=' + await page.evaluate(() => RUI.run.draftDone));
+  const filled = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book),
+    deck: CQCollection.deckTotal(RUI.meta),
+    blank: CQCollection.blankCount(RUI.meta)
+  }));
+  ok('本の28枚を全部持ち出せる（残り12枠は空白）',
+    filled.book === 0 && filled.deck === 28 && filled.blank === 12, JSON.stringify(filled));
+  await shot('start-carry-filled');
+  await page.click('[data-act="carry-done"]');
 
-  // --- 3) 出発 → マップ ---
-  await page.click('[data-act="depart"]');
+  // --- 3) おまかせドラフト（最大2回・空白がある時だけ）→ 暗転明けでマップへ ---
+  await wait(() => page.$('.draft-row') || page.$('.run-map'));
+  if (await page.$('.draft-row')) {
+    ok('持ち出しのあとにおまかせドラフトが出る（WP4）', true);
+    ok('候補3枚＋「変更しない」の4枚が並ぶ', (await page.$$('.draft-card')).length === 4,
+      String((await page.$$('.draft-card')).length));
+    ok('「変更しない」枠が区別して描かれる', !!(await page.$('.draft-card.keep')));
+    await shot('start-draft');
+    for (let i = 0; i < CQ_DRAFT_ROUNDS; i++) {
+      const cards = await page.$$('.draft-card');
+      if (!cards.length) break;
+      await cards[0].click();                 /* 候補を選んでレンタルする */
+      await page.waitForTimeout(400);
+      if (!(await page.$('.draft-row'))) break;
+    }
+  } else {
+    ok('空白が無いランではドラフトが出ずにマップへ直行する（WP4）', true);
+  }
   await wait(() => page.$('.run-map'));
+  ok('出発ボタンを押さずにマップへ着く（WP4：暗転→明転）', !!(await page.$('.run-map')));
+  ok('開始マスが出発済みになっている',
+    await page.evaluate(() => RUI.run.map.nodes[RUI.run.map.start].cleared));
   const nodeCount = (await page.$$('.map-node')).length;
   ok('マップに14マス出る', nodeCount === 14, String(nodeCount));
   const pickableCount = (await page.$$('.map-node.pickable')).length;
@@ -231,9 +284,12 @@ const STARTER = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 101, 101, 101, 108, 108, 113, 113
   await page.evaluate((starter) => {
     const deck = {};
     starter.forEach((id) => { deck[id] = (deck[id] || 0) + 1; });
+    /* ここは霧の見た目を撮るのが目的なので、持ち出し済みの40枚デッキから始める
+       （空白が無い＝ドラフトも発生しないので、開始マスを最短で抜けられる）。 */
     localStorage.setItem('cq_meta', JSON.stringify({
       book: {}, deck: deck, known: Array.from(new Set(starter)),
-      gold: 500, cleared: ['grassland'], openingSeen: true
+      gold: 500, cleared: ['grassland'], openingSeen: true,
+      visits: { forest: 9 }, seenHints: { carryOut: true }
     }));
     localStorage.removeItem('cq_run');
   }, STARTER);
@@ -244,26 +300,30 @@ const STARTER = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 101, 101, 101, 108, 108, 113, 113
   for (let attempt = 0; attempt < 12 && !foggy; attempt++) {
     const forest = await page.$$eval('.area-tile', (els) => els.findIndex((e) => e.dataset.id === 'forest'));
     (await page.$$('.area-tile'))[forest].click();
-    await wait(() => page.$('.draft-row'));
+    await wait(() => page.evaluate(() => !!RUI.run));
     foggy = await page.evaluate(() => !!(RUI.run && RUI.run.map.fog.active));
     if (!foggy) {
-      /* 外れ：このランは捨てて引き直す。開始マス（ドラフト画面）にはリタイヤボタンが無いので、
+      /* 外れ：このランは捨てて引き直す。開始マスにはリタイヤボタンが無いので、
        * 中断中のランを消して読み込み直すのがいちばん確実。 */
       await page.evaluate(() => localStorage.removeItem('cq_run'));
       await page.reload();
       await wait(() => page.$('.area-grid'));
       continue;
     }
-    for (let i = 0; i < 3; i++) {
+    /* 開始マスの新フロー（WP4）を通り抜ける：案内をスキップ → 持ち出しを終える →
+     * （空白が無いのでドラフトは発生せず）そのままマップへ */
+    if (await page.$('[data-act="guide-skip"]')) {
+      await page.click('[data-act="guide-skip"]');
+      await wait(() => page.$('.carry-scroll'));
+    }
+    if (await page.$('[data-act="carry-done"]')) await page.click('[data-act="carry-done"]');
+    for (let i = 0; i < CQ_DRAFT_ROUNDS && (await page.$('.draft-row')); i++) {
       const cards = await page.$$('.draft-card');
       if (!cards.length) break;
-      await cards[cards.length - 1].click();
-      await page.waitForTimeout(180);
+      await cards[cards.length - 1].click();     /* 「変更しない」を選んで先へ */
+      await page.waitForTimeout(200);
     }
-    if (await page.$('[data-act="depart"]')) {
-      await page.click('[data-act="depart"]');
-      await wait(() => page.$('.run-map'));
-    }
+    await wait(() => page.$('.run-map'));
   }
   ok('霧の出た森のランを引けた', foggy, foggy ? '' : '12回引いて霧なし（確率的な失敗の可能性）');
   if (foggy) {

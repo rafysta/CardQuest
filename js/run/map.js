@@ -148,27 +148,35 @@
     return [first, second];
   }
 
-  /** おまかせドラフト3回分の新規候補（3枚ずつ・重複なし）。実際の置換対象・確定は
-   * ラン開始マスで手番ごとに js/run/nodes.js が生きたデッキ状態から決める（§1.2）。 */
-  function pickDraftPools(rng, pool, ownedIds) {
-    const owned = ownedIds || [];
+  /** 1つのプールから候補3枚を引く。未入手（known に無い）を優先し、未入手だけでは
+   * 3枚に満たないときだけ入手済みで補う（§1.2「未入手カードを優先」）。 */
+  function pickThree(rng, pool, owned) {
     const unowned = pool.filter(function (e) { return owned.indexOf(e.id) < 0; });
-    const bag = (unowned.length >= 3 ? unowned : pool).slice();
-    const used = {};
-    const rounds = [];
-    for (let r = 0; r < 3; r++) {
-      const picks = [];
-      const local = bag.filter(function (e) { return !used[e.id]; });
-      const src = local.length >= 3 ? local : bag;
-      for (let i = 0; i < 3 && src.length; i++) {
-        const idx = rng.int(0, src.length - 1);
-        const chosen = src.splice(idx, 1)[0];
-        used[chosen.id] = true;
-        picks.push(chosen.id);
-      }
-      rounds.push(picks);
+    const bag = unowned.slice();
+    if (bag.length < 3) {
+      pool.forEach(function (e) {
+        if (bag.length >= 3) return;
+        if (bag.some(function (x) { return x.id === e.id; })) return;
+        bag.push(e);
+      });
     }
-    return rounds;
+    const picks = [];
+    const src = bag.slice();
+    for (let i = 0; i < 3 && src.length; i++) {
+      picks.push(src.splice(rng.int(0, src.length - 1), 1)[0].id);
+    }
+    return picks;
+  }
+
+  /** おまかせドラフトの新規候補（M6.6 WP4で3回→最大2回・回ごとに違うプールに変更）。
+   *   1回目 … このエリアの敵プール（＝そのランで実際に狩れるモンスター。
+   *            「試して気に入ったら狩りに行ける」ループがそのランの中で閉じる）
+   *   2回目 … いまのマスターレベルで買える魔法・技能（＝街に戻れば手が届くもの）
+   * どちらも未入手優先。実際に発生するかは開始マスで空白の有無を見て決まる（run.js）。
+   * ※ 版を跨いで cq_run を再開したときのため、run.js 側は round が範囲外でも落ちないようにしてある。 */
+  function pickDraftPools(rng, enemies, spells, ownedIds) {
+    const owned = ownedIds || [];
+    return [pickThree(rng, enemies, owned), pickThree(rng, spells, owned)];
   }
 
   /** ラン用の分岐マップを1つ生成する。
@@ -248,7 +256,12 @@
       seed: opts.seed, areaId: area.id, segTemplates: segTemplates,
       nodes: nodes, order: order, start: start, boss: boss,
       fog: { active: fogActive, cleared: !fogActive },
-      draftPools: pickDraftPools(rng, pool, opts.ownedIds)
+      /* ドラフト候補は「1回目＝このエリアの敵／2回目＝いま買える魔法・技能」（WP4）。
+       * マスターレベルは記憶データの種類数から決まる（ゲーム仕様書§6.2）。 */
+      draftPools: pickDraftPools(
+        rng, pool,
+        CQAreas.shopSpellPool(opts.cards, CQAreas.masterLevel((opts.ownedIds || []).length)),
+        opts.ownedIds)
     };
   }
 

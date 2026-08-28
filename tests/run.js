@@ -30,6 +30,7 @@ const CQMap = require(path.join(root, 'js/run/map.js'));
 const CQRun = require(path.join(root, 'js/run/run.js'));
 const CQSave = require(path.join(root, 'js/meta/save.js'));
 const CQCollection = require(path.join(root, 'js/meta/collection.js'));
+const CQLore = require(path.join(root, 'js/lore.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
 /* ---- ミニ・テストハーネス ---- */
@@ -2787,6 +2788,16 @@ function freshMeta() {
   return { book: {}, deck: CQSave.toDeckCounts(STARTER), known: STARTER.slice(), gold: 500, cleared: [], openingSeen: true };
 }
 
+/** テスト用：デッキに空きがある（＝空白が残っている）メタ。M6.6 WP4でおまかせドラフトが
+ * 「空白がある時だけ発生」に変わったため、ドラフト関連のテストはこちらを使う。
+ * blanks で空白の枚数を指定できる（既定4枚）。known は STARTER 全部にしておく
+ * （＝ドラフト候補の「未入手優先」の判定に効くので、テストごとにブレないようにする）。 */
+function roomyMeta(blanks) {
+  const n = (blanks == null) ? 4 : blanks;
+  const ids = STARTER.slice(0, Math.max(0, STARTER.length - n));
+  return { book: {}, deck: CQSave.toDeckCounts(ids), known: STARTER.slice(), gold: 500, cleared: [], openingSeen: true };
+}
+
 t('ラン開始：マップと初期状態が揃う', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 123, freshMeta());
   eq(run.at, run.map.start, '開始マスに立っている');
@@ -2815,7 +2826,8 @@ t('おまかせドラフト：対象は空白優先、無ければ定価最安�
 });
 
 t('おまかせドラフト：「変更しない」を選ぶと何も変わらない', () => {
-  const run = CQRun.start(CARD_BY_ID, 'grassland', 3, freshMeta());
+  /* M6.6 WP4：ドラフトは空白がある時だけ発生するので、空きのあるデッキで始める */
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 3, roomyMeta());
   const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
   const before = JSON.stringify(run.deck);
   CQRun.applyDraft(run, dp.targetId);
@@ -2934,7 +2946,7 @@ t('？イベント：一度解決したら再解決しない', () => {
 });
 
 t('ラン終了の清算：レンタルは所持デッキに混入しない（返却）', () => {
-  const meta = freshMeta();
+  const meta = roomyMeta();     /* M6.6 WP4：空白があるデッキでないとドラフトが起きない */
   const run = CQRun.start(CARD_BY_ID, 'grassland', 15, meta);
   const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
   CQRun.applyDraft(run, dp.options[0]);
@@ -3144,14 +3156,19 @@ t('ドラフトの空白は仮想：デッキが40枚未満なら対象は空白
   CQRun.applyDraft(run, dp.options[0], CARD_BY_ID);
   eq(run.deck[8], 3, '実カードは減らない');
   eq(run.rentals.length, 1, 'レンタルが入る');
-  /* 満杯デッキ：押し出された実カードは消滅ではなく本行き */
+  /* 満杯デッキ：M6.6 WP4から、空白が無いランではドラフト自体が発生しない（§2-4） */
   const meta2 = freshMeta();          /* スターター40枚＝満杯 */
   const run2 = CQRun.start(CARD_BY_ID, 'grassland', 26, meta2);
-  const dp2 = CQRun.beginDraftRound(run2, CARD_BY_ID);
-  eq(dp2.targetId !== 180, true, '満杯なら最安の実カードが対象');
-  const target = dp2.targetId;
+  eq(CQRun.beginDraftRound(run2, CARD_BY_ID), null, '満杯ならドラフトは起きない（WP4）');
+  eq(CQRun.draftTarget(run2, CARD_BY_ID) !== 180, true,
+    'draftTarget単体では従来どおり最安の実カードを返す（満杯時の対象計算そのものは残す）');
+  /* 押し出し＝本行きの処理自体は残っている（v0.16.5以前に保存された中断中のランを
+   * 再開したとき、実カードが対象の draftPending が残っている場合に通る経路）。
+   * beginDraftRound を経由せず直接組み立てて確かめる。 */
+  const target = CQRun.draftTarget(run2, CARD_BY_ID);
   const before = run2.deck[target];
-  CQRun.applyDraft(run2, dp2.options[0], CARD_BY_ID);
+  run2.draftPending = { round: 0, options: [run2.map.draftPools[0][0]], targetId: target };
+  CQRun.applyDraft(run2, run2.draftPending.options[0], CARD_BY_ID);
   eq(run2.deck[target], before - 1, '押し出されてデッキから減る');
   eq(run2.bookAdd[target], 1, '消滅ではなく本行きになる');
 });
@@ -3203,6 +3220,162 @@ t('壊れたcq_metaは初期化して復旧する', () => {
   st.setItem('cq_meta', '{not json');
   const m = CQSave.loadMeta(st, [8]);
   eq(m.book, { 8: 1 }, '壊れていても既定デッキから復旧する（本へ入る）');
+});
+
+/* ================= M6.6 WP4: 開始マスの新フロー ================= */
+section('M6.6 WP4: 開始マスの新フロー');
+
+t('おまかせドラフトは最大2回（3回から変更）', () => {
+  eq(CQRun.DRAFT_ROUNDS, 2, 'DRAFT_ROUNDSは2');
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 41, roomyMeta(6));
+  let rounds = 0;
+  for (let i = 0; i < 5; i++) {
+    const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+    if (!dp) break;
+    rounds++;
+    CQRun.applyDraft(run, dp.options[0], CARD_BY_ID);   /* 毎回レンタルで空白を1つ埋める */
+  }
+  eq(rounds, 2, '空白が足りていても3回目は来ない');
+});
+
+/* §4 WP4 の受け入れ基準「空白0/1/2枚の3ケースのドラフト分岐をテスト化」 */
+t('空白0枚：ドラフトは1回も発生しない', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 42, roomyMeta(0));
+  eq(CQRun.hasBlankSlot(run), false, '空白なし');
+  eq(CQRun.beginDraftRound(run, CARD_BY_ID), null, '発生しない');
+});
+
+t('空白1枚：1回目で埋めたら2回目は発生しない', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 43, roomyMeta(1));
+  const dp1 = CQRun.beginDraftRound(run, CARD_BY_ID);
+  eq(!!dp1, true, '1回目は発生する');
+  eq(dp1.targetId, 180, '対象は空白');
+  CQRun.applyDraft(run, dp1.options[0], CARD_BY_ID);    /* レンタルで空白を埋める */
+  eq(run.rentals.length, 1, 'レンタルが1枚入った');
+  eq(CQRun.beginDraftRound(run, CARD_BY_ID), null, '空白が無くなったので2回目は発生しない');
+});
+
+t('空白1枚：空白を選んで残せば2回目が発生する', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 44, roomyMeta(1));
+  const dp1 = CQRun.beginDraftRound(run, CARD_BY_ID);
+  CQRun.applyDraft(run, dp1.targetId, CARD_BY_ID);      /* 「変更しない」＝空白のまま */
+  eq(run.rentals.length, 0, 'レンタルは入らない');
+  const dp2 = CQRun.beginDraftRound(run, CARD_BY_ID);
+  eq(!!dp2, true, '空白が残っているので2回目が発生する');
+  eq(dp2.round, 1, '2回目の候補プールを使う');
+});
+
+t('空白2枚：2回とも発生し、2回とも埋められる', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 45, roomyMeta(2));
+  const dp1 = CQRun.beginDraftRound(run, CARD_BY_ID);
+  eq(!!dp1, true, '1回目が発生');
+  CQRun.applyDraft(run, dp1.options[0], CARD_BY_ID);
+  const dp2 = CQRun.beginDraftRound(run, CARD_BY_ID);
+  eq(!!dp2, true, '2回目も発生');
+  CQRun.applyDraft(run, dp2.options[0], CARD_BY_ID);
+  eq(run.rentals.length, 2, 'レンタルが2枚');
+  eq(CQRun.beginDraftRound(run, CARD_BY_ID), null, '3回目は無い');
+});
+
+t('ドラフト候補：1回目はこのエリアの敵・2回目は買える魔法／技能（§2-4）', () => {
+  const meta = roomyMeta(4);
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 46, meta);
+  const pools = run.map.draftPools;
+  eq(pools.length, 2, 'プールは2回分');
+  const enemyIds = CQAreas.enemyPool(CARD_BY_ID, 'grassland').map((e) => e.id);
+  pools[0].forEach((id) => {
+    eq(enemyIds.indexOf(id) >= 0, true, '1回目の候補' + id + 'は草原の敵プール由来');
+    eq(CARD_BY_ID[id].t, 'U', '1回目はモンスター');
+  });
+  pools[1].forEach((id) => {
+    eq(CARD_BY_ID[id].t !== 'U', true, '2回目の候補' + id + 'は魔法か技能');
+    eq(/コレクション段階(\d+)/.test(CARD_BY_ID[id].g || ''), true, '2回目はショップ品揃え由来');
+  });
+});
+
+t('マスターレベル：記憶データの種類数で決まる（ゲーム仕様書§6.2）', () => {
+  eq(CQAreas.masterLevel(0), 1, '0種はLv1');
+  eq(CQAreas.masterLevel(19), 1, '19種はまだLv1');
+  eq(CQAreas.masterLevel(20), 2, '20種でLv2');
+  eq(CQAreas.masterLevel(52), 3, '52種でLv3');
+  eq(CQAreas.masterLevel(100), 4, '100種でLv4');
+  eq(CQAreas.masterLevel(168), 5, '168種でLv5');
+});
+
+t('ショップ品揃えプール：段階が現在のレベル以下のものだけ', () => {
+  const lv1 = CQAreas.shopSpellPool(CARD_BY_ID, 1);
+  const lv3 = CQAreas.shopSpellPool(CARD_BY_ID, 3);
+  eq(lv1.length > 0, true, 'Lv1でも買えるものがある');
+  eq(lv3.length >= lv1.length, true, 'レベルが上がると増える（減らない）');
+  lv1.forEach((e) => {
+    const m = (CARD_BY_ID[e.id].g || '').match(/コレクション段階(\d+)/);
+    eq(+m[1] <= 1, true, 'Lv1のプールは段階1のみ');
+  });
+});
+
+t('メタ：訪問回数とヒント既読を記録する（案内の出し分け用）', () => {
+  const st = mockStorage();
+  const m = CQSave.loadMeta(st, [8]);
+  eq(CQSave.visitCount(m, 'grassland'), 0, '最初は0回');
+  CQSave.markVisit(m, 'grassland');
+  eq(CQSave.visitCount(m, 'grassland'), 1, '1回目');
+  CQSave.markVisit(m, 'grassland');
+  eq(CQSave.visitCount(m, 'grassland'), 2, '2回目');
+  eq(CQSave.visitCount(m, 'forest'), 0, 'エリアごとに別で数える');
+  eq(CQSave.hintSeen(m, 'carryOut'), false, 'まだ見ていない');
+  CQSave.markHint(m, 'carryOut');
+  eq(CQSave.hintSeen(m, 'carryOut'), true, '見たら立つ');
+  /* 保存して読み直しても残る */
+  CQSave.saveMeta(st, m);
+  const m2 = CQSave.loadMeta(st, [8]);
+  eq(CQSave.visitCount(m2, 'grassland'), 2, '保存・復元しても残る');
+  eq(CQSave.hintSeen(m2, 'carryOut'), true, 'ヒントも残る');
+});
+
+t('メタ：visits／seenHintsが無い既存セーブでも落ちない（後方互換）', () => {
+  const st = mockStorage();
+  st.setItem('cq_meta', JSON.stringify({ book: { 8: 2 }, deck: {}, known: [8], gold: 10, cleared: [], openingSeen: true }));
+  const m = CQSave.loadMeta(st, [8]);
+  eq(m.visits, {}, 'visitsが空で補われる');
+  eq(m.seenHints, {}, 'seenHintsが空で補われる');
+  eq(CQSave.visitCount(m, 'grassland'), 0, '数えられる');
+});
+
+t('台本（lore.js）：規約どおりの形になっている', () => {
+  const L = CQLore.LORE;
+  const all = [].concat(
+    L.opening, L.hints.carryOut, L.common.fieldRule, L.common.pest,
+    L.areas.grassland.first, L.areas.grassland.masterIntro,
+    L.areas.forest.first, L.areas.forest.masterIntro, L.areas.forest.fog
+  );
+  L.areas.grassland.repeat.forEach((g) => g.forEach((b) => all.push(b)));
+  L.areas.forest.repeat.forEach((g) => g.forEach((b) => all.push(b)));
+  all.forEach((b) => {
+    eq(b.face === 'calm' || b.face === 'down', true, 'faceはcalmかdown：' + JSON.stringify(b));
+    eq(b.lines.length >= 1 && b.lines.length <= 2, true, '1吹き出しは2行まで：' + JSON.stringify(b));
+    b.lines.forEach((line) => {
+      eq(line.length <= 28, true, '1行は全角28文字以内：' + line + '（' + line.length + '字）');
+      eq(line.indexOf('！') < 0 && line.indexOf('!') < 0, true, '感嘆符を使わない：' + line);
+    });
+  });
+  /* 台本§0は「三点リーダはアンバーが自分の過去に触れるときだけ（そのとき表情はdown）」と
+   * 定めているが、台本§3.2「草原だ。……今日も、書けるだけ書こう。」・§4.2「森だ。……今日は
+   * 見通しがきくな。」は calm のまま三点リーダを使っている（言い淀みの用法）。
+   * 台本が正なので転記はそのままにし、ここでは「……なら必ずdown」の機械判定はしない。
+   * 規約の解釈を厳密に揃えるなら台本側の改訂が要る（2026-08-28 申し送り）。 */
+  const downCount = all.filter((b) => b.face === 'down').length;
+  eq(downCount > 0, true, 'down表情の吹き出しが存在する（過去に触れる場面）');
+  eq(L.areas.grassland.fog, null, '草原は霧率0%なので霧の文を持たない');
+});
+
+t('台本：プレースホルダの置換と候補群の抽選', () => {
+  const filled = CQLore.fill([{ face: 'calm', lines: ['{n}種。お前の格が上がった。'] }], { n: 20 });
+  eq(filled[0].lines[0], '20種。お前の格が上がった。', '{n}が置き換わる');
+  eq(filled[0].face, 'calm', 'faceはそのまま');
+  const groups = [[{ face: 'calm', lines: ['A'] }], [{ face: 'calm', lines: ['B'] }]];
+  eq(CQLore.pickOne(groups, () => 0)[0].lines[0], 'A', '乱数0なら先頭');
+  eq(CQLore.pickOne(groups, () => 0.99)[0].lines[0], 'B', '乱数が大きければ後ろ');
+  eq(CQLore.pickOne([], () => 0).length, 0, '空でも落ちない');
 });
 
 /* ================= 結果 ================= */

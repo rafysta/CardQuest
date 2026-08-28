@@ -766,19 +766,80 @@ td.nm{font-weight:800}
   margin-bottom:16px;max-width:920px;position:relative;
 }
 .bubble::before{content:'';position:absolute;left:28px;top:-9px;border:9px solid transparent;border-bottom-color:var(--panel2)}
-.draft-row{display:flex;gap:14px;flex-wrap:wrap}
+
+/* 開始マスのアンバー（M6.6 WP4）。目覚めの場面（.opening-scene）と同じ肖像＋吹き出しの
+ * 組み方だが、あちらは全画面の一枚絵の上に置くのに対し、こちらはラン画面の中に収める。 */
+.amber-scene{position:relative;flex:1;min-height:0;display:flex;align-items:flex-end;padding-bottom:6%}
+.amber-portrait{
+  position:absolute;right:8%;top:4%;width:280px;max-width:32%;pointer-events:none;
+  filter:drop-shadow(0 14px 26px rgba(0,0,0,.55));
+  -webkit-mask-image:linear-gradient(to bottom, #000 65%, transparent 96%);
+  mask-image:linear-gradient(to bottom, #000 65%, transparent 96%);
+  animation:openingPortraitIn .5s ease-out forwards;opacity:0;
+}
+.amber-bubble-wrap{position:relative;z-index:1;width:100%;cursor:pointer}
+.amber-bubble{max-width:none;margin-bottom:6px;background:rgba(10,14,24,.92)}
+
+/* ---- おまかせドラフト（§4 WP4：カードは画面高さの約40%・全情報を出す） ---- */
+.draft-head{font-size:17px;margin:4px 0 12px}
+.draft-head .draft-sub{color:var(--dim);font-size:14px;margin-left:12px}
+.draft-row{display:flex;gap:16px;flex-wrap:nowrap;align-items:stretch}
 .draft-card{
-  width:150px;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:10px;
-  cursor:pointer;text-align:center;
+  width:230px;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:12px;
+  cursor:pointer;text-align:center;display:flex;flex-direction:column;
 }
 .draft-card:hover{border-color:var(--accent)}
-.dc-art{position:relative;width:100%;height:100px;border-radius:8px;overflow:hidden;background:#1a2338;
-  display:flex;align-items:center;justify-content:center;margin-bottom:6px}
-.dc-art img{width:100%;height:100%;object-fit:cover}
-.dc-n{font-weight:800;font-size:14px}
-.dc-e{font-size:11px;color:var(--dim);margin-top:2px;min-height:2.4em}
-.draft-note{color:var(--dim);font-size:13px;margin-top:14px;max-width:900px}
-.run-depart{margin-top:6px}
+/* 「変更しない」枠は候補3枚と視覚的に区別する（§4 WP4） */
+.draft-card.keep{background:#12182a;border-style:dashed;opacity:.9}
+.draft-card.keep:hover{opacity:1}
+.dc-art{position:relative;width:100%;height:190px;border-radius:8px;overflow:hidden;background:#1a2338;
+  display:flex;align-items:center;justify-content:center;margin-bottom:8px}
+/* 魔法・技能の絵は地の暗いものが多く（例：159固定・133呪爆）、この大きさで中央を切り出すと
+ * 真っ暗な四角に見えてしまう。img.curse-art と同じ考え方で、少し持ち上げてから見せる
+ * （明るい絵が白飛びしない範囲に留めてある）。 */
+.dc-art img{width:100%;height:100%;object-fit:cover;filter:brightness(1.3) contrast(1.04)}
+.dc-n{font-weight:800;font-size:16px}
+.dc-stat{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:4px}
+.dc-e{font-size:12px;color:#c9d4ea;margin-top:6px;min-height:3.2em;flex:1}
+.dc-p{font-size:12px;color:var(--accent);font-weight:700}
+.draft-note{color:var(--dim);font-size:13px;margin-top:14px;max-width:960px}
+
+/* ---- 持ち出し＝デッキ編集（§4 WP4-2） ----
+ * 既存のデッキ編集画面（screen-deck）の見た目を流用しつつ、こちらは「本↔デッキの移動」。
+ * 1280×800の中で表が最大限スクロールできるよう、上の帯を固定して残りを表に渡す。 */
+.carry-head{display:flex;align-items:center;gap:16px;margin-bottom:12px;flex:none;min-height:44px}
+.carry-title{font-size:20px;font-weight:800;flex:none}
+.carry-counts{display:flex;gap:14px;align-items:baseline;margin-left:auto;font-size:14px}
+.carry-counts b{font-size:18px}
+.carry-blank{color:var(--dim)}
+.carry-done{flex:none;white-space:nowrap;padding:10px 18px;font-size:15px}
+.carry-tabs{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex:none}
+/* .only-btn は本来デッキ編集画面の表ヘッダ内で使う部品で width:100% が入っている。
+ * ここでは横並びのボタンとして使うので、幅を内容なりに戻す。 */
+.carry-tabs .dtab{flex:none}
+.carry-tabs .only-btn{flex:none;width:auto;padding:0 16px}
+.carry-hint{color:var(--dim);font-size:12px;margin-left:auto;white-space:nowrap}
+.carry-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:12px}
+.carry-table{width:100%;border-collapse:collapse;font-size:14px}
+.carry-table thead th{
+  position:sticky;top:0;z-index:1;background:var(--panel);
+  text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--dim);
+}
+.carry-table td{padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
+.carry-table tr.in-deck{background:rgba(250,204,21,.07)}
+.carry-table .num{text-align:right;width:70px}
+.carry-table .ef-cell{color:var(--dim);font-size:12px}
+/* 本が0＝もう持ち出せない（デッキに全部出ているか、売り切った）。数字を落として気づかせる */
+.carry-book.zero{color:#5a6478}
+.carry-empty{color:var(--dim);text-align:center;padding:28px 0}
+
+/* ---- 出発の明転（§4 WP4「暗転→明転のtransition」） ----
+ * ドラフトを終えた瞬間にマップを黒で覆った状態から始め、0.6秒で透明にする。 */
+.map-fade-in{
+  position:absolute;inset:0;z-index:20;pointer-events:none;background:#05070d;
+  animation:mapFadeIn .6s ease-out forwards;
+}
+@keyframes mapFadeIn{ from{opacity:1} to{opacity:0} }
 
 /* ---- マップ本体（§4。2026-08-26 M6.5a：台座タイル・切り抜き・道の描画に刷新） ---- */
 .run-map{

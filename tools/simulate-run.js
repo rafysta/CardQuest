@@ -108,10 +108,13 @@ function checkRunInvariants(run, meta) {
 }
 
 function playRun(areaId, seed, meta, rng) {
-  autoCarryOut(meta);   /* M6.6 WP1：デッキ編集画面（WP4）の代用。出発前に本から持ち出す */
+  autoCarryOut(meta);   /* 持ち出し（WP4のデッキ編集画面）の代用。出発前に本から持ち出す */
   const run = CQRun.start(CARD_BY_ID, areaId, seed, meta);
-  for (let i = 0; i < 3; i++) {
+  /* おまかせドラフト：M6.6 WP4から最大2回・空白がある時だけ発生する。
+   * beginDraftRound が null を返したらそこで打ち切る（本物のUIと同じ判断）。 */
+  for (let i = 0; i < CQRun.DRAFT_ROUNDS; i++) {
     const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+    if (!dp) break;
     const pool = dp.options.concat([dp.targetId]);
     CQRun.applyDraft(run, pool[rng.int(0, pool.length - 1)]);
   }
