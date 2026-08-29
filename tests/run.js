@@ -3861,6 +3861,184 @@ t('ラン側：逃げたマスは「いま立っているのに未解決」な�
   eq(CQRun.choices(run), [], '未解決のうちは先へは進めない');
 });
 
+/* ================= M6.6 WP11: 探索終了リザルト（清算の減額・称号・日誌） ================= */
+section('M6.6 WP11: リザルト');
+
+/** WP11のテスト用：終わり方と金額だけを指定して、清算直前のランを作る。
+ * 実際にマップを踏破させる必要は無い（清算が見るのは outcome / gold / startGold / lp だけ）。 */
+function endedRun(meta, outcome, opts) {
+  const o = opts || {};
+  const run = CQRun.start(CARD_BY_ID, o.areaId || 'grassland', o.seed || 900, meta);
+  run.outcome = outcome;
+  run.gold = o.gold != null ? o.gold : run.startGold;
+  if (o.lp != null) run.lp = o.lp;
+  run.gainedCards = (o.gained || []).slice();
+  run.rentals = (o.rentals || []).slice();
+  return run;
+}
+
+t('清算の減額：マスター撃破（win）は今日の獲得ぶんが丸ごと残る', () => {
+  const meta = freshMeta();                              /* gold: 500 */
+  const run = endedRun(meta, 'win', { gold: 900 });
+  const g = CQRun.settleGold(run);
+  eq(g.carried, 500, '持ち込みは出発時のＧ');
+  eq(g.earned, 400, '今日の獲得は 900−500');
+  eq(g.cut, 0, 'クリアなら減額なし');
+  eq(g.final, 900, '所持Ｇはそのまま');
+});
+
+t('清算の減額：リタイヤは獲得ぶんの50%だけ失う（持ち込みは減らない）', () => {
+  const meta = freshMeta();
+  const run = endedRun(meta, 'retire', { gold: 900 });
+  const g = CQRun.settleGold(run);
+  eq(g.cut, 200, '400の50%＝200');
+  eq(g.final, 700, '900−200。持ち込みの500は残る');
+});
+
+t('清算の減額：ゲームオーバーは獲得ぶんの75%を失う', () => {
+  const meta = freshMeta();
+  const run = endedRun(meta, 'lose', { gold: 900 });
+  const g = CQRun.settleGold(run);
+  eq(g.cut, 300, '400の75%＝300');
+  eq(g.final, 600, '900−300');
+});
+
+t('清算の減額：買い物で持ち込みを食い込んだ日は、減額されない（獲得が0扱い）', () => {
+  /* マイナスの獲得に率を掛けると「損したぶんが返ってくる」ので、earned は 0 で止める。 */
+  const meta = freshMeta();
+  const run = endedRun(meta, 'lose', { gold: 200 });     /* 500持って出て200まで使った */
+  const g = CQRun.settleGold(run);
+  eq(g.earned, 0, '獲得はマイナスにしない');
+  eq(g.cut, 0, '減額もしない');
+  eq(g.final, 200, '使った結果がそのまま残る');
+});
+
+t('清算の減額：減額は10Ｇ単位に丸める（宝箱・売値と同じ刻み）', () => {
+  const meta = freshMeta();
+  const run = endedRun(meta, 'retire', { gold: 500 + 375 });
+  eq(CQRun.settleGold(run).cut, 190, '375の50%＝187.5→190');
+});
+
+t('清算：settle が減額後のＧを meta に書く', () => {
+  const meta = freshMeta();
+  const run = endedRun(meta, 'retire', { gold: 900 });
+  CQRun.settle(run, meta);
+  eq(meta.gold, 700, 'meta.gold は減額後');
+  eq(run.settled.gold.cut, 200, '内訳が run.settled に残る（結果画面が使う）');
+});
+
+t('清算：2回呼んでも二重に減額されない', () => {
+  /* 二重タップ等の保険。1回目で称号も配り終えているので、2回目で消えないことも確かめる。 */
+  const meta = freshMeta();
+  const run = endedRun(meta, 'lose', { gold: 900 });
+  CQRun.settle(run, meta);
+  const after1 = meta.gold, titles1 = meta.titles.slice(), day1 = meta.day;
+  CQRun.settle(run, meta);
+  eq(meta.gold, after1, 'Ｇはもう減らない');
+  eq(meta.titles, titles1, '称号も増えない');
+  eq(meta.day, day1, '日数も進まない');
+});
+
+t('称号：初めてランを終えると「初めての帰還」が付く（終わり方は問わない）', () => {
+  const meta = freshMeta();
+  const run = endedRun(meta, 'lose', { gold: 500, lp: 0 });
+  CQRun.settle(run, meta);
+  eq(meta.titles.indexOf('firstReturn') >= 0, true, '敗北でも付く');
+  /* 2回目のランでは付かない */
+  const meta2 = Object.assign({}, meta);
+  const run2 = endedRun(meta2, 'retire', { gold: 500 });
+  eq(CQRun.earnedTitles(run2, meta2).map((x) => x.key).indexOf('firstReturn'), -1, '2回目は付かない');
+});
+
+t('称号：エリアのマスターを初めて撃破すると踏破者の称号が付く', () => {
+  const meta = freshMeta();
+  const run = endedRun(meta, 'win', { gold: 500, areaId: 'grassland' });
+  CQRun.settle(run, meta);
+  eq(meta.titles.indexOf('clearGrassland') >= 0, true, '草原の踏破者');
+  eq(meta.titles.indexOf('clearForest') >= 0, false, '行っていない森の分は付かない');
+});
+
+t('称号：リタイヤ・敗北では踏破者の称号は付かない', () => {
+  const meta = freshMeta();
+  const run = endedRun(meta, 'retire', { gold: 500, areaId: 'grassland' });
+  eq(CQRun.earnedTitles(run, meta).map((x) => x.key), ['firstReturn'], '帰還だけ');
+});
+
+t('称号：「無傷の一日」はクリア時のＬＰが出発時（10）以上のとき（2026-08-29本人確定）', () => {
+  /* 追補の原文は「ＬＰ満タン」だが、ランは10／15で始まる＝満タンではないため、
+   * 文字どおりだと回復してからクリアしないと取れない。出発時まで保っていればよい、に確定。 */
+  const meta = freshMeta();
+  const kept = endedRun(meta, 'win', { gold: 500, lp: 10 });
+  eq(CQRun.earnedTitles(kept, meta).map((x) => x.key).indexOf('flawless') >= 0, true, 'ＬＰ10で付く');
+  const healed = endedRun(meta, 'win', { gold: 500, lp: 15 });
+  eq(CQRun.earnedTitles(healed, meta).map((x) => x.key).indexOf('flawless') >= 0, true, '回復済みでも付く');
+  const hurt = endedRun(meta, 'win', { gold: 500, lp: 9 });
+  eq(CQRun.earnedTitles(hurt, meta).map((x) => x.key).indexOf('flawless') >= 0, false, '1でも削れたら付かない');
+  const lost = endedRun(meta, 'lose', { gold: 500, lp: 10 });
+  eq(CQRun.earnedTitles(lost, meta).map((x) => x.key).indexOf('flawless') >= 0, false, 'クリアでなければ付かない');
+});
+
+t('称号：同じ称号は二度付かない', () => {
+  const meta = freshMeta();
+  CQRun.settle(endedRun(meta, 'win', { gold: 500, lp: 10 }), meta);
+  const before = meta.titles.slice();
+  CQRun.settle(endedRun(meta, 'win', { gold: 500, lp: 10 }), meta);
+  eq(meta.titles, before, '2回目のクリアでは増えない');
+});
+
+t('通算日数：ランを終えるたびに1日進む', () => {
+  const meta = freshMeta();
+  eq(meta.day, undefined, '初期メタにはまだ無い');
+  CQRun.settle(endedRun(meta, 'retire', { gold: 500 }), meta);
+  eq(meta.day, 1, '1日目');
+  CQRun.settle(endedRun(meta, 'lose', { gold: 500 }), meta);
+  eq(meta.day, 2, '2日目');
+});
+
+t('日誌：終わり方ごとのテンプレートに値が入る（算用数字・2026-08-29本人確定）', () => {
+  eq(CQLore.journalLine('clear', { day: 37, area: '草原', count: 2, lp: 4 }),
+    '37日目。草原。書き留めた魂 2。ＬＰ 4で戻る。', 'クリア');
+  eq(CQLore.journalLine('bossFirst', { day: 39, area: '森', master: 'フードの記録者' }),
+    '39日目。森。フードの記録者 を降す。', 'ボス初撃破');
+  eq(CQLore.journalLine('retire', { day: 38, area: '森' }), '38日目。森。引き返す。', 'リタイヤ');
+  eq(CQLore.journalLine('gameOver', { day: 40, area: '森' }), '40日目。森。倒れて戻る。', 'ゲームオーバー');
+  eq(CQLore.journalLine('nope', {}), '', '知らない種類は空文字（画面が壊れない）');
+});
+
+t('日誌：pushJournal で積み上がり、古い行から捨てられる', () => {
+  const meta = freshMeta();
+  CQRun.pushJournal(meta, '1日目。草原。引き返す。');
+  CQRun.pushJournal(meta, '2日目。森。倒れて戻る。');
+  eq(meta.journal.length, 2, '2行');
+  eq(meta.journal[1], '2日目。森。倒れて戻る。', '新しい行が末尾');
+  CQRun.pushJournal(meta, '');
+  eq(meta.journal.length, 2, '空文字は積まない');
+  for (let i = 0; i < 250; i++) CQRun.pushJournal(meta, i + '日目。');
+  eq(meta.journal.length, 200, '上限200行で頭から捨てる');
+  eq(meta.journal[199], '249日目。', '最後は最新の行');
+});
+
+t('アンバーの一言：終わり方ごとに台本§7.1の文面がある', () => {
+  const r = CQLore.LORE.result;
+  eq(!!(r.clear && r.retire && r.gameOver && r.gameOverFirst), true, '4種そろっている');
+  eq(r.retire.face, 'down', 'リタイヤは down（過去に触れる台詞なので台本§0の規約どおり）');
+  eq(r.clear.lines.length <= 2, true, '吹き出しは2行まで（台本§0）');
+  Object.keys(r).forEach((k) => {
+    r[k].lines.forEach((line) => {
+      eq(line.length <= 28, true, k + ' の各行は全角28字以内（台本§0）：' + line);
+      eq(line.indexOf('！') < 0, true, k + ' に感嘆符を使わない（台本§0）：' + line);
+    });
+  });
+});
+
+t('メタデータ：古いセーブにも titles / journal / day の入れ物が用意される', () => {
+  const old = { book: {}, deck: { 8: 1 }, known: [8], gold: 0, cleared: [] };
+  CQCollection.ensure(old);
+  eq(old.titles, [], '称号');
+  eq(old.journal, [], '日誌');
+  eq(old.day, 0, '通算日数');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

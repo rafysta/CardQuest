@@ -1488,24 +1488,173 @@ function renderLoot() {
       どちらを選んでもカードは必ず手に入ります。</p>`;
 }
 
-/* ================= 結果画面 ================= */
+/* ================= 結果画面（M6.6 WP11・追補§4 WP11） ================= */
+
+/** ランを終える共通処理。清算（`CQRun.settle`）に加えて、台本の側の仕事——日誌の1行と
+ * 「初めてのゲームオーバー」の判定——をここでまとめる。エンジン（run.js）は台本（lore.js）に
+ * 依存させたくないので、文面の組み立てはUI側のこの関数が引き受ける形にしてある。
+ * 呼び出しは戦闘決着（advanceAfterBattle）とリタイヤの2箇所だけ＝ランにつき1回。 */
+function finishRun(run) {
+  const meta = RUI.meta;
+  const area = CQAreas.get(run.areaId);
+  /* 日誌の「ボス初撃破の日」用。settle() が meta.cleared に足してしまう前に見ておく。 */
+  const firstClear = run.outcome === 'win' && (meta.cleared || []).indexOf(run.areaId) < 0;
+  /* NEWバッジ用。settle() は gainedCards を known へ登録してしまうので、
+   * 「このランより前に知っていた種類」はここで写しを取っておかないと復元できない。 */
+  const knownBefore = ((meta.known || []).slice());
+  CQRun.settle(run, meta);
+  const kind = run.outcome === 'win' ? (firstClear ? 'bossFirst' : 'clear')
+    : run.outcome === 'retire' ? 'retire' : 'gameOver';
+  const line = CQLore.journalLine(kind, {
+    day: meta.day,
+    area: area ? area.name : run.areaId,
+    count: (run.gainedCards || []).length,
+    lp: run.lp,
+    master: area ? area.bossName : 'マスター'
+  });
+  CQRun.pushJournal(meta, line);
+  if (run.settled) {
+    run.settled.journal = line;
+    run.settled.knownBefore = knownBefore;
+    /* 台本§5 gameOverFirst＝『世界観とプレイヤー案内』§6.3 #13「記録は失われない」。
+     * 原作最大のストレスが無いことを、プレイヤーが最初に不安になる瞬間に伝える一節。 */
+    if (run.outcome === 'lose' && !CQSave.hintSeen(meta, 'gameOverFirst')) {
+      run.settled.gameOverFirst = true;
+      CQSave.markHint(meta, 'gameOverFirst');
+    }
+  }
+  CQSave.saveMeta(RUN_STORAGE, meta);
+  CQSave.clearRun(RUN_STORAGE);
+  RUI.view = 'result';
+}
+
+/** 結果画面のカードタイル。グリッドの `cgTileHTML` とは違い**押せない**（閲覧専用）ので、
+ * data-act を持たせず、バッジだけ差し替えられるようにしてある。 */
+function resTileHTML(id, badge) {
+  const c = CARD_BY_ID[id];
+  if (!c) return '';
+  return `<div class="res-tile" title="${esc(c.n)}">
+      <div class="cg-tile-art">${artInner(c, 3)}</div>
+      ${badge || ''}
+    </div>`;
+}
+
+/** 所持Ｇのカウントアップ（追補§4 WP11-4）。描き直しのたびに走らせると数字が跳ねるので、
+ * 1つのランにつき1回だけ animate する（2回目以降は最終値をそのまま出す）。 */
+function runCountUp(el, to, ms) {
+  if (!el) return;
+  const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const from = 0;
+  function step(now) {
+    const p = Math.min(1, ((now || Date.now()) - t0) / ms);
+    /* 終わりぎわを緩める（ease-out）。数字が止まる瞬間が読み取りやすくなる。 */
+    const v = Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+    el.textContent = String(v);
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
 
 function renderResult() {
   const run = RUI.run;
   const win = run.outcome === 'win';
   const title = win ? 'クリア！' : run.outcome === 'retire' ? 'リタイヤ' : 'ゲームオーバー';
-  const returned = run.rentals.map(function (id) {
-    return '<span class="rental-badge-inline">借</span>' + esc(CARD_BY_ID[id].n);
-  });
-  const gained = run.gainedCards.map(function (id) { return CARD_BY_ID[id].n; });
+  const area = CQAreas.get(run.areaId);
+  /* 中断からの復帰など、清算の内訳が残っていない経路でも落ちないようにしておく
+   * （settleGold は副作用が無いので、ここで作り直しても安全）。 */
+  const st = run.settled || { gold: CQRun.settleGold(run), titles: [], day: RUI.meta.day || 0 };
+  const g = st.gold;
+
+  /* --- 1. 取得したカード（初入手には NEW バッジ） ------------------------ */
+  /* NEW の判定は「このランで初めて記憶データに載った種類」。settle() が既に known へ
+   * 登録した後なので meta.known では判定できない——run.gainedCards の中で、その id が
+   * 初めて現れた1枚だけを NEW にする（同じカードを2枚拾った日は1枚目だけが NEW）。 */
+  const knownBefore = st.knownBefore || [];
+  const seen = {};
+  const gainedHTML = (run.gainedCards || []).map(function (id) {
+    const isNew = knownBefore.indexOf(id) < 0 && !seen[id];
+    seen[id] = true;
+    return resTileHTML(id, isNew ? '<span class="res-badge-new">NEW</span>' : '');
+  }).join('');
+
+  /* --- 2. 返却するカード（レンタル・借バッジ） --------------------------- */
+  const returnedHTML = (run.rentals || []).map(function (id) {
+    return resTileHTML(id, '<span class="cg-badge">借</span>');
+  }).join('');
+
+  /* --- 3. ゴールドのひっ算（段階表示はCSSのアニメーション遅延で出す） ----- */
+  const cutLabel = run.outcome === 'retire' ? 'リタイヤ ▲50%'
+    : run.outcome === 'lose' ? 'ゲームオーバー ▲75%' : '減額なし（撃破）';
+  const calcHTML = `
+    <table class="res-calc">
+      <tr class="res-row" style="--d:0ms"><th>持ち込み</th><td>${g.carried}</td></tr>
+      <tr class="res-row" style="--d:320ms"><th>今日の獲得</th><td>＋ ${g.earned}</td></tr>
+      <tr class="res-row res-cut ${g.cut ? '' : 'res-none'}" style="--d:640ms">
+        <th>${cutLabel}</th><td>${g.cut ? '− ' + g.cut : '—'}</td></tr>
+      <tr class="res-row res-total" style="--d:960ms"><th>所持Ｇ</th><td><b id="res-gold">0</b></td></tr>
+    </table>`;
+
+  /* --- 5. 称号（このランで新しく得たものだけ並べる） --------------------- */
+  const titlesHTML = (st.titles || []).length
+    ? `<ul class="res-title-list">${st.titles.map(function (t, i) {
+        return `<li class="res-title-item" style="--d:${1100 + i * 260}ms">
+            <span class="res-title-name">${esc(t.name)}</span>
+            <span class="res-title-desc">${esc(t.desc)}</span>
+          </li>`;
+      }).join('')}</ul>`
+    : '<p class="res-none-note">このランで新しく得た称号はありません。</p>';
+
+  /* --- アンバーの一言（台本§7.1） --------------------------------------- */
+  const rl = CQLore.LORE.result;
+  const bubble = win ? rl.clear
+    : run.outcome === 'retire' ? rl.retire
+      : (st.gameOverFirst ? rl.gameOverFirst : rl.gameOver);
+  const portrait = bubble.face === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
+
   runRoot().innerHTML = `
-    <div class="node-panel">
-      <h3 class="${win ? 'run-win' : 'run-lose'}">${title}</h3>
-      <p>所持Ｇ：${run.gold}</p>
-      ${gained.length ? `<p>獲得カード：${gained.map(esc).join('・')}</p>` : ''}
-      ${returned.length ? `<p>返却（レンタル）：${returned.join('・')}</p>` : ''}
-      <button class="btn ok" data-act="back-home">エリア選択へ</button>
+    <div class="res-wrap">
+      <div class="res-head">
+        <h3 class="res-title ${win ? 'run-win' : 'run-lose'}">${title}</h3>
+        <div class="res-sub">${st.day}日目・${esc(area ? area.name : run.areaId)}
+          ／ＬＰ ${run.lp}／${run.maxLp}</div>
+      </div>
+      <div class="res-body">
+        <div class="res-col">
+          <section class="res-sec">
+            <h4>取得したカード<span class="res-n">${(run.gainedCards || []).length}枚</span></h4>
+            ${gainedHTML ? `<div class="res-tiles">${gainedHTML}</div>`
+              : '<p class="res-none-note">今回は何も書き留められませんでした。</p>'}
+          </section>
+          <section class="res-sec">
+            <h4>返却するカード<span class="res-n">${(run.rentals || []).length}枚</span></h4>
+            ${returnedHTML ? `<div class="res-tiles">${returnedHTML}</div>`
+              : '<p class="res-none-note">借りているカードはありません。</p>'}
+          </section>
+        </div>
+        <div class="res-col res-col-right">
+          <section class="res-sec res-fixed"><h4>清算</h4>${calcHTML}</section>
+          <section class="res-sec"><h4>称号</h4>${titlesHTML}</section>
+        </div>
+      </div>
+      <div class="res-foot">
+        <div class="res-amber">
+          <img class="res-face" src="${portrait}" alt="" draggable="false" onerror="this.remove()">
+          <div class="res-amber-lines">${bubble.lines.map(esc).join('<br>')}</div>
+        </div>
+        <div class="res-foot-right">
+          <p class="res-journal">${esc(st.journal || '')}</p>
+          <p class="res-carry-note">デッキは次の冒険にそのまま持ち越されます。</p>
+          <button class="btn ok res-done" data-act="back-home">今回の探検を終える</button>
+        </div>
+      </div>
     </div>`;
+
+  /* 所持Ｇのカウントアップは1つのランにつき1回だけ（描き直しでは最終値を静止表示）。 */
+  const goldEl = document.getElementById('res-gold');
+  if (goldEl) {
+    if (RUI.resultCounted === run) { goldEl.textContent = String(g.final); }
+    else { RUI.resultCounted = run; runCountUp(goldEl, g.final, 1400); }
+  }
 }
 
 /* ================= 描画のふりわけ ================= */
@@ -1570,10 +1719,7 @@ function advanceAfterBattle() {
   const run = RUI.run;
   if (run.lootPending && run.lootPending.length) { RUI.view = 'loot'; runSave(); return; }
   if (run.outcome) {
-    CQRun.settle(run, RUI.meta);
-    CQSave.saveMeta(RUN_STORAGE, RUI.meta);
-    CQSave.clearRun(RUN_STORAGE);
-    RUI.view = 'result';
+    finishRun(run);                      /* 清算＋日誌＋保存＋結果画面へ（M6.6 WP11） */
   } else {
     RUI.view = 'map';
     runSave();
@@ -1782,15 +1928,17 @@ function runAct(act, id, idx) {
     case 'node-done':
       RUI.view = 'map'; runSave();
       return runRender();
+    /* M6.6 WP11：清算の減額（リタイヤ▲50%）を実装したので、確認ダイアログでも明示する。
+     * それまでは「所持Ｇは持ち帰れます」と書いてあったが、減額の実装が入った以上は嘘になる
+     * （「諦める」側のダイアログはWP12の時点で既に▲75%と宣言していた）。 */
     case 'retire':
-      return showConfirm('ここでリタイヤしますか？\nここまでの所持Ｇ・カードは持ち帰れます。', function () {
-        CQRun.retire(run);
-        CQRun.settle(run, RUI.meta);
-        CQSave.saveMeta(RUN_STORAGE, RUI.meta);
-        CQSave.clearRun(RUN_STORAGE);
-        RUI.view = 'result';
-        runRender();
-      }, 'リタイヤする');
+      return showConfirm(
+        'ここでリタイヤしますか？\n集めたＧの50%を失いますが、カードは持ち帰れます。',
+        function () {
+          CQRun.retire(run);
+          finishRun(run);
+          runRender();
+        }, 'リタイヤする');
     case 'back-home':
       RUI.run = null; RUI.view = 'areaSelect';
       return runRender();

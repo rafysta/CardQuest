@@ -73,7 +73,7 @@ const BSTAT = {
 const FSTAT = { first: { n: 0, win: 0 }, second: { n: 0, win: 0 } };
 /* 1ランあたりの経済（マップ仕様書§7・追補§7-1の確認用）。
  * WP6で通常戦闘のＧが無くなったので、宝箱が主収入になっているかを見る。 */
-const ESTAT = { runs: 0, goldEnd: 0, cards: 0 };
+const ESTAT = { runs: 0, goldEnd: 0, goldKept: 0, goldCut: 0, cards: 0 };  /* goldKept/goldCut は M6.6 WP11 の清算の減額ぶん */
 
 function mockStorage() {
   const m = {};
@@ -260,7 +260,13 @@ function playRun(areaId, seed, meta, rng) {
   }
   const knownBefore = (meta.known || []).length;
   ESTAT.runs++; ESTAT.goldEnd += run.gold; ESTAT.cards += (run.gainedCards || []).length;
+  /* M6.6 WP11：清算で「今日の獲得ぶん」が終わり方に応じて削られる（リタイヤ▲50%・
+   * ゲームオーバー▲75%）。ランの大半は敗北なので、ここが経済に一番効く数字になった。
+   * settleGold は副作用が無いので、settle の前に呼んで内訳だけ先に集計してよい。 */
+  const cut = CQRun.settleGold(run);
+  ESTAT.goldCut += cut.cut;
   CQRun.settle(run, meta);
+  ESTAT.goldKept += meta.gold;
   checkRunInvariants(run, meta);
   /* 清算後の所持デッキ(meta.deck)は run.deck の複製（レンタル配列は混ぜない）。
    * M6.6 WP3：ただし空白(180)と0枚のキーは保存しないので、正の実カードだけを比べる。
@@ -323,7 +329,9 @@ console.log(`  先攻・後攻べつ（全戦闘）：先攻 ${pct(FSTAT.first.w
       ? (FSTAT.first.win / FSTAT.first.n * 100 - FSTAT.second.win / FSTAT.second.n * 100).toFixed(1)
       : '—')} ポイント`);
 console.log(`  1ランあたり：獲得カード ${(ESTAT.cards / Math.max(1, ESTAT.runs)).toFixed(2)} 枚`
-  + ` / 清算前の所持Ｇ ${(ESTAT.goldEnd / Math.max(1, ESTAT.runs)).toFixed(0)}`);
+  + ` / 清算前の所持Ｇ ${(ESTAT.goldEnd / Math.max(1, ESTAT.runs)).toFixed(0)}`
+  + ` / 清算後 ${(ESTAT.goldKept / Math.max(1, ESTAT.runs)).toFixed(0)}`
+  + ` / 減額 ${(ESTAT.goldCut / Math.max(1, ESTAT.runs)).toFixed(0)}`);
 if (stat.errors.length) {
   console.log(`\n例外 ${stat.errors.length} 件:`);
   stat.errors.slice(0, 10).forEach((e) => console.log('  ' + e));

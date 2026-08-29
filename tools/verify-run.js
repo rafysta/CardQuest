@@ -609,9 +609,45 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await page.click('[data-act="retire"]');
   await wait(() => page.$('[data-act="cq-confirm-yes"]'));
   ok('リタイヤ確認がゲーム内ダイアログで出る', !!(await page.$('.cq-confirm-box')));
+  /* M6.6 WP11：確認ダイアログの文面に減額（▲50%）が書かれていること。
+   * それまでは「所持Ｇは持ち帰れます」だったので、減額を実装した以上は嘘になる。 */
+  ok('リタイヤの確認に減額（50%）が明示されている（M6.6 WP11）',
+    /50%/.test(await page.$eval('.cq-confirm-box', (el) => el.textContent)));
+  const goldBefore = await page.evaluate(() => ({ gold: RUI.run.gold, start: RUI.run.startGold }));
   await page.click('[data-act="cq-confirm-yes"]');
   await wait(() => page.$('[data-act="back-home"]'));
   ok('リタイヤすると結果画面が出る', !!(await page.$('[data-act="back-home"]')));
+
+  /* --- 6-b) リザルト画面の中身（M6.6 WP11・追補§4 WP11の6項目） --- */
+  await wait(() => page.$('.res-wrap'));
+  ok('結果画面が新しいリザルト（.res-wrap）になっている（M6.6 WP11）', !!(await page.$('.res-wrap')));
+  ok('取得したカードと返却するカードの2区画がある',
+    (await page.$$('.res-sec')).length >= 4);
+  /* 清算のひっ算：持ち込み／今日の獲得／減額／所持Ｇ の4行 */
+  const calcRows = await page.$$eval('.res-calc .res-row th', (els) => els.map((e) => e.textContent.trim()));
+  ok('清算がひっ算（持ち込み・獲得・減額・所持Ｇ）で出る', calcRows.length === 4, calcRows.join('｜'));
+  ok('減額の行がリタイヤ▲50%になっている', /50%/.test(calcRows[2] || ''), calcRows[2]);
+  /* 所持Ｇはカウントアップするので、止まるまで待ってから読む。 */
+  await page.waitForTimeout(1800);
+  const shown = await page.$eval('#res-gold', (el) => +el.textContent);
+  const expect = await page.evaluate(() => RUI.meta.gold);
+  ok('所持Ｇがカウントアップして清算後の額で止まる', shown === expect, shown + ' / ' + expect);
+  ok('清算後のＧは、獲得ぶんの50%だけ減っている（持ち込みは減らない）',
+    expect === goldBefore.gold - Math.round(Math.max(0, goldBefore.gold - goldBefore.start) * 0.5 / 10) * 10,
+    JSON.stringify(goldBefore) + ' -> ' + expect);
+  ok('称号の区画がある', !!(await page.$('.res-title-list, .res-none-note')));
+  ok('アンバーの一言が出る（台本§7.1）',
+    !!(await page.$('.res-amber-lines')) && !!(await page.evaluate(
+      () => document.querySelector('.res-amber-lines').textContent.trim())));
+  const journal = await page.$eval('.res-journal', (el) => el.textContent.trim());
+  ok('日誌が1行出る（台本§7.2）', /日目。/.test(journal), journal);
+  ok('日誌が cq_meta に蓄積される',
+    await page.evaluate(() => (RUI.meta.journal || []).length > 0));
+  ok('通算日数が1日進んでいる', await page.evaluate(() => RUI.meta.day >= 1));
+  ok('「デッキは次の冒険に持ち越し」の但し書きがある',
+    /持ち越/.test(await page.$eval('.res-carry-note', (el) => el.textContent)));
+  ok('締めのボタンが「今回の探検を終える」になっている',
+    /今回の探検を終える/.test(await page.$eval('[data-act="back-home"]', (el) => el.textContent)));
   await shot('result');
   await page.click('[data-act="back-home"]');
   await wait(() => page.$('.area-grid'));

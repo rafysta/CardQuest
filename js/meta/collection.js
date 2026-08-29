@@ -38,10 +38,16 @@
     return { ok: true };
   }
 
+  /** メタデータに、あるべき入れ物が無ければ作る（旧セーブの読み込み経路もここを通る）。
+   * M6.6 WP11 で titles／journal／day を追加した。**古いセーブには当然どれも無い**ので、
+   * ここで空を用意しておかないと、称号の付与や日誌の追記が undefined への push になる。 */
   function ensure(meta) {
     if (!meta.book) meta.book = {};
     if (!meta.deck) meta.deck = {};
     if (!meta.known) meta.known = [];
+    if (!meta.titles) meta.titles = [];       /* 獲得済みの称号キー（M6.6 WP11） */
+    if (!meta.journal) meta.journal = [];     /* 日誌の行（新しいものを末尾に足す。M6.6 WP11） */
+    if (typeof meta.day !== 'number') meta.day = 0;  /* 通算日数＝終えたランの数（同上） */
     return meta;
   }
 

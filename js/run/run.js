@@ -110,6 +110,9 @@
       at: map.start,
       lp: 10, maxLp: 15,
       gold: meta.gold,
+      /* M6.6 WP11：清算のひっ算（持ち込み／今日の獲得／減額）と称号「無傷の一日」の判定に、
+       * 出発時点の値が要る。run.gold は買い物で減りも増えもするので、後から復元できない。 */
+      startGold: meta.gold, startLp: 10,
       deck: Object.assign({}, meta.deck),
       bookAdd: {},
       rentals: [],
@@ -485,15 +488,84 @@
 
   function retire(run) { run.outcome = 'retire'; }
 
+  /* ---- M6.6 WP11：清算の減額と称号 -------------------------------------- */
+
+  /** 終わり方ごとの減額率（追補§4 WP11-3）。**減るのは「今日の獲得ぶん」だけ**で、
+   * 出発時に持って出たＧ（startGold）は終わり方に関わらず減らない——だから
+   * 「リタイヤは獲得額−50%」という書き方になっている。マスター撃破は減額なし。 */
+  const SETTLE_CUT = { win: 0, retire: 0.5, lose: 0.75 };
+
+  /** 清算のひっ算に出す内訳を計算する（副作用なし）。UIの段階表示と settle() が
+   * **同じ関数**を見るようにしてある——表示と実額がズレる事故は、換金所の売値で一度
+   * やっているので繰り返さない（§4 WP9-b の sellPrice と同じ理由）。
+   *   carried … 出発時に持って出たＧ（減らない）
+   *   earned  … 今日の獲得ぶん。買い物で持ち出しぶんまで食い込んだ場合は 0
+   *             （マイナスの獲得に減額を掛けて“損したぶんが返ってくる”のを防ぐ）
+   *   cut     … earned に rate を掛けた減額（10Ｇ単位に丸める。宝箱・売値と同じ刻み）
+   *   final   … 清算後の所持Ｇ＝run.gold − cut */
+  function settleGold(run) {
+    const rate = SETTLE_CUT[run.outcome] || 0;
+    const carried = run.startGold != null ? run.startGold : run.gold;
+    const earned = Math.max(0, run.gold - carried);
+    const cut = Math.round(earned * rate / 10) * 10;
+    return { carried: carried, earned: earned, rate: rate, cut: cut, final: run.gold - cut };
+  }
+
+  /** 称号の初期セット4つ（追補§4 WP11-5）。cond(run, meta) が true なら獲得。
+   * meta を見てよいのは「初めて」を判定するため（cleared は settle() より前の状態を見る）。 */
+  const TITLES = [
+    { key: 'firstReturn', name: '初めての帰還', desc: '初めてランを終えた',
+      cond: function () { return true; } },                       /* 終わり方は問わない */
+    { key: 'clearGrassland', name: '草原の踏破者', desc: '草原のマスターを初めて撃破',
+      cond: function (run) { return run.outcome === 'win' && run.areaId === 'grassland'; } },
+    { key: 'clearForest', name: '森の踏破者', desc: '森のマスターを初めて撃破',
+      cond: function (run) { return run.outcome === 'win' && run.areaId === 'forest'; } },
+    /* 「無傷の一日」＝クリア時のＬＰが出発時（10）以上（2026-08-29 本人確定）。
+     * 追補の原文は「ＬＰ満タンのまま」だが、ランは 10／15 で始まる＝満タンではないため、
+     * 文字どおりだと回復してからクリアしないと取れない称号になってしまう。
+     * 途中で削られても休憩などで取り返してあればよい、という条件に確定した。 */
+    { key: 'flawless', name: '無傷の一日', desc: 'ＬＰを出発時まで保ったままクリア',
+      cond: function (run) {
+        return run.outcome === 'win' && run.lp >= (run.startLp != null ? run.startLp : run.lp);
+      } }
+  ];
+
+  /** このランで**新しく**得た称号（既に持っているものは返さない）。副作用なし。 */
+  function earnedTitles(run, meta) {
+    const had = (meta && meta.titles) || [];
+    return TITLES.filter(function (t) {
+      return had.indexOf(t.key) < 0 && t.cond(run, meta);
+    });
+  }
+
+  /** 日誌に1行足す（M6.6 WP11・台本§7.2）。文面の組み立ては js/lore.js の仕事なので、
+   * ここは受け取った文字列を積むだけにしてある（エンジンが台本に依存しないように）。 */
+  const JOURNAL_MAX = 200;
+  function pushJournal(meta, line) {
+    CQCollection.ensure(meta);
+    if (!line) return meta.journal;
+    meta.journal.push(line);
+    if (meta.journal.length > JOURNAL_MAX) meta.journal = meta.journal.slice(-JOURNAL_MAX);
+    return meta.journal;
+  }
+
   /** ランを終えて meta（永続所持データ）に反映する（M6.6 WP3：移動モデル）。
    *   deck   … run.deck の複製が保存デッキになる（次のランへそのまま持ち越し）。
    *            ラン中の売却で減った分は本に戻らない＝カードが世界から消える（§2-8）。
    *            旧セーブ由来の実体の空白(180)はここで捨てる（空白は実体で持たない）。
    *   book   … ラン中に本行きになった分（run.bookAdd）を加算。
    *   known  … ラン中に入手した種類（run.gainedCards）を登録。
-   *            レンタル（run.rentals）は登録しない＝返却されて記憶にも残らない。 */
+   *            レンタル（run.rentals）は登録しない＝返却されて記憶にも残らない。
+   *   gold   … M6.6 WP11：終わり方に応じて**今日の獲得ぶんだけ**減らして書く（settleGold）。
+   *   titles / journal / day … 同じくWP11。内訳は run.settled にも残し、
+   *            結果画面が「いま何が起きたか」を再計算せずに描けるようにする。
+   *
+   * **2回呼ばないこと。** 2度目は称号がもう meta にあるので新規ゼロになり、Ｇはさらに
+   * 減額される。呼び出しは advanceAfterBattle と retire の2箇所だけ＝ランにつき1回。
+   * 事故（二重タップ等）に備えて run.settled で番をしてある。 */
   function settle(run, meta) {
     CQCollection.ensure(meta);
+    if (run.settled) return meta;                     /* 二重清算の防止（上のコメント参照） */
     meta.deck = Object.assign({}, run.deck);
     delete meta.deck[BLANK];
     Object.keys(meta.deck).forEach(function (k) { if (meta.deck[k] <= 0) delete meta.deck[k]; });
@@ -501,8 +573,15 @@
       if (run.bookAdd[k] > 0) meta.book[k] = (meta.book[k] || 0) + run.bookAdd[k];
     });
     (run.gainedCards || []).forEach(function (id) { CQCollection.registerKnown(meta, id); });
-    meta.gold = run.gold;
+    const gold = settleGold(run);
+    meta.gold = gold.final;
+    /* 称号は cleared を更新する**前**に判定する（「初めて撃破」が cleared 由来ではなく
+     * meta.titles 由来なので実害は無いが、判定材料の並びを素直に保つ）。 */
+    const titles = earnedTitles(run, meta);
+    titles.forEach(function (t) { meta.titles.push(t.key); });
+    meta.day = (meta.day || 0) + 1;
     if (run.outcome === 'win' && meta.cleared.indexOf(run.areaId) < 0) meta.cleared.push(run.areaId);
+    run.settled = { gold: gold, titles: titles, day: meta.day };
     return meta;
   }
 
@@ -513,7 +592,8 @@
     battleSeed, firstTurnOf, battleSetup, reportBattle, reportFlee,
     canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
-    sell, sellPrice, exchangeLeave, resolveQuestion, retire, settle
+    sell, sellPrice, exchangeLeave, resolveQuestion, retire, settle,
+    SETTLE_CUT, settleGold, TITLES, earnedTitles, pushJournal
   };
   global.CQRun = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

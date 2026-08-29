@@ -117,6 +117,28 @@
         { face: 'calm', lines: ['本は重い。全部は持てん。', '持っていく分を選べ。四十枚までだ。'] },
         { face: 'calm', lines: ['置いていったものは街で待っている。', '売り買いしたければ、持って出ろ。'] }
       ]
+    },
+
+    /* リザルト画面のアンバーの一言（台本§7.1・M6.6 WP11）。終わり方ごとに1つだけ出す。
+     * ゲームオーバーだけ初回と2回目以降で分ける——台本§7.1が初回に §5 `gameOverFirst`
+     * （「記録は失われない」＝原作最大のストレスが無いことの説明）を出すよう指定しており、
+     * 『世界観とプレイヤー案内』§6.3 #13 が「最優先で作る」としている一節でもある。
+     * ここが伝わるかどうかで2回目のプレイに進むかが決まる、という位置づけ。 */
+    result: {
+      clear:    { face: 'calm', lines: ['戻ったか。今日の分は、書けたな。'] },
+      retire:   { face: 'down', lines: ['引き返すのは弱さではない。', '……私はそれができなかった。'] },
+      gameOver: { face: 'calm', lines: ['倒れたか。記録は残っている。次だ。'] },
+      /* 台本§5 gameOverFirst 相当。cq_meta.seenHints.gameOverFirst で一度きり。 */
+      gameOverFirst: { face: 'down', lines: ['倒れても、本は消えん。', '書いたものは、お前のものだ。'] }
+    },
+
+    /* 日誌のテンプレート（台本§7.2・M6.6 WP11）。数字は**算用数字**で出す
+     * （2026-08-29 本人確定。『世界観とプレイヤー案内』§8-5 で未確定だった点）。 */
+    journal: {
+      clear:     '{day}日目。{area}。書き留めた魂 {count}。ＬＰ {lp}で戻る。',
+      bossFirst: '{day}日目。{area}。{master} を降す。',
+      retire:    '{day}日目。{area}。引き返す。',
+      gameOver:  '{day}日目。{area}。倒れて戻る。'
     }
   };
 
@@ -144,7 +166,17 @@
     });
   }
 
-  const api = { LORE, pickOne, fill };
+  /** 日誌の1行を組み立てる（台本§7.2・M6.6 WP11）。kind は journal のキー。
+   * fill() は吹き出し（{face, lines}）向けなので、素の文字列にはこちらを使う。 */
+  function journalLine(kind, vars) {
+    const tpl = LORE.journal[kind];
+    if (!tpl) return '';
+    return tpl.replace(/\{(\w+)\}/g, function (m, k) {
+      return Object.prototype.hasOwnProperty.call(vars || {}, k) ? String(vars[k]) : m;
+    });
+  }
+
+  const api = { LORE, pickOne, fill, journalLine };
   global.CQLore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
