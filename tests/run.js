@@ -1303,22 +1303,42 @@ t('107 逃走：ＣＨ数5以上では戻らない', () => {
   CQTurn.reverseAction(m, 0, [5]);
   eq(m.board.lanes[0].unit, 13, 'そのまま残る');
 });
-t('108 強制開放：場のＣＨを全て強制オープンする（戦闘中×強制中×）', () => {
+t('108 強制開放：選んだ他ユニット1体のＣＨだけを下から順に開く（M6.7で全体→1体に修正）', () => {
+  /* 原作解析 05_magic.md §2 のとおり対象は「他ユニット1体」。v0.16.21までは盤面全部を
+   * 一括で開いていた（実装の誤り）。自分の乗っているレーンは対象外。 */
   const m = mkBattleBoard();
-  m.board.lanes[0] = lane(8, [down(151), down(151), down(108)]);
-  m.board.lanes[3] = lane(8, [down(151)]);
-  CQTurn.reverseAction(m, 0, [3]);
-  eq(m.board.lanes[0].channels.every(c => c.up), true, '自陣のＣＨが全てオープン');
-  eq(m.board.lanes[3].channels[0].up, true, '敵陣のＣＨもオープン');
+  m.board.lanes[0] = lane(8, [down(151), down(108)]);
+  m.board.lanes[3] = lane(8, [down(151), down(152)]);
+  m.board.lanes[4] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [2], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.every(c => c.up), true, '選んだレーンは全部開く');
+  eq(m.board.lanes[4].channels[0].up, false, '選ばなかったレーンは開かない');
+  eq(m.board.lanes[0].channels[0].up, false, '自分の乗っているレーンは対象外');
 });
-t('109 強制転回：場のＣＨを全て強制リバースする（戦闘中×強制中×）', () => {
+t('108 強制開放：下から順に処理する（steps が下から上に並ぶ）', () => {
   const m = mkBattleBoard();
-  m.board.lanes[0] = lane(8, [up(151), down(151), down(109)]);
-  m.board.lanes[3] = lane(8, [up(151)]);
-  CQTurn.reverseAction(m, 0, [3]);
-  eq(m.board.lanes[0].channels[0].up, false, '表だったカードが裏になる');
-  eq(m.board.lanes[0].channels[1].up, true, '裏だったカードが表になる');
-  eq(m.board.lanes[3].channels[0].up, false, '敵陣のＣＨも反転する');
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [down(151), down(152), down(153)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.lastForcedChain.steps.map(x => x.idx), [0, 1, 2], '階層0→1→2の順');
+  eq(m.lastForcedChain.aborted, null, '最後まで通る');
+});
+t('108 強制開放：既に表のＣＨは飛ばす（開放は裏のものだけ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [up(151), down(152)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.lastForcedChain.steps.map(x => x.idx), [1], '裏だった1階層目だけが対象');
+});
+t('109 強制転回：選んだ1体のＣＨを下から順に表裏ひっくり返す', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(109)]);
+  m.board.lanes[3] = lane(8, [up(151), down(152)]);
+  m.board.lanes[4] = lane(8, [up(151)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels[0].up, false, '表だったカードが裏になる');
+  eq(m.board.lanes[3].channels[1].up, true, '裏だったカードが表になる');
+  eq(m.board.lanes[4].channels[0].up, true, '選ばなかったレーンは変わらない');
 });
 t('強制開放・強制転回は互いを連鎖的に起動しない（原作CE0355）', () => {
   const m = mkBattleBoard();
@@ -1326,13 +1346,24 @@ t('強制開放・強制転回は互いを連鎖的に起動しない（原作CE
   CQTurn.reverseAction(m, 0, [2]);
   eq(m.board.lanes[0].channels[0].up, false, '109(強制中×)自身は強制開放で開かない');
 });
-t('110 閉門：自陣のオープン中のＣＨを全て同時にクローズする', () => {
+t('110 閉門：選んだ他ユニット1体のＣＨを全てクローズ（敵陣も選べる。M6.7で自陣全部→1体に修正）', () => {
+  /* 原作解析 §2「他ユニット1体（表ＣＨ1枚以上）」。119鎮静（700Ｇ・盤面全部）より
+   * 高い800Ｇなのは「狙って閉じられる」ぶん使い勝手がよいから、という説明が付く。 */
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [up(151), down(110)]);
   m.board.lanes[3] = lane(8, [up(151)]);
-  CQTurn.reverseAction(m, 0, [2]);
-  eq(m.board.lanes[0].channels[0].up, false, '自陣のカードがクローズされる');
-  eq(m.board.lanes[3].channels[0].up, true, '敵陣は影響を受けない');
+  m.board.lanes[4] = lane(8, [up(152)]);
+  CQTurn.reverseAction(m, 0, [2], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels[0].up, false, '選んだ敵陣のカードが閉じる');
+  eq(m.board.lanes[4].channels[0].up, true, '選ばなかったレーンは開いたまま');
+  eq(m.board.lanes[0].channels[0].up, true, '自分の乗っているレーンは対象外');
+});
+t('110 閉門：強制開放で開かれたＣＨを閉じ直せる（対抗札としての使い道）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(110)]);
+  m.board.lanes[3] = lane(8, [up(151), up(152)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.every(c => !c.up), true, '2枚とも閉じる');
 });
 
 section('M4 v0.13: 魔法111〜120');
@@ -1352,11 +1383,18 @@ t('112 抽出：手札を3枚得るがドロー毎にＬＰ1点を失う', () =>
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.players.self.lp, lpBefore - 3, 'ＬＰを3点消費');
 });
-t('113 透視：ＣＨ2つの内容を確認できる', () => {
+t('113 透視：相手が置いた裏向きＣＨを2枚まで、選んで確認できる（M6.7で対象を修正）', () => {
+  /* 原作解析 §2「敵が置いた裏ＣＨ×2」。v0.16.21までは自分が置いたものも含む
+   * 裏ＣＨ全部から乱数で2枚選んでいた（自分の伏せ札は元から中身が分かるので無意味）。 */
   const m = mkBattleBoard();
-  m.board.lanes[0] = lane(8, [down(151), down(113)]);
-  CQTurn.reverseAction(m, 0, [2]);
-  eq(m.board.lanes[0].channels[0].revealed, true, '裏向きのＣＨが確認される');
+  m.board.lanes[0] = lane(8, [down(151), down(113)]);          // 自分が置いた伏せ札
+  m.board.lanes[3] = lane(8, [down(152), down(153), down(155)]);
+  m.board.lanes[3].channels.forEach((c) => { c.mine = false; });
+  CQTurn.reverseAction(m, 0, [2], { choice: { picks: [{ lane: 3, idx: 0 }, { lane: 3, idx: 2 }] } });
+  eq(m.board.lanes[3].channels[0].revealed, true, '選んだ1枚目が判明する');
+  eq(m.board.lanes[3].channels[2].revealed, true, '選んだ2枚目が判明する');
+  eq(m.board.lanes[3].channels[1].revealed, false, '選ばなかったものは伏せたまま');
+  eq(m.board.lanes[0].channels[0].revealed, false, '自分が置いた伏せ札は対象外');
 });
 t('114 暗殺：敵マスター手札内のユニットを破壊＋ＬＰ1点', () => {
   const m = mkBattleBoard();
@@ -1574,12 +1612,21 @@ t('141 思念波：防御力550以下のユニットには不発（原作バグ�
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.board.lanes[3].unit, 57, '防御力550は範囲外のため不発');
 });
-t('141 思念波：防御力551〜1000のユニットには成立する（原作バグ再現：レベル制限も機能しない）', () => {
+t('141 思念波：6階層目に置けば成立する（M6.7 判断12：詠唱Ｌｖ6を本物にした）', () => {
   const m = mkBattleBoard();
-  m.board.lanes[0] = lane(8, [down(141)]);            // レベル6のはずが1階層目でも発動する
+  m.board.lanes[0] = lane(10, [down(151), down(151), down(151), down(151), down(151), down(141)]);
   m.board.lanes[3] = lane(28, []);                    // 28 スネイルリキッド D600
-  CQTurn.reverseAction(m, 0, [1]);
+  CQTurn.reverseAction(m, 0, [6]);
   eq(m.board.lanes[3].unit, null, '防御力551〜1000のユニットは破壊される');
+});
+t('141 思念波：詠唱Ｌｖ6に満たない階層では不発（M6.7 判断12）', () => {
+  /* 原作は V397==6 の分岐が存在せずレベル判定が働かないバグだったが、
+   * 「防御力1000以下を無条件破壊」という強さに見合う制約として本物にした。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(141)]);            // 1階層目
+  m.board.lanes[3] = lane(28, []);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].unit, 28, 'レベル不足で不発');
 });
 t('141 思念波：戦闘中は発動しない', () => {
   // 防御側が通常の戦闘判定でも生き残るよう、攻撃力(600)を上回る防御力にしておく
@@ -1627,12 +1674,16 @@ t('147 治癒：手札を全て捨てその枚数と同値のＬＰを回復す�
   CQTurn.reverseAction(m, 0, [1]);
   eq([m.players.self.hand, m.players.self.lp], [[], 8], '手札3枚を捨ててＬＰ+3');
 });
-t('147 治癒：戦闘中は発動しない', () => {
+t('147 治癒：戦闘中でも発動する（M6.7：資料§2の「戦闘中○」に合わせて修正）', () => {
+  /* v0.16.21までは NO_COMBAT に入れて塞いでいたが、原作解析 §2 の一覧表では
+   * 144還元・147治癒はどちらも「戦闘中○」。誤って塞いでいた。 */
   const m = duel(8, [down(147)], 8, []);
-  m.players.self.hand = [151];
+  m.players.self.hand = [151, 152];
+  const lpBefore = m.players.self.lp;
   CQCombat.declareAttack(m, 0, 3);
   CQCombat.open(m, 1);
-  eq(m.players.self.hand, [151], '戦闘中は不発');
+  eq(m.players.self.hand, [], '手札を全部捨てる');
+  eq(m.players.self.lp, Math.min(m.players.self.maxLp, lpBefore + 2), '捨てた枚数だけＬＰ回復');
 });
 t('148 妄執：自爆し任意のユニットに憑依する', () => {
   const m = mkBattleBoard();
@@ -3859,6 +3910,140 @@ t('ラン側：逃げたマスは「いま立っているのに未解決」な�
   /* この状態が「逃げて戻ってきた直後」と同じ。run-ui の runChoiceIds は
    * 現在地が未解決なら現在地自身を選択可能として返す（＝もう一度入れる）。 */
   eq(CQRun.choices(run), [], '未解決のうちは先へは進めない');
+});
+
+/* ================= M6.7 WP1: 強制リバース連鎖（108/109）の中断 ================= */
+section('M6.7 WP1: 強制リバース連鎖');
+
+/* 本人の指摘（2026-08-29）が設計の核心：
+ *   「108/109は値段の割に強力なため、様々な対抗策が用意されている。133でソース源の
+ *    モンスターを破壊して止めたり、101で108/109のカードを破壊してプロセスを途中で
+ *    終わらせる。110を用意しておけば開いてしまったカードをまた閉じるという戦略も成り立つ。
+ *    その際に重要なのが、下から順にカードがめくられて、効果もその順に発揮していくこと。」
+ * 原作解析 05_magic.md §1-8 もまったく同じ設計だった。**中断のテストがこの節の主役。** */
+
+t('連鎖の中断：連鎖中に開いた133呪爆が「仕掛けた側」を撃ち、そこで連鎖が止まる', () => {
+  /* 原作 §1-8：連鎖中に開いた呪爆・呪念は V970（＝仕掛けた側）を狙う。
+   * ＝強制開放は撃った本人に跳ね返る。仕掛けたユニットが死ねばマーカーごと消えるので、
+   * 次の1枚を処理する前に連鎖が打ち切られる。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);                    // 仕掛ける側
+  m.board.lanes[3] = lane(8, [down(133), down(151), down(152)]);
+  m.board.lanes[3].channels.forEach((c) => { c.mine = false; });
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[0].unit, null, '仕掛けた側のユニットが呪爆で破壊される（跳ね返り）');
+  eq(m.lastForcedChain.steps.length, 1, '1枚目を開いた時点で止まる');
+  eq(m.board.lanes[3].channels[1].up, false, '2枚目は開かれない');
+  eq(m.board.lanes[3].channels[2].up, false, '3枚目も開かれない');
+});
+
+t('連鎖の中断：仕掛けたユニットが死ぬと、残りのＣＨは開かない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(108)]);
+  m.board.lanes[3] = lane(8, [down(133), down(152), down(153), down(155)]);
+  m.board.lanes[3].channels.forEach((c) => { c.mine = false; });
+  CQTurn.reverseAction(m, 0, [2], { choice: { lane: 3 } });
+  eq(m.lastForcedChain.aborted != null, true, '中断として記録される');
+  eq(m.board.lanes[3].channels.filter((c) => c.up).length, 1, '開いたのは1枚だけ');
+});
+
+t('連鎖：中断が無ければ最上段まで開き切る', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [down(151), down(152), down(153), down(155)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.every((c) => c.up), true, '4枚とも開く');
+  eq(m.lastForcedChain.aborted, null, '中断していない');
+});
+
+t('連鎖：開いたカードの効果はその場・その順で発動する', () => {
+  /* 「複数の効果が一度に発生してしまって判断がつかなくなる」のを避けるための順序保証。
+   * 1階層目に呪念(134)を置くと、その時点で仕掛けた側のＬＰが減る。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(108)]);
+  /* 呪念(134)は詠唱Ｌｖ3なので3階層目に置く（低い階層だとレベル不足で不発になる）。 */
+  m.board.lanes[3] = lane(8, [down(151), down(152), down(134)]);
+  m.board.lanes[3].channels.forEach((c) => { c.mine = false; });
+  const lpBefore = m.players.self.lp;
+  CQTurn.reverseAction(m, 0, [3], { choice: { lane: 3 } });
+  eq(m.lastForcedChain.steps.map((x) => x.idx), [0, 1, 2], '1→2→3階層目の順に処理される');
+  eq(m.players.self.lp, lpBefore - 5, '3枚目の呪念が仕掛けた側のマスターを撃つ（跳ね返り）');
+});
+
+t('連鎖：連鎖中に開かれた108/109は発動しない（多重連鎖の禁止・原作CE0355）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [down(109), down(151)]);
+  m.board.lanes[4] = lane(8, [down(152), down(153)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.every((c) => c.up), true, '対象レーンは開き切る');
+  eq(m.board.lanes[4].channels.some((c) => c.up), false, '連鎖中の109は不発なので別レーンは無傷');
+});
+
+t('連鎖：対象が居なければ何も起きない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  for (let i = 1; i < 6; i++) m.board.lanes[i] = S.emptyLane();
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.lastForcedChain, undefined, '連鎖自体が始まらない');
+});
+
+t('連鎖：ＵＩ用の steps は「レーン・階層・カード・表裏」を処理順に持つ', () => {
+  /* ＵＩはこの配列を200〜300ms間隔で再生して「1枚ずつめくる」演出にする。
+   * ＡＩ・シミュレータは見なくてよい（無改修で動く）。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(109)]);
+  m.board.lanes[3] = lane(8, [up(151), down(152)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.lastForcedChain.kind, 109, 'どちらのカードか');
+  eq(m.lastForcedChain.target, 3, '対象レーン');
+  eq(m.lastForcedChain.steps, [
+    { lane: 3, idx: 0, card: 151, up: false },
+    { lane: 3, idx: 1, card: 152, up: true }
+  ], '処理順に、めくった結果まで入る');
+});
+
+/* ================= M6.7 WP2: 詠唱レベル ================= */
+section('M6.7 WP2: 詠唱レベル');
+
+t('詠唱Ｌｖ：魔法48種すべてに lv がある（判断13：無かったものは Lv1 と明記）', () => {
+  const magic = CARDS.filter((c) => c.t === 'M');
+  eq(magic.length, 48, '魔法は48種');
+  eq(magic.every((c) => typeof c.lv === 'number' && c.lv >= 1), true, '全部に lv が入っている');
+});
+
+t('詠唱Ｌｖ：原作でレベルを持つ8種はその値、残りは1', () => {
+  /* 原作解析 05_magic.md §2 の Lv 列がそのまま出典。判断13により、
+   * 残る40種は「レベルの変更はせず、Lv1と明示するだけ」。 */
+  const want = { 116: 4, 132: 5, 134: 3, 138: 3, 140: 4, 141: 6, 142: 3, 146: 3 };
+  const got = {};
+  CARDS.filter((c) => c.t === 'M' && c.lv > 1).forEach((c) => { got[c.id] = c.lv; });
+  eq(got, want, '8種だけが Lv2 以上');
+});
+
+t('詠唱Ｌｖ：データの lv とエンジンの LEVEL_REQ が食い違わない', () => {
+  /* 表示（data.js）と判定（magic.js）が別々に持っている以上、ズレたら嘘を表示することになる。
+   * 換金所の売値（M6.6 WP9）で一度やった事故なので、ここは必ず突き合わせる。 */
+  CARDS.filter((c) => c.t === 'M').forEach((c) => {
+    eq(c.lv, CQMagic.LEVEL_REQ[c.id] || 1, 'ＩＤ' + c.id + ' ' + c.n + ' の詠唱Ｌｖ');
+  });
+});
+
+t('詠唱Ｌｖ：Ｌｖ1の魔法は1階層目でも発動する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(101)]);                    // 憑依解除＝Ｌｖ1
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].channels.length, 0, '1階層目でも効果が出る');
+});
+
+t('詠唱Ｌｖ：魔道書(186)が同じレーンにあると必要レベルが2下がる', () => {
+  /* 原作 §1-1：V397 -= 魔道書の枚数×2。116解析はＬｖ4なので、魔道書1枚で2階層目から通る。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(186), down(116)]);
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[3].channels[0].revealed, true, '魔道書のぶんレベルが下がって発動する');
 });
 
 /* ================= M6.6 WP11: 探索終了リザルト（清算の減額・称号・日誌） ================= */

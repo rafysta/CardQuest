@@ -53,14 +53,19 @@
     const p = m.players[side]; p.lp += n; if (p.lp > p.maxLp) p.lp = p.maxLp;
   }
 
-  /* 戦闘中は発動しない（原作 CE0354 戦闘時無効。仕様書§8.4・§7.1・カード一覧の「戦闘中×」表記の合算） */
-  const NO_COMBAT = { 107: 1, 108: 1, 109: 1, 119: 1, 124: 1, 131: 1, 132: 1, 139: 1, 140: 1, 141: 1, 144: 1, 147: 1 };
-  /* 強制開放(108)・強制転回(109)で連鎖的に起動しない（原作 CE0355 強制発動時無効） */
+  /* 戦闘中は発動しない（原作 CE0354 戦闘時無効）。
+   * ★M6.7：原作解析 `05_magic.md` §2 の一覧表と突き合わせ、**144還元・147治癒を外した**
+   * （資料では両方とも「戦闘中○」。誤って塞いでいた）。 */
+  const NO_COMBAT = { 107: 1, 108: 1, 109: 1, 119: 1, 124: 1, 131: 1, 132: 1, 139: 1, 140: 1, 141: 1 };
+  /* 強制開放(108)・強制転回(109)の連鎖中は発動しない（原作 CE0355 強制発動時無効）。
+   * 108/109 が入っているのは連鎖の多重起動を防ぐため。資料§2の「強」列と一致。 */
   const NO_FORCED = { 108: 1, 109: 1, 140: 1, 144: 1 };
-  /* 発動レベル（配置階層 ≧ 記載レベル。魔道書(186)が1枚につき-2＝ln.acc.tomeをそのまま引く）。
-   * 141思念波はカード一覧に「レベル6」とあるが、原作はこの判定が機能していないバグなので
-   * ここには含めない（h141 で理由付きで未実施） */
-  const LEVEL_REQ = { 116: 4, 132: 5, 134: 3, 138: 3, 140: 4, 142: 3, 146: 3 };
+  /* 詠唱レベル（配置階層 ≧ 記載レベル。魔道書(186)が1枚につき-2＝ln.acc.tomeをそのまま引く）。
+   * ★M6.7：141思念波を追加した（判断12・2026-08-29 本人確定）。
+   * 原作は `V397==6` の分岐が存在せずレベル判定が働かないバグだったが、
+   * 「防御力1000以下を無条件破壊」という強さに見合う制約として**本物にする**。
+   * ここに載らないカードは詠唱Ｌｖ1＝どの階層でも使える（js/data.js 側には全48種に明記した）。 */
+  const LEVEL_REQ = { 116: 4, 132: 5, 134: 3, 138: 3, 140: 4, 141: 6, 142: 3, 146: 3 };
 
   function levelOk(m, laneIndex, layer, cardId) {
     const req = LEVEL_REQ[cardId];
@@ -203,43 +208,116 @@
     return { consumed: true };
   }
 
-  function h108(m, ctx) {                                     // 強制開放：ＣＨ全てを強制オープン（戦闘中×強制中×）
-    let n = 0;
-    m.board.lanes.forEach(function (ln) {
-      if (ln.unit == null) return;
-      ln.channels.forEach(function (ch) {
-        if (ch.up || NO_FORCED[ch.card]) return;
-        ch.up = true; ch.revealed = true; n += 1;
-        // NOTE: 連鎖的な再オープン処理（新たに開いたカードの効果再発動）は無限ループ回避のため
-        // 本実装では行わない（簡略化。CardQuest_開発メモ.md に既知の簡略化として記載）
-      });
+  /* ==== 強制開放(108)・強制転回(109)＝「強制リバース連鎖」（M6.7 WP1） ==================
+   *
+   * 原作解析 `05_magic.md` §1-8 の再実装。**対象は選んだ他ユニット1体だけ**
+   * （v0.16.21までは盤面の全レーンを一括で処理していた。これは実装の誤り）。
+   *
+   * 連鎖の骨格：
+   *   ① 発動した 108/109 のカード自身が「連鎖マーカー」になる（原作の ID 149/150 に相当）。
+   *      **このマーカーが連鎖の生命線**で、破壊されるか裏に戻されると連鎖はそこで止まる。
+   *   ② 対象レーンのＣＨを**下から上へ1枚ずつ**処理する。
+   *   ③ **1枚処理するたびにマーカーの生存を確認する。** 開いたカードの効果で
+   *      マーカーのユニットが死ぬ（133呪爆）・マーカー自体が壊れる（101憑依解除）・
+   *      閉じられる（110閉門）と、**そこで打ち切る**。
+   *   ④ 開いたカードの効果は**その場・その順で**発動する。まとめて後から発動させないこと
+   *      ——複数の効果が一度に起きると何が起きたのか読み取れない、というのが本人の指摘の趣旨。
+   *
+   * **なぜエンジンの中でループしてよいか**：連鎖を中断させるのは「連鎖中に開いた別のカードの
+   * 効果」だけで、**プレイヤーの入力は割り込まない**（対象レーンは開始時に1回選ぶだけ）。
+   * だからエンジンが最後まで解決してよく、ＵＩは戻り値の `steps` を順に再生すれば演出になる。
+   * ＡＩ・`tools/simulate.js` は戻り値を無視するだけでよく、**無改修で動く**。
+   * ——「一度に全部めくってから演出する」のは誤り。**1枚ごとに中断判定を挟む**のが要点。 */
+
+  /** 108/109/110 の対象になれるレーン（原作§2「他ユニット1体」）。自分の居るレーンは除く。
+   * 敵陣・自陣は問わない。needFaceUp は110用（表向きのＣＨが1枚以上あること）。 */
+  function forcedTargets(m, ctx, needFaceUp) {
+    return allUnitLanes(m).filter(function (i) {
+      if (i === ctx.laneIndex) return false;
+      const ln = m.board.lanes[i];
+      if (!ln.channels.length) return false;
+      return needFaceUp ? ln.channels.some(function (ch) { return ch.up; }) : true;
     });
-    recalc(m);
-    note(m, '強制開放：場の' + n + '枚を強制オープン');
   }
 
-  function h109(m, ctx) {                                     // 強制転回：ＣＨ全てを強制リバース（戦闘中×強制中×）
-    let n = 0;
-    m.board.lanes.forEach(function (ln) {
-      if (ln.unit == null) return;
-      ln.channels.forEach(function (ch) {
-        if (NO_FORCED[ch.card]) return;
-        ch.up = !ch.up;
-        if (ch.up) ch.revealed = true;
-        n += 1;
-      });
-    });
-    recalc(m);
-    note(m, '強制転回：場の' + n + '枚を強制リバース');
+  /** ctx.choice で指定されたレーンが合法ならそれを、無ければ乱数で1つ選ぶ
+   * （ＡＩ・シミュレータは choice を渡さないので従来どおり乱数になる）。 */
+  function chooseTarget(m, ctx, pool) {
+    if (ctx.choice && pool.indexOf(ctx.choice.lane) >= 0) return ctx.choice.lane;
+    return pick(m, pool);
   }
 
-  function h110(m, ctx) {                                     // 閉門：自陣のＣＨ全てを同時にクローズ
-    let n = 0;
-    sideLanes(m, ctx.caster).forEach(function (i) {
-      m.board.lanes[i].channels.forEach(function (ch) { if (ch.up) { ch.up = false; n += 1; } });
-    });
+  /** 連鎖マーカー（＝発動した108/109のカード自身）がまだ生きているか。
+   * ユニットが居て、その階層に同じカードがあって、**表向きのまま**であること。 */
+  function markerAlive(m, marker) {
+    const ln = m.board.lanes[marker.lane];
+    if (!ln || ln.unit == null) return false;
+    const ch = ln.channels[marker.idx];
+    return !!(ch && ch.card === marker.card && ch.up);
+  }
+
+  function forcedChain(m, ctx, kind) {
+    const pool = forcedTargets(m, ctx, false);
+    if (!pool.length) { note(m, nameOf(m, kind) + '：対象がいない'); return; }
+    const target = chooseTarget(m, ctx, pool);
+    const marker = { lane: ctx.laneIndex, idx: ctx.layer - 1, card: kind };
+    const steps = [];
+    /* 連鎖中に開いた 133呪爆・134呪念 は「仕掛けた側」を狙う（原作§1-8 の V970 分岐）
+     * ＝**強制開放は撃った本人に跳ね返る**。h133/h134 がこれを見る。 */
+    m.forcedCtx = { lane: marker.lane, side: ctx.caster };
+    note(m, nameOf(m, kind) + '：' + nameOf(m, m.board.lanes[target].unit) + ' のＣＨを下から順に処理する');
+
+    let aborted = null;
+    for (let i = 0; ; i++) {
+      if (!markerAlive(m, marker)) { aborted = 'マーカーが失われた'; break; }
+      const ln = m.board.lanes[target];
+      if (!ln || ln.unit == null) { aborted = '対象ユニットが場から消えた'; break; }
+      if (i >= ln.channels.length) break;                  // 最上段まで到達＝正常終了
+      const ch = ln.channels[i];
+      if (kind === 108 && ch.up) { continue; }             // 強制開放は裏のものだけを開く
+      const wasUp = ch.up;
+      ch.up = !ch.up;
+      if (ch.up) ch.revealed = true;
+      recalc(m);
+      steps.push({ lane: target, idx: i, card: ch.card, up: ch.up });
+      if (ch.up) {
+        /* 開いた瞬間に効果が発動する（forced: true ＝ NO_FORCED のカードはここで不発になる）。
+         * ここで133呪爆が開けば、上の m.forcedCtx により**仕掛けた側**のユニットが死に、
+         * 次のループ先頭の markerAlive() が false になって連鎖が止まる。 */
+        onMagicOpen(m, target, i + 1, ch.card, { forced: true });
+      }
+      if (turnApi().checkResult(m)) { aborted = '決着した'; break; }
+      /* 効果で対象のＣＨが減った（押収・潜入など）場合、いま処理した階層がずれることがある。
+       * 消えていたら次の周回でインデックスが自然に繰り上がるので、ここでは何もしない。 */
+      void wasUp;
+    }
+
+    m.forcedCtx = null;
     recalc(m);
-    note(m, '閉門：自陣の' + n + '枚をクローズ');
+    if (aborted) note(m, nameOf(m, kind) + '：' + aborted + 'ため連鎖が止まった（' + steps.length + '枚で中断）');
+    else note(m, nameOf(m, kind) + '：' + steps.length + '枚を処理した');
+    /* ＵＩが1枚ずつの演出に使う。エンジン・ＡＩ・シミュレータは見なくてよい。 */
+    m.lastForcedChain = { kind: kind, target: target, steps: steps, aborted: aborted };
+  }
+
+  function h108(m, ctx) { forcedChain(m, ctx, 108); }         // 強制開放（戦闘中×強制中×）
+  function h109(m, ctx) { forcedChain(m, ctx, 109); }         // 強制転回（戦闘中×強制中×）
+
+  /* 閉門：**選んだ他ユニット1体**のＣＨを全部クローズする（原作§2「他ユニット1体（表ＣＨ1枚以上）」）。
+   * 対象は自陣・敵陣を問わない——だから 119鎮静（700Ｇ・盤面全部）より高い800Ｇで、
+   * 「狙って閉じられる」ぶん使い勝手がよい、という価格差の説明が付く（2026-08-29 本人の解釈）。
+   * 強制開放(108)で開かれてしまったＣＨを閉じ直す対抗札としても機能する。
+   * ——v0.16.21までは「自陣3レーン全部」を閉じていた。これは実装の誤り。
+   * なお表向き技能の効果は recalc() が表向きのＣＨだけを集計するので、閉じれば自動的に消える
+   * （原作の「魔力全消去」に相当する処理を別に書く必要はない）。 */
+  function h110(m, ctx) {
+    const pool = forcedTargets(m, ctx, true);
+    if (!pool.length) { note(m, '閉門：閉じられるＣＨを持つユニットがいない'); return; }
+    const target = chooseTarget(m, ctx, pool);
+    let n = 0;
+    m.board.lanes[target].channels.forEach(function (ch) { if (ch.up) { ch.up = false; n += 1; } });
+    recalc(m);
+    note(m, '閉門：' + nameOf(m, m.board.lanes[target].unit) + ' の' + n + '枚をクローズ');
   }
 
   /* ================= 111〜120 ================= */
@@ -261,14 +339,29 @@
     note(m, '抽出：手札を得てＬＰを消費した');
   }
 
-  function h113(m, ctx) {                                     // 透視：ＣＨ2つの内容を確認
-    const pool = allChannels(m, function (ch) { return !ch.up; });
-    for (let k = 0; k < 2 && pool.length; k++) {
-      const idx = m.rng.int(0, pool.length - 1);
-      const t = pool.splice(idx, 1)[0];
-      m.board.lanes[t.lane].channels[t.idx].revealed = true;
+  /** 透視：**相手が置いた**裏向きＣＨを2枚まで選んで中身を知る（原作§2「敵が置いた裏ＣＨ×2」）。
+   * ——v0.16.21までは裏向きのＣＨ全部（自分が置いたものも含む）から乱数で2枚選んでいた。
+   * 自分が置いたカードは元から中身が分かっているので、透視の対象にする意味がない。
+   * ctx.choice.picks に [{lane,idx},…] を渡すと、そのうち合法なものを優先して見る
+   * （**複数個の対象を選ぶ最初のカード**。118押収・125移送も同じ形を使う）。 */
+  function h113(m, ctx) {
+    const mine = ctx.caster === 'self';
+    const pool = allChannels(m, function (ch) { return !ch.up && ch.mine !== mine && !ch.revealed; });
+    const key = function (t) { return t.lane + ':' + t.idx; };
+    const chosen = [];
+    const picks = (ctx.choice && ctx.choice.picks) || [];
+    picks.forEach(function (p) {
+      if (chosen.length >= 2) return;
+      const hit = pool.find(function (t) { return t.lane === p.lane && t.idx === p.idx; });
+      if (hit && !chosen.some(function (c) { return key(c) === key(hit); })) chosen.push(hit);
+    });
+    while (chosen.length < 2 && pool.length) {                 // 足りない分は乱数（ＡＩ・シミュレータ経路）
+      const t = pool.splice(m.rng.int(0, pool.length - 1), 1)[0];
+      if (!chosen.some(function (c) { return key(c) === key(t); })) chosen.push(t);
     }
-    note(m, '透視：裏向きのＣＨの中身を確認した');
+    if (!chosen.length) { note(m, '透視：相手が伏せているＣＨが無い'); return; }
+    chosen.forEach(function (t) { m.board.lanes[t.lane].channels[t.idx].revealed = true; });
+    note(m, '透視：相手が伏せた' + chosen.length + '枚の中身を確認した');
   }
 
   function h114(m, ctx) {                                     // 暗殺：敵マスター手札内のユニットを破壊＋ＬＰ1点
@@ -441,17 +534,31 @@
     return { consumed: true };
   }
 
-  function h133(m, ctx) {                                     // 呪爆：このカードをオープンさせたユニットを破壊
-    const ln = m.board.lanes[ctx.laneIndex];
+  /** 呪爆：このカードをオープンさせたユニットを破壊。
+   * **強制リバース連鎖の最中に開いた場合は「連鎖を仕掛けた側」のユニットを狙う**
+   * （原作§1-8 の V970 分岐）＝**強制開放は撃った本人に跳ね返る**。
+   * これが連鎖の主な止め方になる——仕掛けたユニットが死ねばマーカーごと消えるので、
+   * 次の1枚を処理する前の markerAlive() で連鎖が打ち切られる。 */
+  function h133(m, ctx) {
+    const at = m.forcedCtx ? m.forcedCtx.lane : ctx.laneIndex;
+    const ln = m.board.lanes[at];
     const name = ln && ln.unit != null ? nameOf(m, ln.unit) : null;
-    combatApi().destroy(m, ctx.laneIndex, { normalAttack: false });
-    if (name) note(m, '呪爆：' + name + ' が破壊された');
-    return { consumed: true };
+    combatApi().destroy(m, at, { normalAttack: false });
+    if (name) {
+      note(m, '呪爆：' + name + ' が破壊された' + (m.forcedCtx ? '（強制開放を仕掛けた側に跳ね返った）' : ''));
+    }
+    /* 連鎖中は「このカードが乗っているレーン」と壊したレーンが別なので、
+     * 自分自身が消えたわけではない＝consumed を立てない（階層のずれを起こさない）。 */
+    return { consumed: !m.forcedCtx };
   }
 
-  function h134(m, ctx) {                                     // 呪念：オープンさせたマスターのＬＰ5点破壊（レベル3）
-    damage(m, ctx.opener, 5);
-    note(m, '呪念：' + jp(ctx.opener) + ' のＬＰ -5');
+  /** 呪念：オープンさせたマスターのＬＰ5点破壊（詠唱Ｌｖ3）。
+   * 呪爆と同じく、**強制リバース連鎖中は「仕掛けた側」のマスターを狙う**（原作§1-8）。 */
+  function h134(m, ctx) {
+    const victim = m.forcedCtx ? m.forcedCtx.side : ctx.opener;
+    damage(m, victim, 5);
+    note(m, '呪念：' + jp(victim) + ' のＬＰ -5'
+      + (m.forcedCtx ? '（強制開放を仕掛けた側に跳ね返った）' : ''));
   }
 
   function h135(m, ctx) {                                     // 雷撃：防御力550以下のユニット1つを無条件に破壊
@@ -504,10 +611,13 @@
 
   /* ================= 141〜148 ================= */
 
-  function h141(m, ctx) {                                     // 思念波：攻撃力1000の特殊攻撃（レベル6／戦闘中×）
-    // 原作バグ（仕様書§8.4・§14.1）：①レベル6制限が機能していない ②対象存在判定が
-    // 防御力551〜1000のユニットしか対象と認識しない（＝それ以外しか居ないと不発）。
-    // 両方をそのまま再現する（レベルチェックを行わない／対象を551〜1000の範囲に限定する）
+  function h141(m, ctx) {                                     // 思念波：攻撃力1000の特殊攻撃（詠唱Ｌｖ6／戦闘中×）
+    // ★M6.7（判断12）：原作は「レベル6」と書いてありながら `V397==6` の分岐が無く判定が
+    // 働かないバグだったが、**CardQuestでは本物にする**（LEVEL_REQ に 141:6 を追加済み。
+    // ここに来ている時点でレベル判定は通っている）。
+    // 一方②の「防御力551〜1000のユニットしか対象と認識しない」は原作のまま残す
+    // ——これは「防御力550以下は雷撃(135)の担当」という住み分けとして読めて、
+    // 2枚の使い分けが生まれるので面白さに寄与する（§0-1の方針で採否を判断した）。
     const enemy = other(ctx.caster);
     recalc(m);
     const pool = sideLanes(m, enemy).filter(function (i) {
@@ -616,8 +726,14 @@
       note(m, nameOf(m, cardId) + '：戦闘中は発動しない');
       return { consumed: false };
     }
+    /* 強制リバース連鎖の最中に開かれた（o.forced）カードのうち、
+     * 108/109/140/144 は不発（原作 CE0355 強制発動時無効）。連鎖の多重起動を防ぐ。 */
+    if (o.forced && NO_FORCED[cardId]) {
+      note(m, nameOf(m, cardId) + '：強制リバースの最中は発動しない');
+      return { consumed: false };
+    }
     if (!levelOk(m, laneIndex, layer, cardId)) {
-      note(m, nameOf(m, cardId) + '：発動レベルが不足しており発動しない');
+      note(m, nameOf(m, cardId) + '：詠唱レベルが足りず発動しない');
       return { consumed: false };
     }
     const handler = HANDLERS[cardId];

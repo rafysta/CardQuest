@@ -202,14 +202,21 @@ function showFirstTurnRoulette(winner) {
   setTimeout(function () { settle(false); }, FTR_SPIN_MS + 120);
 }
 const UI = {
-  mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-destroy */
+  mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-target */
   info: null,     /* 表示中のカード */
   lane: null,     /* 選択中のレーン（アタック元・リバース対象） */
   layers: [],     /* リバースで選んだ階層 */
   pending: null,  /* 確認待ちの操作 */
   report: null,   /* 直前に起きたこと（相手の手番・戦闘の経過） */
-  destroyTargets: null,  /* pick-destroy中：選べる対象 [{lane, idx}]（2026-08-24 憑依解除の対話的選択） */
-  pendingDestroy: null   /* pick-destroy中：対象を選んだら呼ぶ関数 (target) => void */
+  /* pick-target中の状態（M6.7 WP1で汎用化。もとは憑依解除(101)専用の pick-destroy だった）。
+   *   card    … 発動しようとしているカードＩＤ（案内文の出し分けに使う）
+   *   kind    … 'ch'（チャンネルを選ぶ）/ 'lane'（ユニットのレーンを選ぶ）
+   *   need    … 選ぶ枚数（113透視だけ2、それ以外は1）
+   *   targets … 選べる候補。kind='ch' なら [{lane,idx}]、'lane' なら [laneIndex]
+   *   chosen  … いま選んだぶん
+   *   resume  … 選び終えたら呼ぶ関数(choice) */
+  pick: null,
+  chainFx: null          /* 強制リバース連鎖の演出待ち [{lane, idx}]（下から順） */
 };
 
 function otherSide(s) { return s === 'self' ? 'enemy' : 'self'; }
@@ -254,6 +261,56 @@ function destroyCandidates(exceptLane, exceptIdx) {
   });
   return res;
 }
+
+/** 108強制開放・109強制転回・110閉門の対象レーン候補（M6.7 WP1）。
+ * エンジン側 magic.js の forcedTargets() とまったく同じ条件にすること
+ * ——ここがズレると「選べたのに不発」「選べないのに効く」が起きる。
+ * needFaceUp は110用（表向きのＣＨが1枚以上あるユニットだけが対象）。 */
+function forcedLaneCandidates(exceptLane, needFaceUp) {
+  const res = [];
+  M.board.lanes.forEach((ln, i) => {
+    if (ln.unit == null || i === exceptLane || !ln.channels.length) return;
+    if (needFaceUp && !ln.channels.some((c) => c.up)) return;
+    res.push(i);
+  });
+  return res;
+}
+
+/** 113透視の対象候補（M6.7 WP1）：**相手が置いた**、まだ中身の分かっていない裏向きＣＨ。
+ * magic.js の h113 と同じ条件。自分が置いた伏せ札は元から中身が分かるので対象外。 */
+function peekCandidates() {
+  const mine = humanSide() === 'self';
+  const res = [];
+  M.board.lanes.forEach((ln, i) => {
+    if (ln.unit == null) return;
+    ln.channels.forEach((ch, j) => {
+      if (!ch.up && ch.mine !== mine && !ch.revealed) res.push({ lane: i, idx: j });
+    });
+  });
+  return res;
+}
+
+/** 対象選択を始める。始めたら true を返す（呼び出し側はそこで一旦抜ける）。 */
+function startPick(spec) {
+  if (!spec.targets.length) return false;
+  if (spec.kind === 'lane' && spec.targets.length <= 1) return false;   /* 選ぶ余地が無い */
+  if (spec.kind === 'ch' && spec.targets.length <= (spec.need || 1)) return false;
+  UI.pick = { card: spec.card, kind: spec.kind, need: spec.need || 1,
+    targets: spec.targets, chosen: [], resume: spec.resume };
+  UI.mode = 'pick-target';
+  flash(PICK_MSG[spec.card] || '対象を選んでください');
+  renderAll();
+  return true;
+}
+
+/* 選択中に出す案内文（カードごと）。 */
+const PICK_MSG = {
+  101: '憑依解除：破壊するカードを選んでください',
+  108: '強制開放：ＣＨを開かせるユニットを選んでください',
+  109: '強制転回：ＣＨを裏返すユニットを選んでください',
+  110: '閉門：ＣＨを閉じるユニットを選んでください',
+  113: '透視：中身を見る相手の伏せ札を2枚選んでください'
+};
 
 /* 開発用デッキ（screen-deck で組むもの）。**アンロックには一切関係なく全169種から組める**
  * ——ストーリー側の「本とデッキ」（cq_meta・移動モデル）とは完全に別物で、こちらは
@@ -725,18 +782,26 @@ function chHTML(i, k) {
   const closable = canFlipHere && ch.up;
   /* 憑依解除(101)などの発動で「破壊する対象を選ぶ」最中なら、選べるＣＨを光らせる
      （2026-08-24 本人の指定：対話的な対象選択） */
-  const pickable = UI.mode === 'pick-destroy' && UI.destroyTargets
-    && UI.destroyTargets.some((t) => t.lane === i && t.idx === k - 1);
+  const pickable = UI.mode === 'pick-target' && UI.pick && UI.pick.kind === 'ch'
+    && UI.pick.targets.some((t) => t.lane === i && t.idx === k - 1)
+    && !UI.pick.chosen.some((t) => t.lane === i && t.idx === k - 1);
+  /* 複数選択（113透視）で既に選んだぶんは、選択済みとして別の色にする */
+  const pickedCls = UI.mode === 'pick-target' && UI.pick && UI.pick.kind === 'ch'
+    && UI.pick.chosen.some((t) => t.lane === i && t.idx === k - 1) ? 'picked' : '';
+  /* 強制リバース連鎖の演出：下から順に1枚ずつめくれて見えるよう、
+     処理された順番を --i に入れて CSS のアニメーション遅延に使う（M6.7 WP1） */
+  const fxAt = UI.chainFx ? UI.chainFx.findIndex((t) => t.lane === i && t.idx === k - 1) : -1;
   const attr = `data-lane="${i}" data-layer="${k}" data-card="${card.id}"
     data-own="${own ? 1 : 0}" data-known="${known ? 1 : 0}" data-st="${ch.st || ''}"
-    ${closable ? 'data-closable="1"' : ''}`;
+    ${closable ? 'data-closable="1"' : ''}
+    ${fxAt >= 0 ? `style="--i:${fxAt}"` : ''}`;
   /* 開けるカードは「左半分＝開く／右半分＝内容を見る」の2つのタップ領域に分ける。
      ▶（左）とⓘ（右）がその目印。境目には薄い縦線を出す（.card.ch.split の ::after） */
   const split = open || flip;
   const mark = split ? '<span class="cur">▶</span>' : '';
   const info = split ? '<span class="inf">ⓘ</span>' : '';
   const splitCls = split ? 'split' : '';
-  const pickCls = pickable ? 'pick' : '';
+  const pickCls = (pickable ? 'pick ' : '') + pickedCls + (fxAt >= 0 ? ' chain-fx' : '');
   if (!ch.up) {
     const nm = known ? `<span class="nm">${card.n}</span>` : '<span class="nm hid">？</span>';
     return `<div class="card ch back ${oc} ${open ? 'openable' : ''} ${flip ? 'flippable' : ''} ${splitCls} ${pickCls}" ${attr} ${bottom}>
@@ -753,6 +818,9 @@ function laneHTML(i) {
   const cls = [];
   if (UI.lane === i) cls.push('sel');
   if (UI.mode === 'attack' && UI.targets && UI.targets.indexOf(i) >= 0) cls.push('target');
+  /* M6.7 WP1：レーンを選ぶタイプの対象選択（108/109/110）で、選べるレーンを光らせる */
+  if (UI.mode === 'pick-target' && UI.pick && UI.pick.kind === 'lane'
+    && UI.pick.targets.indexOf(i) >= 0) cls.push('pick-lane');
   /* 戦闘中：当事者の2レーンを黄色い点線で囲み、それ以外は暗くして
      「どのカードとどのカードが戦っているか」を一目で分かるようにする（2026-08-24 本人の要望） */
   if (M.combat) {
@@ -973,10 +1041,13 @@ function infoCardHTML(card, o) {
       開くこと自体は、チャネル先のユニットを操作している側ができます。</p>`;
   }
   const ln = lane != null ? M.board.lanes[lane] : null;
+  /* M6.7 WP2：魔法にも「詠唱Ｌｖ」を出す。配置した階層がこの数字以上でないと発動しない
+   * （ユニットの召還Ｌｖとまったく同じ概念。エンジン側は magic.js の LEVEL_REQ）。
+   * 今までレベルの存在が画面のどこにも出ておらず、8種は不発の理由が分からなかった。 */
   const kv = card.t === 'U'
     ? `<span>攻撃力 ${card.a}</span><span>防御力 ${card.d}</span>
        <span>ＣＨ ${card.ch}</span><span>召還Ｌｖ ${card.lv}</span>`
-    : `<span>${TYPE_NAME[card.t]}</span>`;
+    : `<span>${TYPE_NAME[card.t]}</span>${card.t === 'M' ? `<span>詠唱Ｌｖ ${card.lv}</span>` : ''}`;
   const now = (unit && ln && ln.unit != null)
     ? `<div class="i-kv now"><span>いまの攻撃力 <b>${ln.atk}</b></span>
        <span>いまの防御力 <b>${ln.def}</b></span>
@@ -1018,7 +1089,7 @@ function renderPanel() {
     case 'battle':    return panelBattle();
     case 'unit':      return panelUnit();
     case 'attack':    return panelAttack();
-    case 'pick-destroy': return panelPickDestroy();
+    case 'pick-target': return panelPickTarget();
     case 'confirm':   return;                       /* 確認画面は出したまま */
     case 'info':      return panelInfo();
     case 'field':     return panelField();
@@ -1163,10 +1234,15 @@ function panelAttack() {
 }
 
 /** 憑依解除(101)：破壊する対象を選んでいる最中のパネル（2026-08-24 本人の指定） */
-function panelPickDestroy() {
-  return paint(miniCardHTML(CARD_BY_ID[101])
-    + askHTML('破壊するカードを選んでください',
-      '赤く光っているＣＨカードを押すと、それを破壊します。', 'warn'), '', true);
+function panelPickTarget() {
+  const p = UI.pick;
+  if (!p) return paint('', '', true);
+  const rest = p.need - p.chosen.length;
+  const how = p.kind === 'lane'
+    ? '光っているユニットを押すと、そのユニットが対象になります。'
+    : '光っているＣＨカードを押して選びます。' + (p.need > 1 ? 'あと' + rest + '枚。' : '');
+  return paint(miniCardHTML(CARD_BY_ID[p.card])
+    + askHTML(PICK_MSG[p.card] || '対象を選んでください', how, 'warn'), '', true);
 }
 
 /* --- 戦闘：オープンフェイズ ---
@@ -1295,27 +1371,59 @@ function doAttack(atkLane, defLane) {
  * choice … 憑依解除(101)で対話的に選んだ破壊対象 {lane, idx}（省略時はエンジンが自動選択） */
 function doFlip(laneIdx, layer, choice) {
   markLog(); markFx();
+  M.lastForcedChain = null;
   const r = CQTurn.reverseAction(M, laneIdx, [layer], choice ? { cont: true, choice } : { cont: true });
   UI.report = null;
   if (UI.mode === 'info') UI.mode = 'idle';   /* 内容を見たあとに開いたら、結果の表示に戻す */
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
+  armChainFx();
   step();
 }
+
+/** 強制リバース連鎖（108/109）が起きていたら、めくられたＣＨを**下から順に1枚ずつ**
+ * めくれて見えるように演出の目印を仕込む（M6.7 WP1）。
+ *
+ * エンジンは既に最後まで解決済みで、盤面は最終状態になっている。ここでやるのは
+ * 「どのＣＨが何番目に処理されたか」を CSS のアニメーション遅延（--i）に渡すことだけ。
+ * ——効果そのものは magic.js が1枚ずつ順に発動させており（中断もそこで起きる）、
+ * ここは見た目の担当。**盤面の状態を触らないこと。**
+ * 中断された場合は、実際にめくれた枚数ぶんしか steps に入っていないので、
+ * 「途中で止まった」ことがそのまま演出に出る。 */
+function armChainFx() {
+  const fc = M.lastForcedChain;
+  if (!fc || !fc.steps || !fc.steps.length) { UI.chainFx = null; return; }
+  UI.chainFx = fc.steps.map((x) => ({ lane: x.lane, idx: x.idx }));
+  const msg = CARD_BY_ID[fc.kind].n + '：' + fc.steps.length + '枚'
+    + (fc.aborted ? 'で中断（' + fc.aborted + '）' : 'を下から順に処理');
+  flash(msg);
+  /* アニメーションが終わるころに目印を外す（次の描画で残らないように）。 */
+  const ms = 300 + fc.steps.length * CHAIN_FX_STEP_MS;
+  setTimeout(() => { UI.chainFx = null; if (typeof renderAll === 'function') renderAll(); }, ms);
+}
+const CHAIN_FX_STEP_MS = 260;   /* 1枚あたりの間隔。CSS の .chain-fx と揃えること */
 
 /** 開こうとしている階層が憑依解除(101)で、かつ自分にはその中身が見えている（＝自分の
  * カードなので事前に判る）とき、破壊対象を選ばせるモードに入る。呼べる状況でなければ
  * false を返す（呼び出し元はそのまま通常どおり開く処理を続ける）。
  * （2026-08-24 本人の指定：起動すると破壊するカードを1つ選んで破壊する） */
 function tryStartDestroyPick(laneIdx, layer, ch, resume) {
-  if (!ch || ch.card !== 101 || !chKnown(ch)) return false;
-  const targets = destroyCandidates(laneIdx, layer - 1);
-  if (targets.length <= 1) return false;               /* 候補が0〜1枚なら選ぶ意味が無い */
-  UI.destroyTargets = targets;
-  UI.pendingDestroy = resume;
-  UI.mode = 'pick-destroy';
-  flash('憑依解除：破壊するカードを選んでください');
-  renderAll();
-  return true;
+  if (!ch || !chKnown(ch)) return false;               /* 中身を知らないカードは選ばせない */
+  const id = ch.card;
+  if (id === 101) {
+    return startPick({ card: 101, kind: 'ch',
+      targets: destroyCandidates(laneIdx, layer - 1), resume: resume });
+  }
+  /* M6.7 WP1：強制開放・強制転回・閉門は「対象のユニット1体」を選ばせる。 */
+  if (id === 108 || id === 109 || id === 110) {
+    return startPick({ card: id, kind: 'lane',
+      targets: forcedLaneCandidates(laneIdx, id === 110), resume: resume });
+  }
+  /* M6.7 WP1：透視は相手の伏せ札を2枚選ばせる（複数選択の初出）。 */
+  if (id === 113) {
+    return startPick({ card: 113, kind: 'ch', need: 2,
+      targets: peekCandidates(), resume: resume });
+  }
+  return false;
 }
 
 /* ================= 生贄召還の確認（v0.15.3） =================
@@ -1545,15 +1653,32 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
 
   /* 憑依解除(101)：破壊する対象を選んでいる最中。光っているＣＨを押したら確定する
      （2026-08-24 本人の指定）。それ以外を押しても何も起きない（選ぶまで先に進めない） */
-  if (UI.mode === 'pick-destroy') {
-    if (el.classList.contains('pick') && el.dataset.lane !== undefined && el.dataset.layer !== undefined) {
-      const target = { lane: +el.dataset.lane, idx: +el.dataset.layer - 1 };
-      const resume = UI.pendingDestroy;
-      UI.mode = 'idle'; UI.destroyTargets = null; UI.pendingDestroy = null;
-      if (resume) resume(target);
-    } else {
-      flash('赤く光っているカードから破壊する対象を選んでください');
+  if (UI.mode === 'pick-target' && UI.pick) {
+    const p = UI.pick;
+    const finish = (choice) => {
+      const resume = p.resume;
+      UI.mode = 'idle'; UI.pick = null;
+      if (resume) resume(choice);
+    };
+    if (p.kind === 'lane') {
+      /* レーンのどこを押しても、そのレーンが候補なら決定（ユニット枠でもＣＨでもよい） */
+      const i = el.dataset.lane !== undefined ? +el.dataset.lane : null;
+      if (i != null && p.targets.indexOf(i) >= 0) return finish({ lane: i });
+      flash('光っているユニットから対象を選んでください');
+      return;
     }
+    if (el.classList.contains('pick') && el.dataset.lane !== undefined && el.dataset.layer !== undefined) {
+      p.chosen.push({ lane: +el.dataset.lane, idx: +el.dataset.layer - 1 });
+      if (p.chosen.length >= p.need) {
+        /* 1枚だけのカード（101）は従来どおり {lane,idx} を渡す。
+           複数選ぶカード（113）は {picks:[…]} で渡す——magic.js 側がこの形を読む。 */
+        return finish(p.need === 1 ? p.chosen[0] : { picks: p.chosen.slice() });
+      }
+      flash('あと' + (p.need - p.chosen.length) + '枚選んでください');
+      renderAll();
+      return;
+    }
+    flash('光っているカードから選んでください');
     return;
   }
   /* 戦闘中：▶付きのカードの左半分を押したら、その階層をそのまま開く */
@@ -1563,14 +1688,18 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     const ch = M.board.lanes[laneIdx].channels[layer - 1];
     if (tryStartDestroyPick(laneIdx, layer, ch, (choice) => {
       markLog(); markFx();
+      M.lastForcedChain = null;
       const r = CQCombat.open(M, layer, { choice });
       if (!r.ok) flash(r.reason);
+      armChainFx();
       step();
     })) return;
     const openNow = () => {
       markLog(); markFx();
+      M.lastForcedChain = null;
       const r = CQCombat.open(M, layer);
       if (!r.ok) flash(r.reason);
+      armChainFx();
       step();
     };
     if (tryConfirmRitual(laneIdx, layer, ch, openNow)) return;   /* 生贄召還の確認（v0.15.3） */
@@ -1776,6 +1905,10 @@ const ALL_COLS = {
   MS: [
     { k: 'id',  label: 'ＩＤ',      w: 104, type: 'range', def: false },   /* 同上 */
     { k: 'n',   label: 'カード名',  w: 220, type: 'text',  fixed: true, def: true },
+    /* M6.7 WP2：魔法の詠唱Ｌｖ（技能は持たないので空欄になる）。**既定で表示する**
+     * ——配置した階層がこの数字未満だと魔法は不発になるので、デッキを組むときに
+     * 見えていないと「なぜか発動しない」が起きる。 */
+    { k: 'lv',  label: '詠唱Ｌｖ',  w: 96,  type: 'range', def: true },
     { k: 'e',   label: '効果',      w: 0,   type: 'text',  def: true },
     { k: 'p',   label: '価格',      w: 100, type: 'range', def: false },
     { k: 'cnt', label: '採用',      w: 122, type: 'count', fixed: true, def: true }
@@ -1871,7 +2004,7 @@ function renderDetail() {
   const stat = c.t === 'U'
     ? `<span>攻撃力 ${c.a}</span><span>防御力 ${c.d}</span>
        <span>ＣＨ ${c.ch}</span><span>召還Ｌｖ ${c.lv}</span><span>${c.p} G</span>`
-    : `<span>${TYPE_NAME[c.t]}</span><span>${c.p} G</span>`;
+    : `<span>${TYPE_NAME[c.t]}</span>${c.t === 'M' ? `<span>詠唱Ｌｖ ${c.lv}</span>` : ''}<span>${c.p} G</span>`;
   document.getElementById('detail').innerHTML = `
     <div class="big ${c.t}">
       <div class="bigart">${artInner(c)}</div>

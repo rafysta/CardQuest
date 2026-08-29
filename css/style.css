@@ -488,6 +488,28 @@ img.curse-art{
   0%,100%{box-shadow:0 0 0 3px #f87171,0 0 10px #f8717166}
   50%{box-shadow:0 0 0 4px #fca5a5,0 0 18px #f87171cc}
 }
+/* 複数選ぶカード（113透視）で、もう選んだぶん。選べるもの（赤の点滅）と区別する */
+.card.ch.picked{box-shadow:0 0 0 3px var(--accent),0 0 12px rgba(250,204,21,.55)}
+
+/* レーンを選ぶタイプの対象選択（108強制開放・109強制転回・110閉門。M6.7 WP1）。
+ * ＣＨ単位ではなくユニット1体を選ぶので、レーンの枠ごと光らせる。 */
+.lane.pick-lane{outline:3px solid #f87171;outline-offset:2px;border-radius:12px;cursor:pointer;
+  animation:cq-pick-pulse 1s ease-in-out infinite}
+
+/* 強制リバース連鎖の演出（M6.7 WP1）：処理された順（--i）に遅延をずらして、
+ * **下から順に1枚ずつめくれて見える**ようにする。盤面はもう最終状態なので、
+ * これは見た目だけの上書き——「複数の効果が一度に起きて何が起きたか分からない」のを
+ * 避けるのが目的（2026-08-29 本人の指摘）。1枚あたりの間隔は
+ * js/layout.js の CHAIN_FX_STEP_MS と揃えること。 */
+.card.ch.chain-fx{animation:cq-chain-flip .42s ease-out backwards;
+  animation-delay:calc(var(--i,0) * 260ms)}
+@keyframes cq-chain-flip{
+  0%{transform:rotateY(90deg) scale(.94);opacity:.25;
+    box-shadow:0 0 0 3px var(--accent),0 0 18px rgba(250,204,21,.8)}
+  60%{transform:rotateY(0deg) scale(1.04);opacity:1;
+    box-shadow:0 0 0 3px var(--accent),0 0 14px rgba(250,204,21,.55)}
+  100%{transform:none;opacity:1;box-shadow:none}
+}
 
 /* ユニットの状態バッジ（行動済み・連続攻撃） */
 .st-tag{

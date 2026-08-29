@@ -356,7 +356,7 @@ const CARRY_COLS = {
     { k: 'a', label: '攻撃力', w: 84, type: 'range', def: true },
     { k: 'd', label: '防御力', w: 84, type: 'range', def: true },
     { k: 'ch', label: 'ＣＨ数', w: 78, type: 'range', def: false },
-    { k: 'lv', label: '召還Ｌｖ', w: 84, type: 'range', def: false },
+    { k: 'lv', label: '召還Ｌｖ', w: 84, type: 'range', def: false },   /* 魔法では詠唱Ｌｖ（M6.7 WP2） */
     { k: 'e', label: '特殊能力', w: 0, type: 'text', def: true },
     { k: 'p', label: '価格', w: 88, type: 'range', def: false },
     { k: 'book', label: '本', w: 62, type: 'range', fixed: true, def: true },
@@ -454,7 +454,7 @@ function carryDetailHTML() {
   const stat = c.t === 'U'
     ? `<span>攻撃力 ${c.a}</span><span>防御力 ${c.d}</span>
        <span>ＣＨ ${c.ch}</span><span>召還Ｌｖ ${c.lv}</span><span>${c.p} G</span>`
-    : `<span>${TYPE_NAME[c.t]}</span><span>${c.p} G</span>`;
+    : `<span>${TYPE_NAME[c.t]}</span>${c.t === 'M' ? `<span>詠唱Ｌｖ ${c.lv}</span>` : ''}<span>${c.p} G</span>`;
   return `
     <div class="big ${c.t}">
       <div class="bigart">${artInner(c)}</div>
@@ -644,7 +644,7 @@ function draftCardBig(id, isRental) {
   const c = CARD_BY_ID[id];
   const stat = c.t === 'U'
     ? `<span>Ａ ${c.a}</span><span>Ｄ ${c.d}</span><span>ＣＨ ${c.ch}</span><span>Ｌｖ ${c.lv}</span>`
-    : `<span>${TYPE_NAME[c.t]}</span>`;
+    : `<span>${TYPE_NAME[c.t]}</span>${c.t === 'M' ? `<span>詠唱Ｌｖ ${c.lv}</span>` : ''}`;
   return `<div class="draft-card ${c.t}" data-act="pick-draft" data-id="${id}">
     <div class="dc-art">${artInner(c, 4)}${isRental ? '<span class="rental-badge">借</span>' : ''}</div>
     <div class="dc-n">${esc(c.n)}</div>
@@ -1331,7 +1331,7 @@ function cgDetailHTML(actionsHTML) {
   const stat = c.t === 'U'
     ? `<span>攻撃力 ${c.a}</span><span>防御力 ${c.d}</span>
        <span>ＣＨ ${c.ch}</span><span>召還Ｌｖ ${c.lv}</span><span>${c.p} G</span>`
-    : `<span>${TYPE_NAME[c.t]}</span><span>${c.p} G</span>`;
+    : `<span>${TYPE_NAME[c.t]}</span>${c.t === 'M' ? `<span>詠唱Ｌｖ ${c.lv}</span>` : ''}<span>${c.p} G</span>`;
   return `
     <div class="big ${c.t}">
       <div class="bigart">${artInner(c)}</div>
