@@ -508,19 +508,32 @@ img.curse-art{
 .dp-nm{font-size:12px;font-weight:700;margin-top:5px;line-height:1.3}
 .dp-ef{font-size:10px;color:var(--dim);line-height:1.4;margin-top:2px}
 
-/* 強制リバース連鎖の演出（M6.7 WP1）：処理された順（--i）に遅延をずらして、
- * **下から順に1枚ずつめくれて見える**ようにする。盤面はもう最終状態なので、
- * これは見た目だけの上書き——「複数の効果が一度に起きて何が起きたか分からない」のを
- * 避けるのが目的（2026-08-29 本人の指摘）。1枚あたりの間隔は
- * js/layout.js の CHAIN_FX_STEP_MS と揃えること。 */
-.card.ch.chain-fx{animation:cq-chain-flip .42s ease-out backwards;
-  animation-delay:calc(var(--i,0) * 260ms)}
+/* 強制リバース連鎖の演出（M6.7 WP1・2026-08-30 作り直し）。
+ * 本人指摘：「めくるのが早すぎて確認できない」「カードが上に移動してから裏返るのはおかしい」。
+ * エンジンが1ビートずつ止まるようになったので、ここは**その場でめくる**見た目だけを担う。
+ * transform に translate を入れないこと——動かすと「一度離れて戻る」ように見える。
+ * 間合いは js/layout.js の CHAIN_FLIP_MS / CHAIN_AIM_MS / CHAIN_DIE_MS と揃える。 */
+.card.ch.chain-now{animation:cq-chain-flip .38s ease-out;z-index:3;position:relative}
 @keyframes cq-chain-flip{
-  0%{transform:rotateY(90deg) scale(.94);opacity:.25;
-    box-shadow:0 0 0 3px var(--accent),0 0 18px rgba(250,204,21,.8)}
-  60%{transform:rotateY(0deg) scale(1.04);opacity:1;
-    box-shadow:0 0 0 3px var(--accent),0 0 14px rgba(250,204,21,.55)}
-  100%{transform:none;opacity:1;box-shadow:none}
+  0%{transform:rotateY(90deg);box-shadow:0 0 0 3px var(--accent),0 0 20px rgba(250,204,21,.9)}
+  55%{transform:rotateY(0deg);box-shadow:0 0 0 3px var(--accent),0 0 16px rgba(250,204,21,.6)}
+  100%{transform:none;box-shadow:0 0 0 2px rgba(250,204,21,.35)}
+}
+/* ＣＨの高さは表裏で変わる（裏＝帯だけ／表＝帯＋絵）。急に伸びると飛び跳ねて見えるので、
+ * ゆっくり伸ばして「その場で開いた」ように見せる。 */
+.card.ch{transition:margin .28s ease-out,height .28s ease-out}
+
+/* 連鎖中に「壊すと決まった」カード。まだ場に残っていて、赤い枠で狙いを見せる段階
+ * ——自分で憑依解除するときに赤枠の中から選ぶ操作（.card.ch.pick）を真似ている。 */
+.card.ch.doomed{box-shadow:0 0 0 3px #f87171,0 0 16px #f87171aa;z-index:3;position:relative;
+  animation:cq-pick-pulse .7s ease-in-out infinite}
+/* 実際に取り除かれる直前の破壊アニメーション。 */
+.card.ch.doomed.dying{animation:cq-card-die .45s ease-in forwards}
+@keyframes cq-card-die{
+  0%{transform:none;opacity:1;box-shadow:0 0 0 3px #f87171,0 0 16px #f87171aa}
+  40%{transform:scale(1.06) rotate(-2deg);opacity:1;
+    box-shadow:0 0 0 4px #fca5a5,0 0 26px #f87171}
+  100%{transform:scale(.55) rotate(8deg);opacity:0;box-shadow:none}
 }
 
 /* ユニットの状態バッジ（行動済み・連続攻撃） */

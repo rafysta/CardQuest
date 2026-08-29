@@ -790,20 +790,21 @@ function chHTML(i, k) {
   /* 複数選択（113透視）で既に選んだぶんは、選択済みとして別の色にする */
   const pickedCls = UI.mode === 'pick-target' && UI.pick && UI.pick.kind === 'ch'
     && UI.pick.chosen.some((t) => t.lane === i && t.idx === k - 1) ? 'picked' : '';
-  /* 強制リバース連鎖の演出：下から順に1枚ずつめくれて見えるよう、
-     処理された順番を --i に入れて CSS のアニメーション遅延に使う（M6.7 WP1） */
-  const fxAt = UI.chainFx ? UI.chainFx.findIndex((t) => t.lane === i && t.idx === k - 1) : -1;
+  /* 強制リバース連鎖（M6.7 WP1・2026-08-30 作り直し）：
+     いま処理している1枚だけをその場でめくる。壊されると決まったカードは赤枠で見せる。 */
+  const chainNow = !!(UI.chainNow && UI.chainNow.lane === i && UI.chainNow.idx === k - 1);
+  const doomed = !!ch.doomed;
   const attr = `data-lane="${i}" data-layer="${k}" data-card="${card.id}"
     data-own="${own ? 1 : 0}" data-known="${known ? 1 : 0}" data-st="${ch.st || ''}"
-    ${closable ? 'data-closable="1"' : ''}
-    ${fxAt >= 0 ? `style="--i:${fxAt}"` : ''}`;
+    ${closable ? 'data-closable="1"' : ''}`;
   /* 開けるカードは「左半分＝開く／右半分＝内容を見る」の2つのタップ領域に分ける。
      ▶（左）とⓘ（右）がその目印。境目には薄い縦線を出す（.card.ch.split の ::after） */
   const split = open || flip;
   const mark = split ? '<span class="cur">▶</span>' : '';
   const info = split ? '<span class="inf">ⓘ</span>' : '';
   const splitCls = split ? 'split' : '';
-  const pickCls = (pickable ? 'pick ' : '') + pickedCls + (fxAt >= 0 ? ' chain-fx' : '');
+  const pickCls = (pickable ? 'pick ' : '') + pickedCls
+    + (chainNow ? ' chain-now' : '') + (doomed ? ' doomed' : '');
   if (!ch.up) {
     const nm = known ? `<span class="nm">${card.n}</span>` : '<span class="nm hid">？</span>';
     return `<div class="card ch back ${oc} ${open ? 'openable' : ''} ${flip ? 'flippable' : ''} ${splitCls} ${pickCls}" ${attr} ${bottom}>
@@ -1406,7 +1407,18 @@ function doFlip(laneIdx, layer, choice) {
   UI.report = null;
   if (UI.mode === 'info') UI.mode = 'idle';   /* 内容を見たあとに開いたら、結果の表示に戻す */
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
-  armChainFx();
+  if (M.forcedChain) {
+    /* 強制開放・強制転回：1枚ずつの演出が終わってから続きへ進む。
+     * 演出中は busy が立っていないので、renderAll() のたびに盤面は触れてしまう。
+     * 誤操作を防ぐため UI.mode を 'chain' にして盤面のクリックを弾く。 */
+    UI.mode = 'chain';
+    playForcedChain().then(() => {
+      UI.mode = 'idle';
+      if (enterDrawPickIfPending()) return;
+      step();
+    });
+    return;
+  }
   if (enterDrawPickIfPending()) return;       /* 予見・口寄せ：引いた札から選ばせる */
   step();
 }
@@ -1431,18 +1443,69 @@ function enterDrawPickIfPending() {
   return true;
 }
 
-function armChainFx() {
+/* 強制リバース連鎖の演出の間合い（2026-08-30 本人指摘：「早すぎて確認できない」）。
+ * エンジンが1ビートずつ止まるので、ここで人が読める長さの間を置く。 */
+const CHAIN_FLIP_MS = 380;     /* めくるアニメーション自体の長さ（CSS .chain-now と揃える） */
+const CHAIN_READ_MS = 750;     /* めくった後、内容を読むための静止 */
+const CHAIN_AIM_MS = 700;      /* 「このカードを狙った」を赤枠で見せる長さ */
+const CHAIN_DIE_MS = 450;      /* 破壊アニメーションの長さ（CSS .dying と揃える） */
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 連鎖が始まっていたら、最後まで1枚ずつ再生する（M6.7 WP1・2026-08-30 作り直し）。
+ *
+ * 1枚ぶんの流れ：
+ *   flip   … その場で裏返す（**上に動かさない**）→ 読む間だけ静止
+ *   effect … 効果を発動。壊す相手が居れば**まだ消さず**赤い枠で見せる
+ *   strike … 破壊アニメーションのあと実際に取り除く
+ * この1周が終わってから次の1枚に移る。 */
+async function playForcedChain() {
+  if (!M.forcedChain) return false;
+  const kindName = CARD_BY_ID[M.forcedChain.kind].n;
+  flash(kindName + '：下から順に1枚ずつ開きます');
+  let guard = 0;
+  while (M.forcedChain && guard++ < 64) {
+    const r = CQMagic.forcedChainStep(M);
+    if (r.done) break;
+
+    if (r.phase === 'flip') {
+      /* いまめくった1枚だけに印を付けて、その場でめくるアニメーションを見せる。 */
+      UI.chainNow = { lane: r.lane, idx: r.idx };
+      renderAll();
+      await wait(CHAIN_FLIP_MS + CHAIN_READ_MS);
+      UI.chainNow = null;
+      continue;
+    }
+
+    if (r.phase === 'effect') {
+      if (r.aimed && r.aimed.length) {
+        /* 狙われたカードは doomed の印が付いているだけでまだ場にある。
+         * 赤い枠で「これを狙った」を見せてから、破壊アニメーションを回す
+         * ——自分で憑依解除するときに赤枠の中から選ぶ操作を真似ている。 */
+        renderAll();
+        await wait(CHAIN_AIM_MS);
+        document.querySelectorAll('.card.ch.doomed').forEach((el) => el.classList.add('dying'));
+        await wait(CHAIN_DIE_MS);
+      } else {
+        renderAll();
+        await wait(260);
+      }
+      continue;
+    }
+
+    /* strike：実際に取り除かれた後の盤面 */
+    renderAll();
+    await wait(200);
+  }
+  UI.chainNow = null;
   const fc = M.lastForcedChain;
-  if (!fc || !fc.steps || !fc.steps.length) { UI.chainFx = null; return; }
-  UI.chainFx = fc.steps.map((x) => ({ lane: x.lane, idx: x.idx }));
-  const msg = CARD_BY_ID[fc.kind].n + '：' + fc.steps.length + '枚'
-    + (fc.aborted ? 'で中断（' + fc.aborted + '）' : 'を下から順に処理');
-  flash(msg);
-  /* アニメーションが終わるころに目印を外す（次の描画で残らないように）。 */
-  const ms = 300 + fc.steps.length * CHAIN_FX_STEP_MS;
-  setTimeout(() => { UI.chainFx = null; if (typeof renderAll === 'function') renderAll(); }, ms);
+  if (fc) {
+    flash(kindName + '：' + fc.steps.length + '枚'
+      + (fc.aborted ? 'で中断（' + fc.aborted + '）' : 'を処理しました'));
+  }
+  renderAll();
+  return true;
 }
-const CHAIN_FX_STEP_MS = 260;   /* 1枚あたりの間隔。CSS の .chain-fx と揃えること */
 
 /** 開こうとしている階層が憑依解除(101)で、かつ自分にはその中身が見えている（＝自分の
  * カードなので事前に判る）とき、破壊対象を選ばせるモードに入る。呼べる状況でなければ
@@ -1725,6 +1788,8 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
 
   /* 憑依解除(101)：破壊する対象を選んでいる最中。光っているＣＨを押したら確定する
      （2026-08-24 本人の指定）。それ以外を押しても何も起きない（選ぶまで先に進めない） */
+  /* 強制リバース連鎖の演出中はいっさい受け付けない（M6.7 WP1）。 */
+  if (UI.mode === 'chain') return;
   /* 引いた札から選ぶ最中（122予見・146口寄せ）は、選ぶまで盤面の操作を受け付けない。
    * 選ぶ操作そのものは情報パネルの中で行う（panelAct の draw-pick/keep/skip）。 */
   if (UI.mode === 'draw-pick') {
@@ -1769,7 +1834,7 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
       M.lastForcedChain = null;
       const r = CQCombat.open(M, layer, { choice, interactive: true });
       if (!r.ok) flash(r.reason);
-      armChainFx();
+      if (M.forcedChain) { UI.mode = 'chain'; playForcedChain().then(() => { UI.mode = 'idle'; if (!enterDrawPickIfPending()) step(); }); return; }
       if (enterDrawPickIfPending()) return;
       step();
     })) return;
@@ -1778,7 +1843,7 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
       M.lastForcedChain = null;
       const r = CQCombat.open(M, layer, { interactive: true });
       if (!r.ok) flash(r.reason);
-      armChainFx();
+      if (M.forcedChain) { UI.mode = 'chain'; playForcedChain().then(() => { UI.mode = 'idle'; if (!enterDrawPickIfPending()) step(); }); return; }
       if (enterDrawPickIfPending()) return;
       step();
     };

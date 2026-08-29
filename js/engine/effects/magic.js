@@ -228,8 +228,30 @@
     if (ctx.choice) {
       t = pool.find(function (c) { return c.lane === ctx.choice.lane && c.idx === ctx.choice.idx; }) || null;
     }
+    /* ★連鎖中で、しかも**この憑依解除を置いたのが連鎖を仕掛けられた側**なら、
+     * 「連鎖の元凶（108/109のカード）を壊して連鎖を止める」のがいちばん強い手なので、
+     * 自動選択のときはそれを優先する（2026-08-30 本人の指摘）。
+     * ——ルール上は元からこれを狙えた（h101 の候補は自分自身以外の全ＣＨ）。
+     * 400回試すと約25%で偶然当たっていたが、狙って当てていなかっただけだった。 */
+    if (!t && m.forcedCtx && ctx.caster !== m.forcedCtx.side) {
+      t = pool.find(function (c) {
+        const lane = m.board.lanes[c.lane];
+        const cc = lane && lane.channels[c.idx];
+        return cc && (cc.card === 108 || cc.card === 109) && c.lane === m.forcedCtx.lane;
+      }) || null;
+      if (t) note(m, '憑依解除：連鎖の元凶を狙う');
+    }
     if (!t) t = pick(m, pool);
     if (!t) { note(m, '憑依解除：対象が無い'); return; }
+    const victim = m.board.lanes[t.lane].channels[t.idx];
+    /* 連鎖の演出中は「消す」かわりに印を付けて登録する。ＵＩが赤い枠で見せてから
+     * 次のビート（strike）で実際に取り除く＝**何を狙ったのかが見える**。 */
+    if (m.forcedAim) {
+      victim.doomed = true;
+      m.forcedAim.push({ lane: t.lane, idx: t.idx, card: victim.card });
+      note(m, '憑依解除：' + nameOf(m, victim.card) + ' を狙う');
+      return;
+    }
     const removed = dropChannelAt(m, t.lane, t.idx);
     recalc(m);
     note(m, '憑依解除：' + nameOf(m, removed.card) + ' を破壊');
@@ -342,54 +364,111 @@
     const ln = m.board.lanes[marker.lane];
     if (!ln || ln.unit == null) return false;
     const ch = ln.channels[marker.idx];
-    return !!(ch && ch.card === marker.card && ch.up);
+    /* doomed（破壊が予約された）状態も「もう失われた」として扱う。
+     * そうしないと、憑依解除が元凶を狙った直後の1枚だけ余計にめくれてしまう。 */
+    return !!(ch && ch.card === marker.card && ch.up && !ch.doomed);
   }
 
+  /** 連鎖を始める。`ctx.interactive` なら1ビート目の手前で止まり、
+   * ＵＩが `CQMagic.forcedChainStep(m)` を間を置いて呼んで演出する。
+   * そうでなければ（ＡＩ・シミュレータ）ここで最後まで回しきる＝**呼び出し側は無改修**。 */
   function forcedChain(m, ctx, kind) {
     const pool = forcedTargets(m, ctx, false);
     if (!pool.length) { note(m, nameOf(m, kind) + '：対象がいない'); return; }
     const target = chooseTarget(m, ctx, pool);
-    const marker = { lane: ctx.laneIndex, idx: ctx.layer - 1, card: kind };
-    const steps = [];
+    m.forcedChain = {
+      kind: kind, caster: ctx.caster,
+      marker: { lane: ctx.laneIndex, idx: ctx.layer - 1, card: kind },
+      target: target, cursor: 0, phase: 'flip', steps: [], aborted: null
+    };
     /* 連鎖中に開いた 133呪爆・134呪念 は「仕掛けた側」を狙う（原作§1-8 の V970 分岐）
      * ＝**強制開放は撃った本人に跳ね返る**。h133/h134 がこれを見る。 */
-    m.forcedCtx = { lane: marker.lane, side: ctx.caster };
+    m.forcedCtx = { lane: ctx.laneIndex, side: ctx.caster };
     note(m, nameOf(m, kind) + '：' + nameOf(m, m.board.lanes[target].unit) + ' のＣＨを下から順に処理する');
+    if (ctx.interactive) return;                 /* ＵＩが1ビートずつ進める */
+    let guard = 0;
+    while (m.forcedChain && guard++ < 64) forcedChainStep(m);
+  }
 
-    let aborted = null;
-    for (let i = 0; ; i++) {
-      if (!markerAlive(m, marker)) { aborted = 'マーカーが失われた'; break; }
-      const ln = m.board.lanes[target];
-      if (!ln || ln.unit == null) { aborted = '対象ユニットが場から消えた'; break; }
-      if (i >= ln.channels.length) break;                  // 最上段まで到達＝正常終了
-      const ch = ln.channels[i];
-      if (kind === 108 && ch.up) { continue; }             // 強制開放は裏のものだけを開く
-      const wasUp = ch.up;
+  /** 連鎖を1ビートだけ進める。ビートは3種類：
+   *   flip   … いま処理する1枚をその場で裏返す（**効果はまだ発動しない**）
+   *   effect … 表になったカードの効果を発動する。壊す対象は印を付けるだけで**まだ消さない**
+   *   strike … 印の付いたカードを実際に取り除く
+   * ＵＩはビートごとに間を置いて描き直す＝「めくる→読む→効果→狙われたカードが見える→消える」
+   * という順番がそのまま画面に出る。戻り値の phase でどのビートだったかが分かる。 */
+  function forcedChainStep(m) {
+    const fc = m.forcedChain;
+    if (!fc) return { done: true };
+
+    if (fc.phase === 'flip') {
+      /* 中断の判定はめくる直前だけ。ここが「元凶を壊せば連鎖が止まる」の実体。 */
+      if (!markerAlive(m, fc.marker)) return endForcedChain(m, 'マーカーが失われた');
+      const ln = m.board.lanes[fc.target];
+      if (!ln || ln.unit == null) return endForcedChain(m, '対象ユニットが場から消えた');
+      if (fc.cursor >= ln.channels.length) return endForcedChain(m, null);   /* 最上段まで到達 */
+      const ch = ln.channels[fc.cursor];
+      if (fc.kind === 108 && ch.up) { fc.cursor += 1; return forcedChainStep(m); }  /* 開放は裏だけ */
       ch.up = !ch.up;
       if (ch.up) ch.revealed = true;
       recalc(m);
-      steps.push({ lane: target, idx: i, card: ch.card, up: ch.up });
-      if (ch.up) {
-        /* 開いた瞬間に効果が発動する（forced: true ＝ NO_FORCED のカードはここで不発になる）。
-         * ここで133呪爆が開けば、上の m.forcedCtx により**仕掛けた側**のユニットが死に、
-         * 次のループ先頭の markerAlive() が false になって連鎖が止まる。 */
-        onMagicOpen(m, target, i + 1, ch.card, { forced: true });
-      }
-      if (turnApi().checkResult(m)) { aborted = '決着した'; break; }
-      /* 時の渦(140)のように「連鎖そのものを止める」カードが開いた場合の明示的な中断印。 */
-      if (m.forcedAbort) { aborted = m.forcedAbort + 'で止められた'; break; }
-      /* 効果で対象のＣＨが減った（押収・潜入など）場合、いま処理した階層がずれることがある。
-       * 消えていたら次の周回でインデックスが自然に繰り上がるので、ここでは何もしない。 */
-      void wasUp;
+      fc.steps.push({ lane: fc.target, idx: fc.cursor, card: ch.card, up: ch.up });
+      fc.phase = 'effect';
+      return { done: false, phase: 'flip', lane: fc.target, idx: fc.cursor, card: ch.card, up: ch.up };
     }
 
+    if (fc.phase === 'effect') {
+      const ln = m.board.lanes[fc.target];
+      const ch = ln && ln.channels[fc.cursor];
+      let aimed = [];
+      if (ch && ch.up) {
+        /* m.forcedAim を用意しておくと、破壊系の効果は「消す」かわりに doomed の印を付けて
+         * ここへ登録する（h101 を参照）。ＵＩがその印を赤い枠で見せてから strike で消す。 */
+        m.forcedAim = [];
+        onMagicOpen(m, fc.target, fc.cursor + 1, ch.card, { forced: true });
+        aimed = m.forcedAim || [];
+        m.forcedAim = null;
+      }
+      if (turnApi().checkResult(m)) return endForcedChain(m, '決着した');
+      if (m.forcedAbort) return endForcedChain(m, m.forcedAbort + 'で止められた');
+      if (aimed.length) { fc.phase = 'strike'; }
+      else { fc.cursor += 1; fc.phase = 'flip'; }
+      return { done: false, phase: 'effect', aimed: aimed };
+    }
+
+    /* strike：印の付いたカードを実際に取り除く。 */
+    let removed = 0;
+    m.board.lanes.forEach(function (ln) {
+      if (ln.unit == null) return;
+      const before = ln.channels.length;
+      ln.channels = ln.channels.filter(function (ch) { return !ch.doomed; });
+      ln.count = ln.channels.length;
+      removed += before - ln.channels.length;
+    });
+    recalc(m);
+    if (turnApi().checkResult(m)) return endForcedChain(m, '決着した');
+    fc.cursor += 1; fc.phase = 'flip';
+    return { done: false, phase: 'strike', removed: removed };
+  }
+
+  function endForcedChain(m, aborted) {
+    const fc = m.forcedChain;
+    m.forcedChain = null;
     m.forcedCtx = null;
     m.forcedAbort = null;
+    m.forcedAim = null;
+    /* 中断で終わった場合、印だけ付いて消えていないカードが残らないよう掃除する。 */
+    m.board.lanes.forEach(function (ln) {
+      if (ln.unit == null) return;
+      ln.channels = ln.channels.filter(function (ch) { return !ch.doomed; });
+      ln.count = ln.channels.length;
+    });
     recalc(m);
-    if (aborted) note(m, nameOf(m, kind) + '：' + aborted + 'ため連鎖が止まった（' + steps.length + '枚で中断）');
-    else note(m, nameOf(m, kind) + '：' + steps.length + '枚を処理した');
-    /* ＵＩが1枚ずつの演出に使う。エンジン・ＡＩ・シミュレータは見なくてよい。 */
-    m.lastForcedChain = { kind: kind, target: target, steps: steps, aborted: aborted };
+    if (!fc) return { done: true };
+    if (aborted) note(m, nameOf(m, fc.kind) + '：' + aborted + 'ため連鎖が止まった（' + fc.steps.length + '枚で中断）');
+    else note(m, nameOf(m, fc.kind) + '：' + fc.steps.length + '枚を処理した');
+    /* テストとＵＩが結果を見るための記録（従来と同じ形）。 */
+    m.lastForcedChain = { kind: fc.kind, target: fc.target, steps: fc.steps, aborted: aborted };
+    return { done: true, aborted: aborted };
   }
 
   function h108(m, ctx) { forcedChain(m, ctx, 108); }         // 強制開放（戦闘中×強制中×）
@@ -938,7 +1017,8 @@
     return { consumed: consumed };
   }
 
-  const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED, resolvePending, autoResolve };
+  const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED, resolvePending, autoResolve,
+    forcedChainStep };
   global.CQMagic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

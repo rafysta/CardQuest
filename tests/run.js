@@ -4126,6 +4126,74 @@ t('連鎖：対象が居なければ何も起きない', () => {
   eq(m.lastForcedChain, undefined, '連鎖自体が始まらない');
 });
 
+t('連鎖：interactive なら1ビートずつ止まる（めくる→効果→取り除く）', () => {
+  /* 2026-08-30 本人指摘：「めくるのが早すぎて確認できない」「効果はめくった後に発動してほしい」。
+   * エンジンが1ビートずつ返すようになったので、ＵＩが間を置いて再生できる。
+   * ＡＩ・シミュレータは interactive を渡さないので従来どおり一気に解決する。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [down(151), down(152)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 }, interactive: true });
+  eq(!!m.forcedChain, true, '連鎖が始まったまま止まっている');
+  eq(m.board.lanes[3].channels[0].up, false, 'まだ1枚も開いていない');
+
+  const a = CQMagic.forcedChainStep(m);
+  eq(a.phase, 'flip', '1ビート目はめくるだけ');
+  eq(m.board.lanes[3].channels[0].up, true, '1枚目が開く');
+  eq(m.board.lanes[3].channels[1].up, false, '2枚目はまだ開かない');
+
+  const b = CQMagic.forcedChainStep(m);
+  eq(b.phase, 'effect', '2ビート目に効果が出る');
+
+  const c = CQMagic.forcedChainStep(m);
+  eq(c.phase, 'flip', '次の1枚へ');
+  eq(m.board.lanes[3].channels[1].up, true, '2枚目が開く');
+});
+
+t('連鎖：憑依解除が狙ったカードは、いったん印が付くだけで場に残る（赤枠で見せるため）', () => {
+  /* 本人の要望：「ターゲットになるカードが何であるのかを、プレイヤーが確認できるように」。
+   * effect ビートでは doomed の印を付けるだけにして、strike ビートで実際に取り除く。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(70, [down(101, { mine: false })]);
+  m.board.lanes[4] = lane(8, [down(153, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 }, interactive: true });
+  CQMagic.forcedChainStep(m);                         /* flip：憑依解除が開く */
+  const e = CQMagic.forcedChainStep(m);               /* effect：狙いを付ける */
+  eq(e.phase, 'effect', '効果のビート');
+  eq(e.aimed.length >= 1, true, '狙ったカードが返る');
+  const aim = e.aimed[0];
+  const stillThere = m.board.lanes[aim.lane].channels[aim.idx];
+  eq(!!(stillThere && stillThere.doomed), true, 'まだ場にあり、印が付いている');
+
+  const st = CQMagic.forcedChainStep(m);              /* strike：実際に取り除く */
+  eq(st.phase, 'strike', '取り除くビート');
+  eq(st.removed >= 1, true, '取り除かれた');
+});
+
+t('連鎖：相手の憑依解除は「連鎖の元凶」を狙う（2026-08-30 本人指摘の対抗手）', () => {
+  /* ルール上は元から狙えた（h101の候補は自分以外の全ＣＨ）。400回試すと約25%で
+   * 偶然当たっていたが、狙って当てていなかっただけ。自動選択がそれを優先するようにした。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);            // 元凶（自分が仕掛けた）
+  m.board.lanes[3] = lane(70, [down(101, { mine: false }), down(172, { mine: false })]);
+  m.board.lanes[4] = lane(8, [down(153, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[0].channels.some((c) => c.card === 108), false, '元凶が破壊される');
+  eq(m.lastForcedChain.aborted != null, true, '連鎖が止まる');
+  eq(m.board.lanes[3].channels.some((c) => c.card === 172 && c.up), false,
+    '2枚目の反射までは開かれない');
+});
+
+t('連鎖：自分が仕掛けた側の憑依解除は元凶を狙わない（自分の連鎖を止めない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(70, [down(101, { mine: true }), down(172, { mine: true })]);  // 仕掛けた側の札
+  m.board.lanes[4] = lane(8, [down(153, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[0].channels.some((c) => c.card === 108), true, '元凶は残る');
+});
+
 t('連鎖：ＵＩ用の steps は「レーン・階層・カード・表裏」を処理順に持つ', () => {
   /* ＵＩはこの配列を200〜300ms間隔で再生して「1枚ずつめくる」演出にする。
    * ＡＩ・シミュレータは見なくてよい（無改修で動く）。 */
