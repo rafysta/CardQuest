@@ -44,20 +44,31 @@ function artInner(card, chars) {
 }
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
+/** 画面を切り替える（2026-08-29 新設）。
+ *
+ * **タブとは切り離してある。** 以前は画面の切り替えが「タブを click する」ことでしか
+ * できず、ラン中に戦闘へ入るたびタブの光が「バトル画面（検証）」へ移っていた。
+ * 本人指定でタブは「ラン」だけに固定したので、画面の出し入れはこの関数が担い、
+ * タブの見た目には触らない（ストーリー中はずっと「ラン」が光ったまま）。
+ * デッキ編集・フリーバトルは開発用としてデバッグメニュー（js/debug.js）から呼ぶ。 */
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach((x) => x.classList.remove('on'));
+  const el = document.getElementById(id);
+  if (el) el.classList.add('on');
+  /* v0.16でラン画面が既定になり、バトル画面は最初 display:none のまま
+   * newMatch()/renderAll() が走ることがある（非表示中は clientHeight などが0になり、
+   * --cw/--chh/--vstep/--hstep に0が焼き込まれる）。表示に切り替えた直後、
+   * レイアウトが確定してから（rAFで1フレーム待って）測り直す。 */
+  if (id === 'screen-battle') {
+    requestAnimationFrame(() => { fitBoard(); if (M) renderHand(); });
+  }
+}
+if (typeof window !== 'undefined') window.showScreen = showScreen;
+
+/* 残っているタブは「ラン」だけ。押しても常にラン画面へ戻るだけにしておく
+ * （戦闘中に押されたら探索の画面へ戻る、という素直な動きになる）。 */
 document.querySelectorAll('.tab').forEach((b) => {
-  b.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('on'));
-    document.querySelectorAll('.screen').forEach((x) => x.classList.remove('on'));
-    b.classList.add('on');
-    document.getElementById(b.dataset.screen).classList.add('on');
-    /* v0.16でラン画面が既定タブになり、バトル画面は最初 display:none のまま
-     * newMatch()/renderAll() が走ることがある（非表示中は clientHeight などが0になり、
-     * --cw/--chh/--vstep/--hstep に0が焼き込まれる）。表示に切り替えた直後、
-     * レイアウトが確定してから（rAFで1フレーム待って）測り直す。 */
-    if (b.dataset.screen === 'screen-battle') {
-      requestAnimationFrame(() => { fitBoard(); if (M) renderHand(); });
-    }
-  });
+  b.addEventListener('click', () => showScreen(b.dataset.screen));
 });
 
 /* ================= 対戦の状態 ================= */
@@ -119,8 +130,7 @@ function startRunBattle(setup, onOver) {
   /* M6.6 WP5：先攻／後攻は m.first に対局のあいだ保持されている（m.active は手番ごとに
    * 入れ替わるので、step() が非同期に手番を進めた後だと当てにならない）。 */
   const first = M.first;
-  const tab = document.querySelector('.tab[data-screen="screen-battle"]');
-  if (tab) tab.click();
+  showScreen('screen-battle');     /* タブは「ラン」のまま動かさない（2026-08-29） */
   step();
   /* バトル画面が表示されると同時に先攻ルーレットを見せる。結果はもう決定済み（上のfirst。
    * CQRun.battleSetup の first＝戦闘シードから決定的に決まっている）なので、ここでは
@@ -245,26 +255,169 @@ function destroyCandidates(exceptLane, exceptIdx) {
   return res;
 }
 
-function newMatch() {
+/* 開発用デッキ（screen-deck で組むもの）。**アンロックには一切関係なく全169種から組める**
+ * ——ストーリー側の「本とデッキ」（cq_meta・移動モデル）とは完全に別物で、こちらは
+ * デバッグ専用（2026-08-29 本人指定でその位置づけを明確化した）。
+ * ここで組んだデッキが、そのまま「フリーバトル」の自分のデッキになる。
+ * localStorage に残すので、画面を閉じても・リロードしても組んだものが消えない。 */
+const DEBUG_DECK_KEY = 'cq_debug_deck';
+const deck = {};
+(function loadDebugDeck() {
+  try {
+    const raw = localStorage.getItem(DEBUG_DECK_KEY);
+    if (raw) {
+      const o = JSON.parse(raw);
+      Object.keys(o).forEach((k) => { if (CARD_BY_ID[k] && o[k] > 0) deck[k] = Math.min(3, o[k] | 0); });
+    }
+  } catch (_) { /* 壊れていたら既定の見本デッキで始める */ }
+  if (!Object.keys(deck).length) {
+    [1, 1, 8, 40, 101, 108, 153, 193].forEach((id) => { deck[id] = (deck[id] || 0) + 1; });
+  }
+})();
+function saveDebugDeck() {
+  try { localStorage.setItem(DEBUG_DECK_KEY, JSON.stringify(deck)); } catch (_) { /* 保存できなくても続行 */ }
+}
+
+/** 開発用デッキを createMatch に渡せるカードIDの配列にする。
+ * 40枚に満たない分は空白(180)で埋める（ラン側の buildPlayerDeck と同じ考え方）。 */
+function debugDeckList() {
+  const out = [];
+  Object.keys(deck).forEach((k) => { for (let i = 0; i < deck[k]; i++) out.push(+k); });
+  while (out.length < CQTurn.DECK_SIZE) out.push(180);
+  return out.slice(0, CQTurn.DECK_SIZE);
+}
+
+/* ================= フリーバトル（開発用・2026-08-29） =================
+ * 旧「バトル画面（検証）」を、デバッグメニューから開く独立したモードとして整理したもの。
+ * ・自分のデッキ ＝ デッキ編集画面（screen-deck）で組んだもの（アンロック無関係・全169種）
+ * ・相手 ＝ 好きなモンスター（体数つき・フリーユニット戦）か、エリアのマスター（ＬＰ勝負）
+ * ・先攻／後攻を自分で選べる（ストーリー側は戦闘シードによる50%抽選なので、ここでしか選べない）
+ * ストーリー（ラン）の戦闘は startRunBattle() が別に組み立てるので、ここは一切影響しない。 */
+const FREE = {
+  foeId: 8,            /* 相手のモンスター（フリーユニット戦のとき） */
+  foeCount: 2,         /* 体数（1〜3） */
+  foeKind: 'unit',     /* 'unit'＝モンスター（フリーユニット戦）／'master'＝マスター（ＬＰ勝負） */
+  masterArea: 'grassland',
+  first: 'self'        /* 先攻をどちらにするか */
+};
+
+/** フリーバトルの設定画面を描く（#screen-free）。 */
+function renderFreeSetup() {
+  const el = document.getElementById('free-root');
+  if (!el) return;
+  const units = CARDS.filter((c) => c.t === 'U').sort((a, b) => a.id - b.id);
+  const total = Object.values(deck).reduce((s, n) => s + n, 0);
+  const areas = (typeof CQAreas !== 'undefined' && CQAreas.list) ? CQAreas.list() : [];
+  el.innerHTML = `
+    <div class="free-wrap">
+      <h2 class="free-h">フリーバトル<small>開発用。デッキ編集で組んだデッキで、好きな相手と戦います</small></h2>
+      <div class="free-grid">
+        <div class="free-box">
+          <h3>自分のデッキ</h3>
+          <p class="free-note">デッキ編集で組んだ <b>${total}</b> 枚
+            ${total < CQTurn.DECK_SIZE ? `（残り ${CQTurn.DECK_SIZE - total} 枚は空白で埋まります）` : ''}</p>
+          <button class="tiny" data-fact="edit-deck">デッキ編集を開く</button>
+        </div>
+        <div class="free-box">
+          <h3>相手</h3>
+          <div class="free-row">
+            <button class="free-pick ${FREE.foeKind === 'unit' ? 'on' : ''}" data-fact="kind" data-v="unit">モンスター（場を空にすれば勝ち）</button>
+            <button class="free-pick ${FREE.foeKind === 'master' ? 'on' : ''}" data-fact="kind" data-v="master">マスター（ＬＰ勝負）</button>
+          </div>
+          ${FREE.foeKind === 'unit' ? `
+            <div class="free-row">
+              <select id="free-foe">${units.map((c) =>
+                `<option value="${c.id}" ${c.id === FREE.foeId ? 'selected' : ''}>${esc(c.n)}（Ａ${c.a}／Ｄ${c.d}／ＣＨ${c.ch}）</option>`).join('')}</select>
+            </div>
+            <div class="free-row"><span class="free-cap">体数</span>
+              ${[1, 2, 3].map((n) => `<button class="free-pick ${FREE.foeCount === n ? 'on' : ''}" data-fact="count" data-v="${n}">${n}体</button>`).join('')}
+            </div>` : `
+            <div class="free-row">
+              ${areas.map((a) => `<button class="free-pick ${FREE.masterArea === a.id ? 'on' : ''}" data-fact="area" data-v="${a.id}">${esc(a.bossName || a.name)}</button>`).join('')}
+            </div>`}
+        </div>
+        <div class="free-box">
+          <h3>先攻・後攻</h3>
+          <div class="free-row">
+            <button class="free-pick ${FREE.first === 'self' ? 'on' : ''}" data-fact="first" data-v="self">自分が先攻</button>
+            <button class="free-pick ${FREE.first === 'enemy' ? 'on' : ''}" data-fact="first" data-v="enemy">相手が先攻（自分は後攻＝手札+1）</button>
+          </div>
+          <h3>戦場ルール</h3>
+          <div class="free-row">
+            ${FIELD_SETS.map((f, i) => `<button class="free-pick ${fieldSet === i ? 'on' : ''}" data-fact="field" data-v="${i}">${esc(f.label)}</button>`).join('')}
+          </div>
+          <h3>相手ＡＩの強さ</h3>
+          <div class="free-row">
+            ${AI_RANKS.map((r) => `<button class="free-pick ${aiRank === r ? 'on' : ''}" data-fact="rank" data-v="${r}">${esc(CQAi.PRESETS[r].label)}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="free-go">
+        <button class="btn ng" data-fact="back">ランへ戻る</button>
+        <button class="btn ok" data-fact="start">この設定で始める</button>
+      </div>
+    </div>`;
+}
+
+/** 設定どおりに対戦を組み立てて、バトル画面へ入る。 */
+function startFreeBattle() {
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+  const isMaster = FREE.foeKind === 'master';
+  const area = (typeof CQAreas !== 'undefined' && CQAreas.get) ? CQAreas.get(FREE.masterArea) : null;
+  const enemyBoard = [];
+  for (let i = 0; i < FREE.foeCount; i++) enemyBoard.push(FREE.foeId);
+  RUN_ACTIVE = false; runOverHook = null; foeAuto = true;
   M = CQTurn.createMatch({
     cards: CARD_BY_ID,
     rng: CQRng.create(seed),
-    selfDeck: SAMPLE_DECK.slice(),
-    enemyDeck: SAMPLE_DECK.slice(),
-    first: 'self',
-    opponentId: 101,                /* フリーユニット戦扱い＝戦利品が記録される */
-    fieldRules: FIELD_SETS[fieldSet].rules,   /* M6 戦場ルール：バトル開始時に確定する */
+    selfDeck: debugDeckList(),                      /* ← デッキ編集で組んだもの */
+    enemyDeck: (isMaster && area && typeof CQRun !== 'undefined')
+      ? CQRun.buildBossDeck(CARD_BY_ID, area)
+      : SAMPLE_DECK.slice(),
+    first: FREE.first,
+    opponentId: 101,                                /* フリーユニット戦扱い＝戦利品が記録される */
+    fieldRules: FIELD_SETS[fieldSet].rules,
+    /* モンスター相手はラン中の通常戦闘と同じフリーユニット戦、マスター相手は従来のＬＰ勝負 */
+    mode: isMaster ? undefined : 'field',
+    enemyBoard: isMaster ? undefined : enemyBoard,
+    enemyOpts: (isMaster && area) ? { lp: area.bossLp, maxLp: area.bossLp } : undefined,
     hooks: {
-      onMagicOpen: CQMagic.onMagicOpen,           /* M4 v0.13：魔法48種の発動処理 */
-      onUnitOpen: CQUnits.onUnitOpen              /* M4 v0.14：ユニット固有能力「開：」型の発動処理 */
+      onMagicOpen: CQMagic.onMagicOpen,             /* M4 v0.13：魔法48種の発動処理 */
+      onUnitOpen: CQUnits.onUnitOpen                /* M4 v0.14：ユニット固有能力「開：」型の発動処理 */
     }
   });
-  M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };   /* M5：相手ＡＩの強さ（評価関数方策） */
+  M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };     /* M5：相手ＡＩの強さ（評価関数方策） */
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
+  showScreen('screen-battle');
   step();
 }
+
+/** 「もう一度対戦する」＝同じ設定でもう1戦（旧 newMatch の役割）。 */
+function newMatch() { startFreeBattle(); }
+
+document.getElementById('free-root').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-fact]');
+  if (!b) return;
+  const v = b.dataset.v;
+  switch (b.dataset.fact) {
+    case 'kind': FREE.foeKind = v; break;
+    case 'count': FREE.foeCount = +v; break;
+    case 'area': FREE.masterArea = v; break;
+    case 'first': FREE.first = v; break;
+    case 'field': fieldSet = +v; break;
+    case 'rank': aiRank = v; if (M) M.aiConfig = { enemy: CQAi.PRESETS[aiRank] }; break;
+    case 'edit-deck': return showScreen('screen-deck');
+    case 'back': return showScreen('screen-run');
+    case 'start': {
+      const sel = document.getElementById('free-foe');
+      if (sel) FREE.foeId = +sel.value;
+      return startFreeBattle();
+    }
+    default: return;
+  }
+  renderFreeSetup();
+});
 
 /** 操作を始める前にログの位置を覚えておく（そのあと起きたことを右パネルに出すため） */
 let logMark = null;
@@ -1589,7 +1742,10 @@ document.addEventListener('pointerup', (ev) => {
 });
 
 /* 対戦開始 */
-newMatch();
+/* 2026-08-29：ここにあった起動時の newMatch() は廃止した。
+ * バトル画面は「フリーバトル」かラン中の戦闘からしか入らなくなり、どちらも自分で
+ * 対戦（M）を組み立てる。起動時に作ってしまうと、いまは newMatch＝フリーバトル開始なので
+ * アプリを開いた瞬間に戦闘画面へ飛んでしまう。 */
 
 /* ================= デッキ編集画面（v0.3から変更なし） ================= */
 const ALL_COLS = {
@@ -1613,8 +1769,6 @@ const ALL_COLS = {
 const shown = { U: {}, MS: {} };
 Object.keys(ALL_COLS).forEach((g) => ALL_COLS[g].forEach((c) => { shown[g][c.k] = c.def; }));
 
-const deck = {};
-[1, 1, 8, 40, 101, 108, 153, 193].forEach((id) => { deck[id] = (deck[id] || 0) + 1; });
 
 let dType = 'U', sortKey = 'id', sortAsc = true, filters = {}, selectedId = 1;
 let composing = false;
@@ -1747,11 +1901,16 @@ thead.addEventListener('input', (ev) => {
 });
 document.getElementById('tbody').addEventListener('click', (ev) => {
   const plus = ev.target.closest('[data-plus]');
-  if (plus) { const id = +plus.dataset.plus; deck[id] = Math.min(3, (deck[id] || 0) + 1); return renderBody(); }
+  if (plus) {
+    const id = +plus.dataset.plus; deck[id] = Math.min(3, (deck[id] || 0) + 1);
+    saveDebugDeck();                       /* 組んだ内容を残す（フリーバトルで使う） */
+    return renderBody();
+  }
   const minus = ev.target.closest('[data-minus]');
   if (minus) {
     const id = +minus.dataset.minus;
     deck[id] = (deck[id] || 0) - 1; if (deck[id] <= 0) delete deck[id];
+    saveDebugDeck();
     return renderBody();
   }
   const tr = ev.target.closest('tr[data-id]');
@@ -1761,6 +1920,13 @@ document.getElementById('tbody').addEventListener('click', (ev) => {
     tr.classList.add('on');
     renderDetail();
   }
+});
+/* デッキ編集画面からの戻り道（タブが「ラン」固定になったので明示的に置いてある） */
+document.querySelectorAll('.deck-back').forEach((b) => {
+  b.addEventListener('click', () => {
+    if (b.dataset.back === 'screen-free') renderFreeSetup();
+    showScreen(b.dataset.back);
+  });
 });
 document.querySelectorAll('.dtab').forEach((b) => {
   b.addEventListener('click', () => {

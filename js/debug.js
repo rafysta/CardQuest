@@ -23,11 +23,40 @@ const CQDebug = (function () {
   let panel = null;
 
   const ITEMS = [
+    { icon: '🗡', label: 'フリーバトル', hint: '好きな相手・先攻後攻を選んで戦う', run: openFreeBattle },
+    { icon: '🃏', label: 'デッキ編集', hint: '全169種から自由に組む（フリーバトル用）', run: openDeckEdit },
     { icon: '⚔', label: 'バトルをスキップ（勝利）', hint: 'いまの戦闘を勝ちで終わらせる', run: skipBattle },
     { icon: '🔄', label: '最新版のチェック', hint: '公開中・GitHubの版と見比べる', run: checkVersion },
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
     { icon: '🎬', label: '戦闘開始シーンを再生', hint: 'カットイン→ルーレットだけ再生', run: playBattleIntroScene }
   ];
+
+  /* ---- 🗡 フリーバトル ／ 🃏 デッキ編集 -------------------------------------
+   * どちらも 2026-08-29 にタブから移してきた開発用の画面。ストーリー（ラン）中に
+   * 開いてもランの状態は壊れない——ラン画面は `RUI` が持っている状態から毎回描き直すので、
+   * 戻ってくれば元の続きが出る。ただしフリーバトルは `M`（対戦の状態）を作り直すため、
+   * **ラン中の戦闘の最中に開くとその戦闘は失われる**ので、そのときだけ確認を挟む。 */
+  function leaveRunBattleConfirmed(then) {
+    const inRunBattle = (typeof RUN_ACTIVE !== 'undefined') && RUN_ACTIVE
+      && typeof M !== 'undefined' && M && !M.winner && !M.fled;
+    if (!inRunBattle) return then();
+    showConfirm('探索中の戦闘があります。\n開発用の画面へ移ると、この戦闘は失われます。\nよろしいですか？',
+      then, '移る');
+  }
+
+  function openFreeBattle() {
+    close();
+    leaveRunBattleConfirmed(function () {
+      if (typeof RUN_ACTIVE !== 'undefined') { RUN_ACTIVE = false; runOverHook = null; }
+      renderFreeSetup();
+      showScreen('screen-free');
+    });
+  }
+
+  function openDeckEdit() {
+    close();
+    showScreen('screen-deck');
+  }
 
   function close() { if (panel) { panel.remove(); panel = null; } }
 

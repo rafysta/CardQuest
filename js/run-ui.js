@@ -1300,16 +1300,14 @@ function onRunBattleOver(M) {
       RUI.view = 'map';
       runSave();
     }
-    const tabF = document.querySelector('.tab[data-screen="screen-run"]');
-    if (tabF) tabF.click();
+    showScreen('screen-run');
     runRender();
     return;
   }
   CQRun.reportBattle(run, n, M, RUI.meta);
   if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
   advanceAfterBattle();
-  const tab = document.querySelector('.tab[data-screen="screen-run"]');
-  if (tab) tab.click();
+  showScreen('screen-run');
   runRender();
 }
 if (typeof window !== 'undefined') window.onRunBattleOver = onRunBattleOver;

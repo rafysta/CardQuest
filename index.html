@@ -8,17 +8,19 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.16.12">
+<link rel="stylesheet" href="css/style.css?v=0.16.13">
 </head>
 <body>
 
 <div id="app">
   <div class="topbar">
     <div class="logo">CardQuest<small id="ver-label">v0.9.0</small></div>
+    <!-- 2026-08-29：タブは「ラン」だけにした。ストーリー中は戦闘に入ってもここは動かない
+         （以前は戦闘のたびに「バトル画面（検証）」へ光が移っていたが、プレイヤーが
+         自分で行き来する意味が無いため）。デッキ編集とフリーバトルは開発用なので
+         右の 🛠 デバッグメニューから開く。 -->
     <div class="tabs">
       <button class="tab on" data-screen="screen-run">ラン</button>
-      <button class="tab" data-screen="screen-battle">バトル画面（検証）</button>
-      <button class="tab" data-screen="screen-deck">デッキ編集</button>
     </div>
     <!-- 開発用の専用コマンド置き場（2026-08-29）。使われていなかった「エンジン検証」
          「この案について」タブを外し、代わりにここへ検証用の道具をまとめた。 -->
@@ -30,7 +32,7 @@
     <div id="run-root"></div>
   </section>
 
-  <!-- ===== バトル画面（単発検証用。ラン中の戦闘もここに橋渡しされる） ===== -->
+  <!-- ===== バトル画面。ラン中の戦闘と、デバッグメニューの「フリーバトル」の両方がここを使う ===== -->
   <section class="screen" id="screen-battle">
     <div class="statusbar">
       <div class="side enemy">
@@ -59,7 +61,8 @@
     </div>
   </section>
 
-  <!-- ===== デッキ編集画面 ===== -->
+  <!-- ===== デッキ編集画面（開発用。アンロックに関係なく全169種から組める。
+       ここで組んだデッキが「フリーバトル」の自分のデッキになる） ===== -->
   <section class="screen" id="screen-deck">
     <div class="deck-wrap">
       <div class="deck-main">
@@ -68,6 +71,10 @@
           <button class="dtab M" data-t="M">✦ 魔法</button>
           <button class="dtab S" data-t="S">✚ 技能</button>
           <div class="deck-count" id="deck-count"></div>
+          <!-- 開発用画面なので戻り道を明示しておく。
+               ストーリーへ戻るのは右上の「ラン」タブが担うので、ここには置かない
+               （2つ並べるとこの行に収まらず、文字が折れてしまった）。 -->
+          <button class="tiny deck-back" data-back="screen-free">フリーバトルへ</button>
         </div>
         <div class="colbar" id="colbar"></div>
         <div class="tbl-scroll">
@@ -76,6 +83,12 @@
       </div>
       <div class="detail" id="detail"></div>
     </div>
+  </section>
+
+  <!-- ===== フリーバトル設定（開発用・2026-08-29） =====
+       デッキ編集で組んだデッキを使い、相手・先攻後攻・戦場ルールを選んで戦う。 -->
+  <section class="screen" id="screen-free">
+    <div id="free-root"></div>
   </section>
 
   <!-- 一時メッセージ。#app の中に置くことで画面と一緒に縮み、必ず見える位置に出る -->
@@ -98,28 +111,28 @@
 
 <div id="sa-probe"></div>
 
-<script src="js/boot.js?v=0.16.12"></script>
-<script src="js/data.js?v=0.16.12"></script>
-<script src="js/engine/rng.js?v=0.16.12"></script>
-<script src="js/engine/state.js?v=0.16.12"></script>
-<script src="js/engine/stats.js?v=0.16.12"></script>
-<script src="js/engine/fieldrules.js?v=0.16.12"></script>
-<script src="js/engine/turn.js?v=0.16.12"></script>
-<script src="js/engine/combat.js?v=0.16.12"></script>
-<script src="js/engine/effects/magic.js?v=0.16.12"></script>
-<script src="js/engine/effects/units.js?v=0.16.12"></script>
-<script src="js/engine/ai.js?v=0.16.12"></script>
-<script src="js/engine/search.js?v=0.16.12"></script>
-<script src="js/meta/collection.js?v=0.16.12"></script>
-<script src="js/run/areas.js?v=0.16.12"></script>
-<script src="js/run/map.js?v=0.16.12"></script>
-<script src="js/run/run.js?v=0.16.12"></script>
-<script src="js/meta/save.js?v=0.16.12"></script>
-<script src="js/lore.js?v=0.16.12"></script>
-<script src="js/version.js?v=0.16.12"></script>
-<script src="js/layout.js?v=0.16.12"></script>
-<script src="js/run-ui.js?v=0.16.12"></script>
-<script src="js/debug.js?v=0.16.12"></script>
-<script src="js/update.js?v=0.16.12"></script>
+<script src="js/boot.js?v=0.16.13"></script>
+<script src="js/data.js?v=0.16.13"></script>
+<script src="js/engine/rng.js?v=0.16.13"></script>
+<script src="js/engine/state.js?v=0.16.13"></script>
+<script src="js/engine/stats.js?v=0.16.13"></script>
+<script src="js/engine/fieldrules.js?v=0.16.13"></script>
+<script src="js/engine/turn.js?v=0.16.13"></script>
+<script src="js/engine/combat.js?v=0.16.13"></script>
+<script src="js/engine/effects/magic.js?v=0.16.13"></script>
+<script src="js/engine/effects/units.js?v=0.16.13"></script>
+<script src="js/engine/ai.js?v=0.16.13"></script>
+<script src="js/engine/search.js?v=0.16.13"></script>
+<script src="js/meta/collection.js?v=0.16.13"></script>
+<script src="js/run/areas.js?v=0.16.13"></script>
+<script src="js/run/map.js?v=0.16.13"></script>
+<script src="js/run/run.js?v=0.16.13"></script>
+<script src="js/meta/save.js?v=0.16.13"></script>
+<script src="js/lore.js?v=0.16.13"></script>
+<script src="js/version.js?v=0.16.13"></script>
+<script src="js/layout.js?v=0.16.13"></script>
+<script src="js/run-ui.js?v=0.16.13"></script>
+<script src="js/debug.js?v=0.16.13"></script>
+<script src="js/update.js?v=0.16.13"></script>
 </body>
 </html>

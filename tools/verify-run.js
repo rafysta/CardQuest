@@ -71,6 +71,16 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     }
     return false;
   };
+  /** デバッグメニューの項目をラベルで押す。番号（data-i）で指定していたら、
+   * 項目を2つ足したときに全部ずれて壊れたので、ラベル指定に変えてある。 */
+  const dbgClick = async (label) => {
+    const items = await page.$$('.dbg-item');
+    for (const it of items) {
+      const t = await it.$eval('b', (e) => e.textContent).catch(() => '');
+      if (t.indexOf(label) >= 0) { await it.click(); return true; }
+    }
+    return false;
+  };
   /* スクショ検収（M6.5§3）。番号を頭に付けて撮った順に並ぶようにする。 */
   const shots = [];
   let shotNo = 0;
@@ -402,31 +412,35 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   }
 
   // --- 5.5) デバッグメニュー（2026-08-29 新設。js/debug.js） ---
-  ok('使わない検証タブ（エンジン検証・この案について）が消えている',
-    (await page.$$('.tab')).length === 3 &&
-    !(await page.$('[data-screen="screen-sim"]')) && !(await page.$('[data-screen="screen-notes"]')));
+  /* 2026-08-29：タブは「ラン」だけ。バトル画面・デッキ編集・エンジン検証・この案について は
+   * すべてタブから外し、開発用のものはデバッグメニューへ移した。 */
+  ok('タブは「ラン」1つだけになっている',
+    (await page.$$('.tab')).length === 1 && !!(await page.$('.tab[data-screen="screen-run"]')),
+    String((await page.$$('.tab')).length) + '個');
+  ok('ストーリー中はランタブが光ったまま（戦闘に入っても動かない）',
+    await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
   ok('🛠 でデバッグメニューが開く', !!(await page.$('.dbg-menu')));
-  ok('デバッグメニューに4つの道具が並ぶ', (await page.$$('.dbg-item')).length === 4,
+  ok('デバッグメニューに6つの道具が並ぶ（フリーバトル・デッキ編集を追加）', (await page.$$('.dbg-item')).length === 6,
     String((await page.$$('.dbg-item')).length) + '個');
   await shot('debug-menu');
   /* ルーラー：80px方眼と座標番号が #app に重なる。もう一度押すと消える */
-  await page.click('.dbg-item[data-i="2"]');
+  await dbgClick('ルーラー');
   await wait(() => page.$('.dbg-ruler'));
   ok('ルーラーが出る（80px方眼・16×10）', (await page.$$('.dbg-ruler-x')).length === 16 &&
     (await page.$$('.dbg-ruler-y')).length === 10);
   await shot('debug-ruler');
-  await page.click('.dbg-item[data-i="2"]');
+  await dbgClick('ルーラー');
   await page.waitForTimeout(150);
   ok('もう一度押すとルーラーが消える', !(await page.$('.dbg-ruler')));
   /* 最新版のチェック：version.json を読んで結果行が出る（GitHub側は通信環境により取得不可でもよい） */
-  await page.click('.dbg-item[data-i="1"]');
+  await dbgClick('最新版のチェック');
   await wait(() => page.$('.dbg-verdict'), 8000);
   ok('最新版のチェックが結果を返す', !!(await page.$('.dbg-verdict')));
   /* 戦闘開始シーンの再生：実戦闘に入らずカットイン→ルーレットだけ流して元の画面へ戻る */
   const viewBefore = await page.evaluate(() => RUI.view);
-  await page.click('.dbg-item[data-i="3"]');
+  await dbgClick('戦闘開始シーンを再生');
   await wait(() => page.$('.battle-intro'));
   ok('「戦闘開始シーンを再生」でカットインだけ再生できる', !!(await page.$('.battle-intro')));
   await page.click('.battle-intro');                       // スキップして先へ
@@ -438,6 +452,53 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     (await page.evaluate(() => RUI.view)) === viewBefore &&
     await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')),
     'before=' + viewBefore + ' after=' + (await page.evaluate(() => RUI.view)));
+
+  /* --- 2026-08-29：デッキ編集とフリーバトルをデバッグメニューへ移した --- */
+  await page.click('#dbg-btn');
+  await wait(() => page.$('.dbg-menu'));
+  ok('デバッグメニューに6つの道具が並ぶ', (await page.$$('.dbg-item')).length === 6,
+    String((await page.$$('.dbg-item')).length) + '個');
+  /* 🃏 デッキ編集：アンロックに関係なく全169種から組めること・組んだ内容が残ること */
+  await dbgClick('デッキ編集');
+  await wait(() => page.evaluate(() => document.getElementById('screen-deck').classList.contains('on')));
+  ok('デバッグメニューからデッキ編集が開く', await page.evaluate(() => document.getElementById('screen-deck').classList.contains('on')));
+  ok('デッキ編集はアンロックに関係なく全モンスターが並ぶ',
+    (await page.$$('#tbody tr')).length === await page.evaluate(() => CARDS.filter((c) => c.t === 'U').length),
+    String((await page.$$('#tbody tr')).length) + '行');
+  const deckBefore = await page.evaluate(() => Object.values(deck).reduce((s, n) => s + n, 0));
+  await page.click('#tbody [data-plus]');
+  await page.waitForTimeout(120);
+  const deckAfter = await page.evaluate(() => Object.values(deck).reduce((s, n) => s + n, 0));
+  ok('カードを足すとデッキ枚数が増える', deckAfter === deckBefore + 1, deckBefore + '→' + deckAfter);
+  ok('組んだデッキが localStorage に残る（フリーバトルで使う）',
+    await page.evaluate(() => !!localStorage.getItem('cq_debug_deck')));
+  await shot('debug-deck-edit');
+  /* 🗡 フリーバトル：設定画面が出て、選んだ設定でバトルに入れること */
+  await page.click('.deck-back[data-back="screen-free"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-free').classList.contains('on')));
+  ok('フリーバトルの設定画面が開く', !!(await page.$('.free-wrap')));
+  ok('相手・先攻後攻・戦場ルール・ＡＩの強さを選べる',
+    (await page.$$('[data-fact="kind"]')).length === 2 &&
+    (await page.$$('[data-fact="first"]')).length === 2 &&
+    (await page.$$('[data-fact="field"]')).length > 0 &&
+    (await page.$$('[data-fact="rank"]')).length > 0);
+  await shot('debug-free-battle');
+  /* 「相手が先攻」を選んで始め、実際にその通りになっているか（先攻の指定が効くか）を見る */
+  await page.click('[data-fact="first"][data-v="enemy"]');
+  await page.waitForTimeout(100);
+  await page.click('[data-fact="start"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+  ok('設定どおりにフリーバトルが始まる', await page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+  const freeM = await page.evaluate(() => ({ first: M.first, mode: M.mode, self: M.players.self.deckCount + M.players.self.hand.length }));
+  ok('★選んだ先攻・後攻がそのまま反映される', freeM.first === 'enemy', JSON.stringify(freeM));
+  ok('自分のデッキはデッキ編集で組んだ40枚', freeM.self === 40, String(freeM.self));
+  ok('フリーバトルでは「新しい対戦」等の設定ボタンが出る（ラン中は隠れる）',
+    !!(await page.$('#turnbox [data-act="new"]')));
+  /* ストーリーへ戻れること。タブは終始「ラン」のまま動いていないこと */
+  ok('★戦闘中でもタブは「ラン」のまま', await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
+  await page.click('.tab[data-screen="screen-run"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
+  ok('「ラン」タブでストーリーへ戻れる', await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
 
   // --- 6) リタイヤ ---
   /* M6.5a でブラウザ標準の confirm() からゲーム内ダイアログに変わっているので、

@@ -1272,6 +1272,42 @@ td.nm{font-weight:800}
   50%{transform:translateY(-22px)}
 }
 
+/* ---- フリーバトルの設定画面（開発用・2026-08-29） ----
+ * 旧「バトル画面（検証）」の設定（相手ＡＩの強さ・戦場ルール）をここへ集約し、
+ * 相手と先攻・後攻の選択を足した画面。デバッグメニューから開く。 */
+#free-root{flex:1;min-height:0;overflow:auto;padding:20px 24px}
+.free-wrap{max-width:1120px;margin:0 auto}
+.free-h{font-size:24px;font-weight:800;margin-bottom:4px}
+.free-h small{display:block;font-size:13px;font-weight:400;color:var(--dim);margin-top:4px}
+.free-grid{display:grid;grid-template-columns:1fr 1.3fr 1.3fr;gap:16px;margin-top:18px;align-items:start}
+.free-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.free-box h3{font-size:15px;font-weight:800;color:var(--accent);margin:0 0 8px}
+.free-box h3 + .free-row{margin-bottom:12px}
+.free-box h3:not(:first-child){margin-top:14px}
+.free-note{font-size:13px;color:var(--dim);margin-bottom:10px;line-height:1.6}
+.free-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.free-cap{font-size:12px;color:var(--dim);margin-right:2px}
+.free-pick{
+  background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+  border-radius:8px;padding:7px 12px;font-size:13px;font-weight:700;
+}
+.free-pick:hover{color:var(--txt);border-color:var(--accent)}
+.free-pick.on{background:var(--accent);color:#241c00;border-color:var(--accent)}
+#free-foe{
+  width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;
+}
+.free-go{display:flex;gap:14px;justify-content:center;margin-top:22px}
+.free-go .btn{flex:0 0 auto;min-width:220px}
+/* デッキ編集の戻りボタン（.deck-tabs の右端に並べる）。
+ * 2026-08-29：これを足したら行が詰まってタブの文字が2行に折れたので、
+ * 行全体を折り返さない・各要素も折らない指定にし、集計の字を少し小さくして幅を作った。 */
+.deck-back{margin-left:8px;white-space:nowrap}
+.deck-tabs{flex-wrap:nowrap}
+.dtab{white-space:nowrap}
+.deck-count{white-space:nowrap;font-size:14px;gap:10px}
+.deck-count b{font-size:17px}
+
 /* ---- デバッグメニュー（js/debug.js・2026-08-29） ----
  * 使われていなかった「エンジン検証」「この案について」タブを外した代わりに、
  * 開発用のコマンドをここへ集約した。押さなければ何も起きないので常設のままにしてある。 */
