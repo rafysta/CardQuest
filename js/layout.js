@@ -1760,6 +1760,10 @@ document.addEventListener('pointerup', (ev) => {
 /* ================= デッキ編集画面（v0.3から変更なし） ================= */
 const ALL_COLS = {
   U: [
+    /* ＩＤ列は既定で隠す（2026-08-29 本人指定）。「表示する列」で出すと、カード名の左に
+     * ＩＤが並び、≧／≦の絞り込み欄でＩＤを直接指定して1枚を素早く引ける。
+     * デバッグ用途（仕様書・開発メモがカードをＩＤで指すため）なので既定はオフ。 */
+    { k: 'id',  label: 'ＩＤ',      w: 104, type: 'range', def: false },
     { k: 'n',   label: 'カード名',  w: 210, type: 'text',  fixed: true,  def: true },
     { k: 'a',   label: '攻撃力',    w: 90,  type: 'range', def: true },
     { k: 'd',   label: '防御力',    w: 90,  type: 'range', def: true },
@@ -1770,6 +1774,7 @@ const ALL_COLS = {
     { k: 'cnt', label: '採用',      w: 122, type: 'count', fixed: true,  def: true }
   ],
   MS: [
+    { k: 'id',  label: 'ＩＤ',      w: 104, type: 'range', def: false },   /* 同上 */
     { k: 'n',   label: 'カード名',  w: 220, type: 'text',  fixed: true, def: true },
     { k: 'e',   label: '効果',      w: 0,   type: 'text',  def: true },
     { k: 'p',   label: '価格',      w: 100, type: 'range', def: false },
