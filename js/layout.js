@@ -116,10 +116,9 @@ function startRunBattle(setup, onOver) {
   M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
-  /* M6.6 WP5：先攻／後攻はここ（createMatch直後）の M.active で確定している。
-   * step() は非同期（相手の自動手番などを間を置いて進める）ので、あとから読むと
-   * すでに手番が進んでしまっている可能性がある——必ずこの時点で控えておく。 */
-  const first = M.active;
+  /* M6.6 WP5：先攻／後攻は m.first に対局のあいだ保持されている（m.active は手番ごとに
+   * 入れ替わるので、step() が非同期に手番を進めた後だと当てにならない）。 */
+  const first = M.first;
   const tab = document.querySelector('.tab[data-screen="screen-battle"]');
   if (tab) tab.click();
   step();
@@ -130,16 +129,30 @@ function startRunBattle(setup, onOver) {
 }
 
 /** 先攻／後攻ルーレット（M6.6 WP5・追補§4）。黒カットイン→中央の羅針盤（矢印は画像に
- * 焼き込み済み＝assets/ui/first_turn_roulette.png）を回して見せ、自分（0°）か相手（180°）を
- * 指して止まる。抽選そのものはここでは行わない（すでに決まった winner を見せるだけ）ので
- * どれだけタップでスキップしても結果は変わらない。演出の揺れ角(±10°)だけ Math.random。
- * 尺は固定3秒（FTR_DURATION 1箇所にまとめる。タップで即座に早送りできる）。 */
-const FTR_DURATION = 3000;
+ * 焼き込み済み＝assets/ui/first_turn_roulette.png）を回して見せ、自分（右＝0°）か
+ * 相手（左＝180°）を指して止まる。抽選そのものはここでは行わない（すでに決まった winner を
+ * 見せるだけ）ので、どれだけタップでスキップしても結果は変わらない。
+ *
+ * 2026-08-29 改訂（本人フィードバック「非常に分かりにくい」）：
+ *   ・尺を3秒→**5秒**に延長し、回転もゆっくり見えるようにした
+ *   ・**終端の逆回転を無くした**。旧実装は「1080°+最終角」まで回した後に finish() が
+ *     `rotate(最終角)` を代入していたため、そこから逆向きに1080°戻る高速回転が見えていた。
+ *     回転角は常に `360×n + 最終角` の累積値だけを代入し、最後まで一方向にしか回さない
+ *   ・停止位置は**きっかり右か左**（旧実装の±10°のゆらぎを廃止＝ずれた位置で止まらない）
+ *   ・止まったあと**1秒そのまま見せてから**、ゆっくり透明にして消える
+ * 尺・内訳は下の定数1か所にまとまっている。 */
+const FTR_DURATION = 5000;                 /* 全体の尺 */
+const FTR_SPIN_MS = 3400;                  /* 回転（減速しながら最終角へ） */
+const FTR_HOLD_MS = 1000;                  /* 停止後、そのまま見せる時間 */
+const FTR_FADE_MS = 450;                   /* 消えるときのフェード */
+const FTR_TURNS = 6;                       /* 何周回してから止まるか */
+
 function showFirstTurnRoulette(winner) {
   const app = document.getElementById('app');
   if (!app) return;
-  const finalDeg = winner === 'enemy' ? 180 : 0;
-  const wobble = Math.random() * 20 - 10;
+  /* 針は画像に右向きで焼き込まれている：0°＝右＝自分が先攻、180°＝左＝相手が先攻。
+   * 常に「何周ぶんか＋最終角」という累積値にしておくことで、逆回転が起きない。 */
+  const endDeg = FTR_TURNS * 360 + (winner === 'enemy' ? 180 : 0);
   const ov = document.createElement('div');
   ov.className = 'first-turn-roulette';
   ov.innerHTML =
@@ -151,21 +164,32 @@ function showFirstTurnRoulette(winner) {
   app.appendChild(ov);
   const compass = ov.querySelector('.ftr-compass');
   const result = ov.querySelector('.ftr-result');
-  let done = false;
-  function finish() {
-    if (done) return;
-    done = true;
-    compass.style.transition = 'transform .25s ease-out';
-    compass.style.transform = 'rotate(' + finalDeg + 'deg)';
+  let settled = false, gone = false;
+
+  /** 止まった状態にする（回転の完了・タップスキップの両方から呼ばれる）。
+   * skip のときだけ transition を切って一気に最終角へ飛ばす——ここでも角度は同じ
+   * 累積値なので、巻き戻る動きにはならない。 */
+  function settle(skip) {
+    if (settled) return;
+    settled = true;
+    if (skip) compass.style.transition = 'none';
+    compass.style.transform = 'rotate(' + endDeg + 'deg)';
     result.classList.add('show');
-    setTimeout(function () { ov.remove(); }, 260);
+    setTimeout(fade, FTR_HOLD_MS);          /* きっかりの位置で1秒見せてから消し始める */
   }
-  ov.addEventListener('click', finish);
+  function fade() {
+    if (gone) return;
+    gone = true;
+    ov.classList.add('fade-out');           /* CSS側で opacity を FTR_FADE_MS かけて0へ */
+    setTimeout(function () { ov.remove(); }, FTR_FADE_MS + 60);
+  }
+
+  ov.addEventListener('click', function () { settle(true); });
   requestAnimationFrame(function () {
-    compass.style.transition = 'transform 2.2s cubic-bezier(.14,.8,.2,1)';
-    compass.style.transform = 'rotate(' + (1080 + finalDeg + wobble) + 'deg)';
+    compass.style.transition = 'transform ' + FTR_SPIN_MS + 'ms cubic-bezier(.12,.72,.15,1)';
+    compass.style.transform = 'rotate(' + endDeg + 'deg)';
   });
-  setTimeout(finish, FTR_DURATION - 260);
+  setTimeout(function () { settle(false); }, FTR_SPIN_MS + 120);
 }
 const UI = {
   mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-destroy */

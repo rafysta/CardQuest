@@ -412,16 +412,28 @@ function newMatch(seed, opts) {
     first: 'self', hooks: HOOKS
   }, opts || {}));
 }
-t('初手は6枚、以降は1枚', () => {
-  const m = newMatch();
+t('初手は先攻6枚・後攻7枚、以降は1枚', () => {
+  const m = newMatch();                            // first:'self'
   CQTurn.beginTurn(m);
-  eq([m.turn, m.phase, m.players.self.hand.length], [1, 'placement', 6], '初手6枚');
+  eq([m.turn, m.phase, m.players.self.hand.length], [1, 'placement', 6], '先攻の初手6枚');
   CQTurn.endPlacement(m); CQTurn.endTurn(m);      // 自分のターン終了 → 相手へ
-  CQTurn.beginTurn(m);                            // 相手の初手も6枚
-  eq(m.players.enemy.hand.length, 6, '相手の初手6枚');
+  CQTurn.beginTurn(m);
+  /* 2026-08-29 本人指定・先行有利の是正：後攻だけ初期ドロー+1（SECOND_DRAW_BONUS）。
+   * 手札上限7枚ちょうどなので、この1枚で捨て札は発生しない。 */
+  eq(m.players.enemy.hand.length, 7, '後攻の初手は7枚（先行有利の是正）');
+  eq(m.phase, 'placement', '7枚ちょうどなので捨て札にはならない');
   CQTurn.endPlacement(m); CQTurn.endTurn(m);      // 相手のターン終了 → 自分へ
   CQTurn.beginTurn(m);
   eq([m.turn, m.players.self.hand.length], [3, 7], '2ターン目は+1枚');
+});
+t('後攻+1ドローは「先攻でない側」に付く（先攻が相手なら自分が7枚）', () => {
+  const m = newMatch(11, { first: 'enemy' });
+  eq(m.first, 'enemy', 'first は対局のあいだ保持される');
+  CQTurn.beginTurn(m);
+  eq(m.players.enemy.hand.length, 6, '先攻（相手）は6枚');
+  CQTurn.endPlacement(m); CQTurn.endTurn(m);
+  CQTurn.beginTurn(m);
+  eq(m.players.self.hand.length, 7, '後攻（自分）は7枚');
 });
 t('手札7枚超過で discard フェーズに入る', () => {
   const m = newMatch(2, { selfDeck: mkDeck(50, [8]) });

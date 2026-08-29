@@ -27,6 +27,11 @@
 
   const HAND_CAP = 7;
   const FIRST_DRAW = 6;
+  /* 後攻側だけ初期ドローに足す枚数（2026-08-29 本人指定・先行有利の是正）。
+   * 原作は先攻・後攻とも6枚だが、M6.6 WP5で先攻が50%抽選になったことで先攻・後攻の差が
+   * そのまま勝率差になった。カードゲームで一般的な「後攻の手札1枚多い」補正を採る。
+   * 引いた結果7枚になっても、手札上限（HAND_CAP=7）ちょうどなので捨て札は発生しない。 */
+  const SECOND_DRAW_BONUS = 1;
   /* M5.5（v0.15.1）意図的な原作からの変更（ゲーム仕様書§4.1）：
    *   ・デッキ枚数は 50 → 40（仮値）。デッキを組む側（layout.js / simulate.js / tools）は
    *     必ずこの定数を参照すること。エンジン自体は渡された配列の枚数をそのまま使う
@@ -124,6 +129,9 @@
       board: S.makeBoard(lanes, 0, 0),
       players: { self: createPlayer(opts.selfDeck, opts.selfOpts), enemy: createPlayer(opts.enemyDeck, opts.enemyOpts) },
       active: opts.first || 'self',
+      /* 先攻側を対局のあいだ保持する（active は手番ごとに入れ替わるので使えない）。
+       * 後攻の初期ドロー+1（beginTurn）と、先攻ルーレットの演出（js/layout.js）が読む。 */
+      first: opts.first || 'self',
       turn: 0,                 // 原作 V335 相当。自他どちらのターンでも +1 される
       phase: 'draw',           // 'draw' | 'discard' | 'placement' | 'main' | 'battle' | 'over'
       winner: null,
@@ -244,13 +252,20 @@
   /* ---- ドローステップ -------------------------------------------------------- */
 
   /** ターン開始（ドローステップ）。表側の1ターン目は6枚、以降は1枚。
-   * 手札が7枚を超えたら phase='discard' になり、discardCard() で捨てるまで次に進めない。 */
+   * 手札が7枚を超えたら phase='discard' になり、discardCard() で捨てるまで次に進めない。
+   *
+   * **後攻の初期ドロー+1**（2026-08-29 本人指定・先行有利の是正）：後攻側だけ1ターン目に
+   * 7枚引く。M6.6 WP5で先攻が50%抽選になった結果、先攻・後攻の差がそのまま勝率差として
+   * 出てしまったための補正（原作にはこの規定は無い＝CardQuest独自のバランス調整）。
+   * `m.first` は createMatch が控えた先攻側。持っていない対戦（テストが直接組んだ M など）は
+   * 従来どおり全員6枚で始まる。 */
   function beginTurn(m) {
     if (m.winner) return m;
     m.turn += 1;                                    // 原作 V335：両者のターンで+1
     const side = m.active, p = activePlayer(m);
     p.actedThisTurn = false;
-    const n = p.turnsTaken === 0 ? FIRST_DRAW : 1;
+    const second = m.first && side !== m.first;     // この手番の側が後攻か
+    const n = p.turnsTaken === 0 ? (FIRST_DRAW + (second ? SECOND_DRAW_BONUS : 0)) : 1;
     for (let i = 0; i < n; i++) {
       const id = draw(m.rng, p, m);                 // 山札が尽きたら自動で再装填（ＬＰ−2。M5.5）
       if (m.winner) { syncHandCount(m); return m; } // 再装填のＬＰコストでＬＰ0になった
@@ -657,7 +672,7 @@
   }
 
   const api = {
-    HAND_CAP, FIRST_DRAW, DECK_SIZE, RELOAD_LP_COST,
+    HAND_CAP, FIRST_DRAW, SECOND_DRAW_BONUS, DECK_SIZE, RELOAD_LP_COST,
     createDeck, draw, ensureDeck, createPlayer, createMatch,
     beginTurn, discardCard, summon, channel, endPlacement, reverseAction, finalizeReverse,
     canDiscardPest, discardPest,

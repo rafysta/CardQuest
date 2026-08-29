@@ -42,7 +42,10 @@ const RUI = {
   /* 戦闘導入カットイン（M6.6 WP5）：「たたかう／挑む」を押してから実際にバトル画面へ
    * 切り替わるまでの一瞬だけ使う作業用の状態。cq_run には保存しない（保存中に途切れても
    * 単に演出が飛ぶだけで、再開時は素直にマップへ戻る）。 */
-  battleIntroNodeId: null, battleIntroLeaving: false
+  battleIntroNodeId: null, battleIntroLeaving: false,
+  /* デバッグメニューの「戦闘開始シーンを再生」中だけ入る。入っていると、カットインが
+   * 終わっても実戦闘へは進まず、元の画面（battleIntroBackTo）に戻ってコールバックを呼ぶ。 */
+  battleIntroPreview: null, battleIntroBackTo: null
 };
 
 function runRoot() { return document.getElementById('run-root'); }
@@ -957,7 +960,15 @@ function fieldRuleInfoHTML(rules) {
 
 function renderNode() {
   const run = RUI.run, n = run.map.nodes[RUI.nodeId];
-  if (n.type === 'battle' || n.type === 'boss') return renderBattleNode(run, n);
+  /* 2026-08-29 本人指定：敵のマスでは「たたかう」の確認パネルを出さず、触れた時点で
+   * そのまま戦闘導入アニメーションへ入る。ここで振り分けているので、マスを選んだ直後の
+   * 描画だけでなく、戦闘マスに立ったまま中断・再開した場合も同じ経路に乗る。 */
+  if (n.type === 'battle' || n.type === 'boss') {
+    RUI.battleIntroNodeId = RUI.nodeId;
+    RUI.battleIntroLeaving = false;
+    RUI.view = 'battle-intro';
+    return renderBattleIntro();
+  }
   if (n.type === 'chest') return renderChestNode(run, n);
   if (n.type === 'rest') return renderRestNode(run, n);
   if (n.type === 'shop') return renderShopNode(run, n);
@@ -965,29 +976,21 @@ function renderNode() {
   if (n.type === 'question') return renderQuestionNode(run, n);
 }
 
-function renderBattleNode(run, n) {
-  const area = CQAreas.get(run.areaId);
-  const isBoss = n.type === 'boss';
-  const enemy = n.enemy ? CARD_BY_ID[n.enemy.id] : null;
-  runRoot().innerHTML = `
-    <div class="node-panel">
-      <h3>${isBoss ? area.bossName : (n.strength === 'elite' ? '精鋭' : n.strength === 'strong' ? '強敵' : '戦闘')}</h3>
-      ${isBoss
-        ? `<div class="node-art boss big"><img src="${area.master}" alt="" draggable="false"
-             onerror="this.replaceWith(document.createTextNode('👑'))"></div>`
-        : `<div class="node-art ${n.strength} big">${artInner(enemy, 5)}</div><p>${esc(enemy.n)} ×${n.enemy.count}</p>`}
-      ${fieldRuleInfoHTML(n.fieldRules)}
-      <button class="btn ok" data-act="battle-go">${isBoss ? '挑む' : 'たたかう'}</button>
-    </div>`;
-}
-
 /* ================= 戦闘導入カットイン（M6.6 WP5） =================
- * 「たたかう／挑む」を押した直後、マップ画面の上に一瞬だけ重ねる演出。黒カットインの中で
- * 敵（またはボス）の切り抜きを2倍サイズで見せ、自分のコマが左から跳ねながら現れて敵に
- * ぶつかりに行く（敵は小さく怯む）。そのまま暗転してバトル画面へ切り替わる。
- * 合計1.5秒以内・タップでスキップ可（追補§4 WP5）。乱数は使わない——先攻／後攻は
- * すでに CQRun.battleSetup() が戦闘シードから決定的に決めている（js/run/run.js の
- * firstTurnOf）。ここでは「誰と当たるか」を見せるだけ。 */
+ * 敵のマスに入った瞬間（「たたかう」の確認パネルは挟まない。2026-08-29 本人指定）、
+ * **マップ画面の上に重ねて**再生する演出。画面のおよそ40%の黒い四角を中央に描き、
+ * その上に敵（ボスは m_*_cut.png）を立たせる。四角の後ろにはマップが見えたままにする
+ * ——なので背景は敷かず、マップをそのまま描いた上に絶対配置で重ねる（2026-08-29 改訂）。
+ * 自分のコマが左から上下に揺れながらゆっくり走り込み、敵にぶつかって暗転→バトル画面へ。
+ * タップで即スキップ可。乱数は使わない——先攻／後攻はすでに CQRun.battleSetup() が
+ * 戦闘シードから決定的に決めている（js/run/run.js の firstTurnOf）。
+ *
+ * 戦場ルールの表示について：確認パネルを廃止したことで、従来そこに出していた
+ * 「今日の戦場ルール」の説明の置き場所が無くなる。M6の戦場ルールは『戦闘前に必ず見える』
+ * ことが設計の前提（実装計画追補M6・台本のヒント `fieldRule`）なので、黒四角の下部に
+ * 同じ内容を出してこの前提を保つ。 */
+const BATTLE_INTRO_MS = 2600;   /* カットインの尺（ゆっくり走る分、1.45秒から延長した） */
+
 function renderBattleIntro() {
   const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
   const area = CQAreas.get(run.areaId);
@@ -999,29 +1002,71 @@ function renderBattleIntro() {
         ? `<img class="battle-intro-foe" src="assets/cutouts/${n.enemy.id}.png" alt="" draggable="false"
              onerror="nodeArtFallback(this, ${n.enemy.id})">`
         : '');
-  runRoot().innerHTML = `
-    <div class="battle-intro" data-act="battle-intro-skip">
-      <div class="battle-intro-cut"></div>
-      <div class="battle-intro-stage">
-        ${figure}
-        <div class="battle-intro-hero"><img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()"></div>
-      </div>
+  const title = isBoss ? area.bossName
+    : (n.strength === 'elite' ? '精鋭' : n.strength === 'strong' ? '強敵' : '')
+      + (n.enemy ? (n.strength === 'normal' ? '' : '　') + CARD_BY_ID[n.enemy.id].n + ' ×' + n.enemy.count : '');
+  /* マップを下に敷いてから、その上にカットインを重ねる（四角の後ろにマップが見える）。
+   * HUDやログまで含めた通常のマップ描画をそのまま使うので、演出中も現在地が読める。 */
+  renderMap();
+  const ov = document.createElement('div');
+  ov.className = 'battle-intro';
+  ov.dataset.act = 'battle-intro-skip';
+  ov.innerHTML = `
+    <div class="battle-intro-cut">
+      <div class="battle-intro-title">${esc(title)}</div>
+      ${fieldRuleInfoHTML(n.fieldRules)}
+    </div>
+    <div class="battle-intro-stage">
+      ${figure}
+      <div class="battle-intro-hero"><img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()"></div>
     </div>`;
+  runRoot().appendChild(ov);
   /* この画面に来て初めての描画のときだけ、実際の切り替えタイマーを仕掛ける（タップでの
    * 早送りと二重に走らないよう battleIntroLeaving で一度きりにする） */
-  setTimeout(leaveBattleIntro, 1450);
+  setTimeout(leaveBattleIntro, BATTLE_INTRO_MS);
 }
 
 /** カットインを終えて実際の戦闘へ進む。タイマー経由・タップスキップ経由のどちらから
- * 呼ばれても一度しか進まないよう battleIntroLeaving で防ぐ。 */
+ * 呼ばれても一度しか進まないよう battleIntroLeaving で防ぐ。
+ * プレビュー再生中（デバッグメニューの「戦闘開始シーンを再生」）は戦闘へは進まず、
+ * 元の画面に戻してコールバックを呼ぶだけにする。 */
 function leaveBattleIntro() {
   if (RUI.battleIntroLeaving || RUI.view !== 'battle-intro') return;
   RUI.battleIntroLeaving = true;
+  if (RUI.battleIntroPreview) {
+    const cb = RUI.battleIntroPreview;
+    RUI.battleIntroPreview = null;
+    RUI.battleIntroNodeId = null;
+    RUI.view = RUI.battleIntroBackTo || 'map';
+    runRender();
+    cb();
+    return;
+  }
   const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
   const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
   RUI.battleIntroNodeId = null;
   startRunBattle(setup, onRunBattleOver);
 }
+
+/** デバッグメニュー用：戦闘導入カットインだけを再生し、終わったら元の画面に戻って
+ * onDone() を呼ぶ（実戦闘には入らない＝ランの状態を一切変えない）。js/debug.js から呼ぶ。
+ * 対象は「いま見ているマス（戦闘マスなら）」→ 無ければマップ内の最初の戦闘マス。 */
+function previewBattleIntro(onDone) {
+  const run = RUI.run;
+  if (!run || !run.map) return { ok: false, reason: 'ランが始まっていません。まずエリアを選んで出発してください。' };
+  const here = run.map.nodes[RUI.nodeId];
+  const node = (here && (here.type === 'battle' || here.type === 'boss')) ? here
+    : Object.values(run.map.nodes).find(function (x) { return x.type === 'battle' || x.type === 'boss'; });
+  if (!node) return { ok: false, reason: 'このマップに戦闘マスがありません。' };
+  RUI.battleIntroBackTo = (RUI.view === 'battle-intro') ? 'map' : RUI.view;
+  RUI.battleIntroPreview = onDone || function () {};
+  RUI.battleIntroNodeId = node.id;
+  RUI.battleIntroLeaving = false;
+  RUI.view = 'battle-intro';
+  renderBattleIntro();
+  return { ok: true };
+}
+if (typeof window !== 'undefined') window.previewBattleIntro = previewBattleIntro;
 
 function renderChestNode(run, n) {
   if (!n.opened) {
@@ -1347,14 +1392,8 @@ function runAct(act, id) {
         runRender();
       });
     }
-    case 'battle-go': {
-      /* M6.6 WP5：即バトル画面へ切り替えず、まず一瞬の導入カットインを挟む
-       * （実際の CQRun.battleSetup / startRunBattle はカットインが終わってから呼ぶ）。 */
-      RUI.battleIntroNodeId = RUI.nodeId;
-      RUI.battleIntroLeaving = false;
-      RUI.view = 'battle-intro';
-      return runRender();
-    }
+    /* 'battle-go'（「たたかう／挑む」ボタン）は 2026-08-29 に廃止した。敵のマスに触れた
+     * 時点で renderNode() が直接カットインへ振り分ける。 */
     case 'battle-intro-skip':
       return leaveBattleIntro();
     case 'chest-open':

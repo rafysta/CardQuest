@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.16.10">
+<link rel="stylesheet" href="css/style.css?v=0.16.11">
 </head>
 <body>
 
@@ -19,9 +19,10 @@
       <button class="tab on" data-screen="screen-run">ラン</button>
       <button class="tab" data-screen="screen-battle">バトル画面（検証）</button>
       <button class="tab" data-screen="screen-deck">デッキ編集</button>
-      <button class="tab" data-screen="screen-sim">エンジン検証</button>
-      <button class="tab" data-screen="screen-notes">この案について</button>
     </div>
+    <!-- 開発用の専用コマンド置き場（2026-08-29）。使われていなかった「エンジン検証」
+         「この案について」タブを外し、代わりにここへ検証用の道具をまとめた。 -->
+    <button class="dbg-btn" id="dbg-btn" title="デバッグメニュー">🛠</button>
   </div>
 
   <!-- ===== ラン（分岐マップ・M6） ===== -->
@@ -77,131 +78,6 @@
     </div>
   </section>
 
-  <!-- ===== エンジン検証（開発用） ===== -->
-  <section class="screen sim" id="screen-sim">
-    <h2>エンジン検証：自動対戦ログ</h2>
-    <p class="sim-note">実装計画M2〜M3で組んだエンジン（<code>js/engine/turn.js</code>・<code>js/engine/combat.js</code>）が
-      正しく動くかを、ブラウザ上で実際に1本の対戦を自動再生して確認するための開発用画面です。
-      両陣営とも「その場で合法な手をランダムに選ぶ」だけなので、強さの評価には使えません（敵ＡＩはM5）。
-      召還・チャネル・リバースに加えて、アタック（オープンフェイズ→判定→破壊→ＬＰダメージ）と
-      デッキ攻撃まで走るので、たいていはＬＰ0で決着が付きます。</p>
-    <div class="sim-controls">
-      <label>シード <input type="number" id="sim-seed" value="1" style="width:6em"></label>
-      <button id="sim-run">対戦を実行</button>
-    </div>
-    <div class="sim-result" id="sim-result"></div>
-    <pre class="sim-log" id="sim-log"></pre>
-  </section>
-
-  <!-- ===== 説明 ===== -->
-  <section class="screen notes" id="screen-notes">
-    <h2>v0.11.1 で変えたこと ― バトル画面が実際に遊べるようになりました</h2>
-    <ul>
-      <li>バトル画面が<b>エンジンと繋がりました</b>。見た目だけのモックアップではなく、
-        ドロー・召還・チャネル・押し込み・リバース・<b>アタック</b>・デッキ攻撃・チェンジ・ターン終了が
-        すべて本物のルールで動きます。ＬＰが0になるか山札が尽きると決着します。</li>
-      <li><b>相手は自動で動きます</b>（画面上部の「相手：自動」で手動に切り替えると、
-        同じ端末で両陣営を交互に操作できます）。ただし今の相手は
-        <b>その場で合法な手をランダムに選ぶだけ</b>で、強くはありません。本物の敵ＡＩは次の次の版です。</li>
-      <li>自分のモンスターを押すと<b>行動メニュー</b>（アタック／デッキ攻撃／リバース）が右に出ます。
-        アタックを選ぶと、狙える相手のモンスターだけが黄色く光ります。</li>
-      <li><b>オープンフェイズ</b>：攻撃側→防御側の順に、チャネルを下から順に開けます。
-        開ける階層は黄色い枠と「▶」で示します。クローズはできません。</li>
-      <li>右のパネルに<b>「ここまでの動き」</b>が出ます。相手が何をしたか、戦闘で何が起きたかが分かります。</li>
-      <li>まだ<b>カードの効果は発動しません</b>（次の版で入れます）。いまは
-        「表なら攻撃力＋100／裏なら防御力＋100」と、能力値に効く技能（狂戦士化・膨張・五つ星・迎撃・
-        反射・貫通・不死・救済・甲殻・気化・隠遁・磁力など）と憑依・リバース召還が働きます。</li>
-      <li>デッキは両陣営とも<b>見本の50枚</b>で固定です。デッキ編集画面とはまだ繋がっていません。</li>
-    </ul>
-
-    <h3>カードの見方</h3>
-    <div class="box">
-      <p>モンスターの<b>Ａ／Ｄはいまの値</b>です。素の値より高いと緑、低いと赤で出ます。
-        右上の「行動済」はそのターンもう動けないという意味、「連続」は連続攻撃の2回目が残っているという意味です。</p>
-      <p>モンスターの上の枠は<b>チャネルできる上限</b>です（膨張や五つ星で伸び縮みします）。</p>
-    </div>
-
-    <h2>v0.8 で変えたこと</h2>
-    <ul>
-      <li>場に立っている<b>モンスターにも持ち主の印</b>を付けました。傀儡・憑依で相手の場に移されても、誰のモンスターか分かります。</li>
-      <li>持ち主と操作している人がズレているモンスターに、<b>紫の枠と「傀儡」の帯</b>を出します。押すと理由が出ます。</li>
-      <li>憑依しているカードに<b>「憑」の印と紫の枠</b>を付けました。</li>
-      <li>場のモンスターの「Ｕ」印はやめました（場に立てるのはモンスターだけなので不要）。その場所に「自／敵」を出しています。</li>
-      <li>Ａ／Ｄの数字がカードの幅から少しはみ出て端が切れていたのを直しました。</li>
-    </ul>
-
-    <h3>「誰のカードか」の見分け方</h3>
-    <div class="box">
-      <p>すべてのカードの<b>左端の色帯</b>が持ち主です。<b>場のどちら側に居るか</b>とは別の情報です。</p>
-      <ul>
-        <li><b>水色＋「自」</b>＝自分のカード。相手の場にあっても水色です。</li>
-        <li><b>橙色＋「敵」</b>＝相手のカード。自分の場にあっても橙色です。</li>
-        <li><b>紫の枠＋「傀儡」の帯</b>＝持ち主と、いま操作している人がズレているモンスター。</li>
-        <li><b>紫の「憑」の印</b>＝憑依しているカード。</li>
-      </ul>
-      <p>つまり<b>色帯＝持ち主、居る場所＝いま操作している人</b>です。ふだんはこの2つが一致するので色帯と場の左右が揃いますが、<b>傀儡</b>や<b>ヘッドレスの憑依（傀儡化）</b>でコントロール権が移ると、水色のカードが相手の場に、橙色のカードが自分の場に現れます。そのときは紫の枠が付くので、見落としません。</p>
-      <p><b>開閉できるのは、チャネル先のモンスターを操作している人</b>です。自分の場のモンスターに付いているカードは、橙色（相手が置いたもの）でも自分が開閉できます。逆に、相手の場のモンスターに付けた自分の水色のカードは、相手しか開閉できません。</p>
-      <p><b>中身が見えるかどうかは持ち主で決まります。</b> 自分のカードは裏向きでも名前と効果が分かります。相手が置いた裏向きは「？」だけです。</p>
-    </div>
-
-    <h2>v0.7 で変えたこと</h2>
-    <ul>
-      <li>チャネリングカードに<b>「置いたのは誰か」の印</b>を付けました（左端の色帯と「自／敵」）。</li>
-      <li>自分が置いたカードは、相手の場に置いたものでも<b>裏向きのまま名前が読めます</b>。</li>
-      <li>相手が置いた裏向きのカードは「？」だけで、内容は分かりません（開くことはできます）。</li>
-      <li>押し込む階層の一覧にも、自分のカードか相手のカードかを出すようにしました。</li>
-    </ul>
-
-    <h2>v0.6 で変えたこと</h2>
-    <ul>
-      <li>場の高さを画面から自動で計算するようにしました。<b>6階層目が上の情報パネルに掛からなくなります</b>。</li>
-      <li>裏向きのカードを明るい灰色にして、暗い背景と見分けやすくしました。</li>
-      <li>階層の数字（1〜6）をやめました。点線だけを残しています。</li>
-      <li>「チェンジ」と「ターンを終了する」を<b>同じ大きさ</b>に揃えました。</li>
-      <li>チェンジが使えないターンは、<b>ボタンごと出さない</b>ようにしました。</li>
-      <li>チャネルが一杯のユニットには、<b>入れ替える階層を選んで</b>押し込みます（1階層目に固定ではありません）。</li>
-      <li>チャネル先は<b>相手のユニットも対象</b>です。相手が付けているカードを自分のカードに置き換えられます。</li>
-      <li>ユニットカードもチャネルできます。表になったときにチャネルが解けて空きレーンに召還されます（空きが無ければ破壊）。</li>
-    </ul>
-    <h2>v0.5 で変えたこと</h2>
-    <ul>
-      <li>確認のボタンとメッセージが重ならないようにしました。確認のときはカードを小さな要約に切り替え、ボタンは常にパネル下端です。</li>
-      <li>チャネルが一杯のモンスターに魔法・技能を落とすと<b>押し込み</b>になります（1階層目を捨てて置き換え。確認つき）。</li>
-      <li>［Ｉ］チェンジ所持中は、手札のいちばん右に専用カードが常に出ます。押すと手札の引き直し（そのターン未操作のときだけ）。</li>
-      <li>最大チャネル数の枠はモンスターカードも含めて囲み、点線・枠のズレを直しました。</li>
-      <li>場のカードと手札を正方形（126×126）に。チャネリングカードは50%見えます。</li>
-      <li>チャネリングカードはカード名だけの表示に。裏向きは文字なしの灰色一色です。</li>
-    </ul>
-    <h2>v0.4 で変えたこと</h2>
-    <ul>
-      <li>カードの情報は<b>右端に常時表示</b>。長押しはやめて、<b>カードを押すだけ</b>で切り替わります。</li>
-      <li>手札を場までドラッグして離すと、右のパネルに<b>ＯＫ／キャンセル</b>が出ます。押し間違いはここで止まります。</li>
-      <li>チャネリングの重ね方を逆にしました。<b>ユニットが手前で全体が見え、チャネリングカードはその下に潜り込みます</b>。1階層目はユニットの下、2階層目は1階層目の下、という順です。</li>
-      <li>チャネリング1階層ぶんの見える高さを 48px → <b>60px</b> に広げました。</li>
-      <li>レーン番号をやめ、レーンの間に隙間を入れました。</li>
-      <li><b>6階層すべてに点線</b>を引いたので、自分と相手のどのカードが同じ階層かが一目で分かります。ユニットが居ないレーンでも点線は出ます。</li>
-      <li>そのユニットが<b>チャネリングできる範囲</b>を、はっきりした実線の枠で囲みました。</li>
-      <li>相手の手札の枚数を、裏カードを並べて見せます。</li>
-      <li>いま何ターン目かを、画面中央に大きく出します。</li>
-      <li>手札は左から少しずつ重ねて並べます。いちばん左が手前で、右のカードはその下に潜ります。隠れる幅ぶん文字を右にずらしてあるので、名前は必ず読めます。</li>
-      <li>手札の右に「ターンを終了する」ボタンを付けました。</li>
-    </ul>
-
-    <h3>この画面で試せること</h3>
-    <div class="box">
-      <p>手札のカードを、場のレーンまでドラッグして離してみてください。確認が出て、ＯＫを押すと実際に場に出ます。モンスターは自分の空き枠に召還でき、どのカードも<b>自分・相手どちらのユニット</b>にもチャネルできます。チャネルが一杯のときは、入れ替える階層を選べます（押し込みは配置ステップだけ）。</p>
-      <p>「配置を終える」を押すとメインステップです。自分のモンスターを押すと、アタック・デッキ攻撃・リバースが選べます。</p>
-      <p>場のカード・手札のカードを押すと、右のパネルの内容が切り替わります。</p>
-    </div>
-
-    <h3>カードの絵</h3>
-    <div class="box">
-      <p><code>assets/cards/&lt;カードID&gt;.png</code> を置くと、そのカードの絵になります。名前とＡ／Ｄは絵の上に重なります。</p>
-    </div>
-
-    <p style="margin-top:18px;color:#96a7c6">※ v0.11.1 でバトル画面はエンジンと繋がり、実際に1バトルを最後まで遊べます。まだ入っていないのは「カードの効果の発動」（魔法と、オープンで発動するユニット固有能力）と、本物の敵ＡＩ、ラン（分岐マップ）、セーブ・ショップ・コレクションです。エンジン単体の動作は「エンジン検証」タブでも確認できます。</p>
-  </section>
-
   <!-- 一時メッセージ。#app の中に置くことで画面と一緒に縮み、必ず見える位置に出る -->
   <div id="flash"></div>
 </div>
@@ -222,28 +98,28 @@
 
 <div id="sa-probe"></div>
 
-<script src="js/boot.js?v=0.16.8"></script>
-<script src="js/data.js?v=0.16.8"></script>
-<script src="js/engine/rng.js?v=0.16.8"></script>
-<script src="js/engine/state.js?v=0.16.8"></script>
-<script src="js/engine/stats.js?v=0.16.8"></script>
-<script src="js/engine/fieldrules.js?v=0.16.8"></script>
-<script src="js/engine/turn.js?v=0.16.8"></script>
-<script src="js/engine/combat.js?v=0.16.8"></script>
-<script src="js/engine/effects/magic.js?v=0.16.8"></script>
-<script src="js/engine/effects/units.js?v=0.16.8"></script>
-<script src="js/engine/ai.js?v=0.16.8"></script>
-<script src="js/engine/search.js?v=0.16.8"></script>
-<script src="js/meta/collection.js?v=0.16.8"></script>
-<script src="js/run/areas.js?v=0.16.8"></script>
-<script src="js/run/map.js?v=0.16.8"></script>
-<script src="js/run/run.js?v=0.16.8"></script>
-<script src="js/meta/save.js?v=0.16.8"></script>
-<script src="js/lore.js?v=0.16.8"></script>
-<script src="js/version.js?v=0.16.8"></script>
-<script src="js/layout.js?v=0.16.8"></script>
-<script src="js/run-ui.js?v=0.16.8"></script>
-<script src="js/simulate.js?v=0.16.8"></script>
-<script src="js/update.js?v=0.16.8"></script>
+<script src="js/boot.js?v=0.16.11"></script>
+<script src="js/data.js?v=0.16.11"></script>
+<script src="js/engine/rng.js?v=0.16.11"></script>
+<script src="js/engine/state.js?v=0.16.11"></script>
+<script src="js/engine/stats.js?v=0.16.11"></script>
+<script src="js/engine/fieldrules.js?v=0.16.11"></script>
+<script src="js/engine/turn.js?v=0.16.11"></script>
+<script src="js/engine/combat.js?v=0.16.11"></script>
+<script src="js/engine/effects/magic.js?v=0.16.11"></script>
+<script src="js/engine/effects/units.js?v=0.16.11"></script>
+<script src="js/engine/ai.js?v=0.16.11"></script>
+<script src="js/engine/search.js?v=0.16.11"></script>
+<script src="js/meta/collection.js?v=0.16.11"></script>
+<script src="js/run/areas.js?v=0.16.11"></script>
+<script src="js/run/map.js?v=0.16.11"></script>
+<script src="js/run/run.js?v=0.16.11"></script>
+<script src="js/meta/save.js?v=0.16.11"></script>
+<script src="js/lore.js?v=0.16.11"></script>
+<script src="js/version.js?v=0.16.11"></script>
+<script src="js/layout.js?v=0.16.11"></script>
+<script src="js/run-ui.js?v=0.16.11"></script>
+<script src="js/debug.js?v=0.16.11"></script>
+<script src="js/update.js?v=0.16.11"></script>
 </body>
 </html>

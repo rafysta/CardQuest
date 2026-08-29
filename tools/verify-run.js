@@ -274,15 +274,14 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   for (const id of ids) { if ((await nodeType(id)) === 'battle') { battleId = id; break; } }
   if (battleId) {
     await page.click(`.map-node[data-id="${battleId}"]`, { force: true });
-    await wait(() => page.$('[data-act="battle-go"]'));
-    ok('戦闘マスの概要パネルが出る（相手の絵・「たたかう」）', !!(await page.$('[data-act="battle-go"]')));
-    await shot('node-battle');
-    await page.click('[data-act="battle-go"]');
-    /* M6.6 WP5：即バトル画面ではなく、まず一瞬の戦闘導入カットイン（黒カットイン＋敵の
-     * 切り抜き＋自分のコマの突撃）が挟まる。タップでスキップできることも合わせて確認する。 */
+    /* 2026-08-29 本人指定：「たたかう」の確認パネルは廃止した。敵のマスに触れた時点で
+     * そのまま戦闘導入カットイン（黒四角＋敵＋自分のコマの突撃）に入る。
+     * 四角の後ろにマップが見えたままであること・戦場ルールが読めることも合わせて確認する。 */
     await wait(() => page.$('.battle-intro'));
-    ok('「たたかう」で戦闘導入カットインが挟まる（M6.6 WP5）', !!(await page.$('.battle-intro')));
-    await page.waitForTimeout(700);   // カットインが開いて敵とコマが出てくる途中の絵を撮る
+    ok('敵のマスに触れると確認パネル無しでカットインに入る（M6.6 WP5）', !!(await page.$('.battle-intro')));
+    ok('「たたかう」の確認パネルは出ない', !(await page.$('[data-act="battle-go"]')));
+    ok('カットインの後ろにマップが見えている', !!(await page.$('.battle-intro')) && !!(await page.$('.run-map')));
+    await page.waitForTimeout(1100);   // 四角が開き、敵とコマが出てくる途中の絵を撮る
     await shot('battle-intro');
     await page.click('.battle-intro');   // タップでスキップ
     await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
@@ -292,11 +291,26 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     const rouletteEl = await page.$('.first-turn-roulette');
     ok('バトル画面表示と同時に先攻ルーレットが出る（M6.6 WP5）', !!rouletteEl);
     if (rouletteEl) {
-      await page.waitForTimeout(900);   // 回転の途中の絵を撮る
+      await page.waitForTimeout(1400);   // 回転の途中の絵を撮る
       await shot('first-turn-roulette');
+      /* 2026-08-29 本人指摘の再発防止：旧実装は停止時に rotate(最終角) を代入し直していたため、
+       * そこから逆向きに1080°戻る「高速逆回転」が見えていた。回転角は常に増える一方であること
+       * （＝逆回転しないこと）を、スキップの前後で実際の角度を読んで確かめる。 */
+      const degBefore = await page.evaluate(() => {
+        const m = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.ftr-compass')).transform);
+        return Math.atan2(m.b, m.a) * 180 / Math.PI;
+      });
       await page.click('.first-turn-roulette');   // タップでスキップ
-      await wait(() => page.evaluate(() => !document.querySelector('.first-turn-roulette')));
-      ok('ルーレットはタップでスキップして消える', await page.evaluate(() => !document.querySelector('.first-turn-roulette')));
+      await page.waitForTimeout(120);
+      const settled = await page.evaluate(() => document.querySelector('.ftr-compass').style.transform);
+      ok('停止角はきっかり右(0°)か左(180°)（ずれた位置で止まらない）',
+        /rotate\((\d+)deg\)/.test(settled) && (parseInt(settled.match(/(\d+)deg/)[1], 10) % 180 === 0), settled);
+      ok('停止時に逆回転しない（角度は常に増える一方）',
+        parseInt(settled.match(/(\d+)deg/)[1], 10) >= 360, 'before=' + degBefore.toFixed(0) + '° final=' + settled);
+      ok('結果の文字（先攻／後攻）が出る', !!(await page.$('.ftr-result.show')));
+      /* 止まったあと1秒そのまま見せてから、ゆっくり透明になって消える（合計で約1.5秒） */
+      await wait(() => page.evaluate(() => !document.querySelector('.first-turn-roulette')), 4000);
+      ok('1秒見せてからフェードして消える', await page.evaluate(() => !document.querySelector('.first-turn-roulette')));
     }
     await page.waitForTimeout(1500);   // 手札配布などの演出(FX)が終わるまで待つ。演出中の強制上書きはstep()に打ち消される
     ok('ラン中はバトル画面の「新しい対戦」ボタンが隠れる', !(await page.$('#turnbox [data-act="new"]')));
@@ -339,6 +353,44 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   } else {
     ok('戦闘マスの橋渡し(このランでは戦闘マスが選べなかった)', true, '');
   }
+
+  // --- 5.5) デバッグメニュー（2026-08-29 新設。js/debug.js） ---
+  ok('使わない検証タブ（エンジン検証・この案について）が消えている',
+    (await page.$$('.tab')).length === 3 &&
+    !(await page.$('[data-screen="screen-sim"]')) && !(await page.$('[data-screen="screen-notes"]')));
+  await page.click('#dbg-btn');
+  await wait(() => page.$('.dbg-menu'));
+  ok('🛠 でデバッグメニューが開く', !!(await page.$('.dbg-menu')));
+  ok('デバッグメニューに4つの道具が並ぶ', (await page.$$('.dbg-item')).length === 4,
+    String((await page.$$('.dbg-item')).length) + '個');
+  await shot('debug-menu');
+  /* ルーラー：80px方眼と座標番号が #app に重なる。もう一度押すと消える */
+  await page.click('.dbg-item[data-i="2"]');
+  await wait(() => page.$('.dbg-ruler'));
+  ok('ルーラーが出る（80px方眼・16×10）', (await page.$$('.dbg-ruler-x')).length === 16 &&
+    (await page.$$('.dbg-ruler-y')).length === 10);
+  await shot('debug-ruler');
+  await page.click('.dbg-item[data-i="2"]');
+  await page.waitForTimeout(150);
+  ok('もう一度押すとルーラーが消える', !(await page.$('.dbg-ruler')));
+  /* 最新版のチェック：version.json を読んで結果行が出る（GitHub側は通信環境により取得不可でもよい） */
+  await page.click('.dbg-item[data-i="1"]');
+  await wait(() => page.$('.dbg-verdict'), 8000);
+  ok('最新版のチェックが結果を返す', !!(await page.$('.dbg-verdict')));
+  /* 戦闘開始シーンの再生：実戦闘に入らずカットイン→ルーレットだけ流して元の画面へ戻る */
+  const viewBefore = await page.evaluate(() => RUI.view);
+  await page.click('.dbg-item[data-i="3"]');
+  await wait(() => page.$('.battle-intro'));
+  ok('「戦闘開始シーンを再生」でカットインだけ再生できる', !!(await page.$('.battle-intro')));
+  await page.click('.battle-intro');                       // スキップして先へ
+  await wait(() => page.$('.first-turn-roulette'), 4000);
+  ok('続けてルーレットも再生される', !!(await page.$('.first-turn-roulette')));
+  await page.click('.first-turn-roulette');
+  await wait(() => page.evaluate(() => !document.querySelector('.first-turn-roulette')), 4000);
+  ok('再生後は元の画面に戻る（バトルには入らない）',
+    (await page.evaluate(() => RUI.view)) === viewBefore &&
+    await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')),
+    'before=' + viewBefore + ' after=' + (await page.evaluate(() => RUI.view)));
 
   // --- 6) リタイヤ ---
   /* M6.5a でブラウザ標準の confirm() からゲーム内ダイアログに変わっているので、

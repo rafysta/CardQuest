@@ -389,6 +389,22 @@ img.curse-art{
 .btn.ok{background:var(--accent);color:#241c00}
 .btn.ng{background:var(--panel2);border:2px solid var(--line);color:var(--txt)}
 
+/* 小さいボタン（ショップの購入・ＬＰ回復・霧払い／換金の売る／確認ダイアログの「やめる」）。
+ * 2026-08-29 本人指摘：「ＬＰ回復（Ｇ100）」が押せる文字なのか分からない——原因は、
+ * button の既定スタイルを全部消す reset（`button{background:none;border:none}`）を当てたまま
+ * `.tiny` に何のスタイルも定義していなかったこと。ここまで .tiny の見た目があったのは
+ * `#turnbox .tiny`（バトル画面のヘッダ）だけで、ラン画面側の .tiny は素の文字のまま出ていた。
+ * 枠と背景を与えて「押せるもの」に見せる。#turnbox 側は詳細度が高いので従来のまま。 */
+.tiny{
+  background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:6px 14px;font-size:14px;font-weight:700;
+}
+.tiny:hover:not(:disabled){border-color:var(--accent);color:#fff}
+.tiny:active:not(:disabled){background:#24406e}
+/* ショップ・換金の札は幅が狭いので、その中の .tiny は枠いっぱいに広げて余白を詰める
+ * （「Ｇ1000で購入」のような長い文字でも2行までで収まる） */
+.shop-item .tiny{width:100%;padding:6px 4px;font-size:13px}
+
 /* ※ 以前あった @media (max-height:700px) の縮小指定は削除した。
  * レイアウトを 1280×800 に固定したので中身の高さは常に同じで、
  * 画面が小さいときは #app ごと縮小表示される（--app-scale）。
@@ -1160,53 +1176,130 @@ td.nm{font-weight:800}
  * 実際には兄弟要素は無い＝z-indexは他の演出との比較のためだけに揃えてある）。
  * 「たたかう／挑む」を押してから約1.4秒（＋暗転の余韻）だけ見せてバトル画面へ切り替わる。
  * タップで即スキップ（data-act="battle-intro-skip"）。乱数は使わない。 */
+/* 2026-08-29 改訂（本人フィードバック）：
+ *   ・黒い四角は**画面の約40%**の大きさで中央に置き、**その後ろにマップが見えたまま**にする
+ *     （＝全面を覆う背景は敷かない。run-ui.js 側も renderMap() の上に重ねる形に変えてある）
+ *   ・敵は四角の上・**画面中央**に、従来の半分の大きさで立たせる
+ *   ・プレイヤーはもっとゆっくり、上下に揺れながら敵へ向かう
+ * 最後だけ、バトル画面へ切り替わる直前に全体を軽く暗転させる（切り替えの継ぎ目を隠す）。 */
 .battle-intro{
   position:absolute;inset:0;z-index:900;overflow:hidden;cursor:pointer;
-  background:#05070d;
-  animation:battleIntroBg 1.3s ease-in forwards;
+  animation:battleIntroDim 2.6s ease-in forwards;
 }
-@keyframes battleIntroBg{
-  0%{background:rgba(5,7,13,0)}
-  22%{background:rgba(5,7,13,.7)}
-  78%{background:rgba(5,7,13,.82)}
-  100%{background:rgba(5,7,13,0)}
+@keyframes battleIntroDim{
+  0%,72%{background:rgba(5,7,13,0)}
+  100%{background:rgba(5,7,13,.96)}
 }
-/* 黒四角カットイン：中央から上下に開く帯。開ききったところで敵の切り抜きが現れる */
+/* 黒四角カットイン：画面のおよそ40%（幅46%×高さ56%）を中央に。上下に開いて出る。
+ * ここは不透明な黒だが、これはあくまで「四角」であって全画面ではない＝周りにマップが残る。 */
 .battle-intro-cut{
-  position:absolute;left:0;right:0;top:50%;height:52%;transform:translateY(-50%) scaleY(0);
-  background:#05070d;
-  animation:battleIntroCut .55s cubic-bezier(.2,.85,.25,1) forwards;
+  position:absolute;left:27%;right:27%;top:50%;height:56%;
+  transform:translateY(-50%) scaleY(0);transform-origin:center;
+  background:#05070d;border:1px solid #1b2740;border-radius:6px;
+  box-shadow:0 18px 60px rgba(0,0,0,.75);
+  animation:battleIntroCut .4s cubic-bezier(.2,.85,.25,1) forwards;
+  display:flex;flex-direction:column;justify-content:flex-end;align-items:center;
+  padding-bottom:16px;gap:8px;
 }
-@keyframes battleIntroCut{
-  0%{transform:translateY(-50%) scaleY(0)}
-  45%{transform:translateY(-50%) scaleY(1)}
-  80%{transform:translateY(-50%) scaleY(1)}
-  100%{transform:translateY(-50%) scaleY(0)}
+@keyframes battleIntroCut{ to{transform:translateY(-50%) scaleY(1)} }
+/* 四角の下部：相手の名前と、その日の戦場ルール（確認パネル廃止ぶんの情報をここで担保する） */
+.battle-intro-title{
+  font-size:19px;font-weight:800;color:#e9eef7;text-shadow:0 2px 6px #000;
+  opacity:0;animation:battleIntroFade .4s ease-out .45s forwards;
 }
-.battle-intro-stage{position:absolute;inset:0}
+.battle-intro-cut .node-rules{
+  opacity:0;animation:battleIntroFade .4s ease-out .6s forwards;margin:0;max-width:92%;
+}
+@keyframes battleIntroFade{ to{opacity:1} }
+
+.battle-intro-stage{position:absolute;inset:0;pointer-events:none}
+/* 敵：画面中央。height 34%＋scale(2)＝実効68%だったものを、指定どおり半分＝実効34%にした */
 .battle-intro-foe{
-  position:absolute;right:16%;top:50%;height:34%;max-width:none;
-  transform:translateY(-50%) scale(.001);opacity:0;
+  position:absolute;left:50%;top:46%;height:34%;max-width:none;
+  transform:translate(-50%,-50%) scale(.4);opacity:0;
   filter:drop-shadow(0 16px 28px rgba(0,0,0,.6));
-  animation:battleIntroFoeIn .3s ease-out .42s forwards, battleIntroFlinch .16s ease-in-out .98s 2;
+  animation:battleIntroFoeIn .35s ease-out .4s forwards,
+            battleIntroFlinch .18s ease-in-out 1.95s 2;
 }
-@keyframes battleIntroFoeIn{ to{transform:translateY(-50%) scale(2);opacity:1} }
+@keyframes battleIntroFoeIn{ to{transform:translate(-50%,-50%) scale(1);opacity:1} }
 @keyframes battleIntroFlinch{
-  0%,100%{transform:translateY(-50%) scale(2) rotate(0)}
-  50%{transform:translateY(-47%) scale(1.94) rotate(4deg)}
+  0%,100%{transform:translate(-50%,-50%) scale(1) rotate(0)}
+  50%{transform:translate(-50%,-53%) scale(.97) rotate(4deg)}
 }
-/* 自分のコマ：左の画面外から2倍サイズで跳ねながら現れ、敵にぶつかって止まる */
+/* 自分のコマ：左の画面外から、上下に揺れながらゆっくり敵へ向かう。
+ * left の移動（1.5秒）と上下のバウンド（0.42秒周期の繰り返し）を別々のアニメに分け、
+ * バウンドは内側の img に掛ける——1つのkeyframesに混ぜると、走る速さを変えるたびに
+ * バウンドの周期まで変わってしまうため。 */
 .battle-intro-hero{
-  position:absolute;left:-22%;bottom:30%;width:200px;height:260px;
-  animation:battleIntroHero .68s cubic-bezier(.32,.6,.24,1) .34s forwards;
+  position:absolute;left:-18%;top:52%;width:132px;height:172px;margin-top:-86px;
+  animation:battleIntroRun 1.55s cubic-bezier(.4,.15,.5,1) .35s forwards;
 }
-.battle-intro-hero img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 12px 10px rgba(0,0,0,.5))}
-@keyframes battleIntroHero{
-  0%{left:-22%;transform:translateY(0)}
-  60%{left:46%;transform:translateY(-34px)}
-  78%{left:52%;transform:translateY(0)}
-  100%{left:49%;transform:translateY(0)}
+.battle-intro-hero img{
+  width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 12px 10px rgba(0,0,0,.5));
+  animation:battleIntroBounce .42s ease-in-out .35s 5;
 }
+@keyframes battleIntroRun{
+  0%{left:-18%}
+  84%{left:40%}
+  100%{left:37%}     /* ぶつかった反動で少しだけ戻る */
+}
+@keyframes battleIntroBounce{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(-22px)}
+}
+
+/* ---- デバッグメニュー（js/debug.js・2026-08-29） ----
+ * 使われていなかった「エンジン検証」「この案について」タブを外した代わりに、
+ * 開発用のコマンドをここへ集約した。押さなければ何も起きないので常設のままにしてある。 */
+.dbg-btn{
+  margin-left:10px;flex:none;width:38px;height:38px;border-radius:10px;
+  background:var(--panel2);border:1px solid var(--line);font-size:17px;line-height:1;
+}
+.dbg-btn:hover{border-color:var(--accent)}
+.dbg-menu{
+  position:absolute;right:12px;top:56px;z-index:1100;width:340px;
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  box-shadow:0 18px 50px rgba(0,0,0,.6);padding:10px;
+}
+.dbg-menu-h{
+  display:flex;align-items:baseline;font-size:13px;font-weight:800;color:var(--dim);
+  padding:2px 6px 8px;border-bottom:1px solid var(--line);margin-bottom:6px;
+}
+.dbg-menu-v{margin-left:auto;font-weight:700;color:var(--accent)}
+.dbg-item{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:9px 8px;border-radius:9px;
+}
+.dbg-item:hover{background:var(--panel2)}
+.dbg-item-ic{font-size:18px;width:24px;text-align:center;flex:none}
+.dbg-item-t{display:flex;flex-direction:column;gap:1px;min-width:0}
+.dbg-item-t b{font-size:14px;font-weight:700}
+.dbg-item-t small{font-size:11px;color:var(--dim)}
+.dbg-out{
+  font-size:12px;line-height:1.6;color:var(--dim);padding:8px 8px 4px;
+  border-top:1px solid var(--line);margin-top:6px;
+}
+.dbg-out:empty{display:none}
+.dbg-row{display:flex;gap:8px;padding:2px 0}
+.dbg-row span{flex:1}
+.dbg-ok{color:#7ee0a0}
+.dbg-warn{color:#ffcf6b}
+.dbg-dim{color:#6b7c99}
+.dbg-verdict{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
+
+/* ルーラー：80px方眼の点線＋座標番号。「x:3, y:5 から縦3・横5」の言い方を可能にする */
+.dbg-ruler{
+  position:absolute;inset:0;z-index:1050;pointer-events:none;
+  background-image:
+    repeating-linear-gradient(to right, rgba(120,190,255,.55) 0 1px, transparent 1px 80px),
+    repeating-linear-gradient(to bottom, rgba(120,190,255,.55) 0 1px, transparent 1px 80px);
+}
+.dbg-ruler-x,.dbg-ruler-y{
+  position:absolute;font-size:11px;font-weight:800;color:#bfe0ff;
+  background:rgba(5,12,26,.78);border-radius:4px;padding:0 4px;
+}
+.dbg-ruler-x{top:0;margin-left:2px}
+.dbg-ruler-y{left:0;margin-top:2px}
 
 /* ---- 先攻ルーレット（M6.6 WP5・追補§4） ----
  * js/layout.js の showFirstTurnRoulette() が #app 直下に position:absolute で足す
@@ -1217,21 +1310,22 @@ td.nm{font-weight:800}
 .first-turn-roulette{
   position:absolute;inset:0;z-index:1200;cursor:pointer;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
+  transition:opacity .45s ease-in;   /* FTR_FADE_MS と揃える（js/layout.js） */
 }
-.ftr-cut{
-  position:absolute;inset:0;background:#05070d;
-  animation:ftrCutFade .5s ease-in .55s forwards;
-}
-@keyframes ftrCutFade{ from{opacity:1} to{opacity:0} }
-.ftr-stage{position:relative;width:260px;height:260px;display:flex;align-items:center;justify-content:center}
+/* 止まって1秒見せたあと、ゆっくり透明になって消える（2026-08-29 本人指定） */
+.first-turn-roulette.fade-out{opacity:0}
+/* 黒の下敷きは出しっぱなしにする（旧実装は0.5秒で消していたので、羅針盤が
+ * バトル盤面の上に浮いて見えて何が起きているのか読めなかった＝「分かりにくい」の一因） */
+.ftr-cut{position:absolute;inset:0;background:#05070d;opacity:.94}
+.ftr-stage{position:relative;width:300px;height:300px;display:flex;align-items:center;justify-content:center}
 .ftr-compass{
   width:100%;height:100%;object-fit:contain;transform:rotate(0deg);
   filter:drop-shadow(0 12px 26px rgba(0,0,0,.65));
 }
 .ftr-result{
-  position:absolute;bottom:-56px;left:50%;transform:translateX(-50%);
-  font-size:28px;font-weight:800;color:#ffe9a8;text-shadow:0 2px 8px #000;
-  opacity:0;transition:opacity .25s ease-out;white-space:nowrap;
+  position:absolute;bottom:-64px;left:50%;transform:translateX(-50%);
+  font-size:34px;font-weight:800;color:#ffe9a8;text-shadow:0 2px 8px #000;
+  opacity:0;transition:opacity .25s ease-out;white-space:nowrap;letter-spacing:.12em;
 }
 .ftr-result.show{opacity:1}
 
