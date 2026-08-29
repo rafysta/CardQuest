@@ -38,8 +38,12 @@
   }
   function recalc(m) { return Stats.recalc(m.board, { cards: m.cards, combat: combatOpt(m) }); }
 
+  /** ＬＰダメージ。M6.6 WP6：フリーユニット戦の敵にはＬＰの概念が無いので、敵側への
+   * ＬＰダメージは丸ごと無視する（§2-6「敵はLP表示なし」／勝敗は場が空になるかで決まる）。
+   * 自分側は従来どおり——プレイヤーの敗北条件はＬＰ0のままである。 */
   function damage(m, side, n) {
     if (!n) return;
+    if (m.mode === 'field' && side === 'enemy') return;
     m.players[side].lp -= n;
   }
   function heal(m, side, n) {

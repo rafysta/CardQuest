@@ -24,31 +24,44 @@
   /* おまかせドラフトの回数（マップ仕様書§1.2は3回だったが、実装計画追補M6.6 §2-4で
    * 最大2回に変更。1回目＝エリアの敵／2回目＝いま買える魔法・技能）。 */
   const DRAFT_ROUNDS = 2;
+  /* フリーユニット戦の敵デッキの組成（M6.6 WP6・§7-5）。敵は召還できないので支援中心にし、
+   * ユニットはチャネル弾として少量だけ混ぜる。合計は DECK_SIZE（40枚）ちょうどにする。
+   * 旧構成は「ユニット20＋支援シェル20」だったが、召還が封じられた以上ユニット20枚は
+   * ほぼ死に札だった（引くだけ手が詰まる）ため、この比率に取り直した。 */
+  const FIELD_DECK_UNITS = 6;                                  /* チャネル弾としてのユニット */
+  const FIELD_DECK_SHELL = DECK_SIZE - FIELD_DECK_UNITS;       /* 残りは魔法・技能 */
 
   /* ---- デッキ組み立て ---------------------------------------------------- */
 
   /** 敵の戦闘マス用デッキ：花形ユニット(node.enemy)＋プールの残りで20枚のユニット枠を埋め、
    * 支援シェル20枚（js/run/areas.js）を足して DECK_SIZE にする。
    * マスター固有の実デッキ抽出は実装計画M8。それまでの簡略版（開発メモに明記）。 */
+  /** 通常戦闘（フリーユニット戦）の敵デッキ。
+   * M6.6 WP6（§7-5）で組み直した：**敵は手札から召還できない**ので、デッキにユニットを
+   * たくさん積む意味が無くなった（ユニットの使い道はチャネル＝強化弾としてだけ）。
+   * そこで支援シェル（魔法・技能）を主にし、ユニットは少量だけ混ぜる。
+   * ※ 場に立つ敵そのものは node.enemy の編成として battleSetup の enemyBoard で渡す。 */
   function buildBattleDeck(cards, area, node) {
     const pool = CQAreas.enemyPool(cards, area.id);
     const featured = node.enemy;
+    const shell = CQAreas.SUPPORT_SHELL;
+    const deck = [];
+    /* 支援シェルを繰り返し積んで大半を埋める（チャネルで場のユニットを強化していく形） */
+    let i = 0, guard = 0;
+    while (deck.length < FIELD_DECK_SHELL && shell.length && guard < 400) {
+      deck.push(shell[i % shell.length]); i++; guard++;
+    }
+    /* チャネル弾としてのユニットを少量。花形が居ればそれを軸にする */
     const units = [];
-    if (featured) {
-      /* 花形ユニットを積みすぎると「同じカードの連投」で安定しすぎ、プレイヤー側の単発構成の
-       * デッキ（js/layout.js SAMPLE_DECK は各1枚）に対して不自然に勝ちやすくなることが
-       * tools/simulate-run.js のファズで分かった（2026-08-26）。上限4枚に抑える。 */
-      const featCount = Math.min(4, featured.count * 2);
-      for (let i = 0; i < featCount; i++) units.push(featured.id);
+    if (featured) units.push(featured.id);
+    let k = 0; guard = 0;
+    while (units.length < FIELD_DECK_UNITS && pool.length && guard < 400) {
+      const c = pool[k % pool.length];
+      if (units.indexOf(c.id) < 0) units.push(c.id);
+      k++; guard++;
     }
-    let idx = 0, guard = 0;
-    while (units.length < 20 && pool.length && guard < 400) {
-      const c = pool[idx % pool.length];
-      if (!featured || c.id !== featured.id) units.push(c.id);
-      idx++; guard++;
-    }
-    while (units.length < 20) units.push(featured ? featured.id : 8);
-    return units.slice(0, 20).concat(CQAreas.SUPPORT_SHELL);
+    while (units.length < FIELD_DECK_UNITS) units.push(featured ? featured.id : 8);
+    return deck.concat(units.slice(0, FIELD_DECK_UNITS));
   }
 
   /** ボスのデッキ：プール上位（価格上限area.bossPriceMax以下）を集めて組む */
@@ -235,6 +248,15 @@
   }
 
   /** CQTurn.createMatch にそのまま渡せる引数を作る（rng/hooksは呼び出し側＝layout.jsが足す） */
+  /** そのマスの敵編成を、実際に場へ立てる並びにする（M6.6 WP6）。
+   * マップは「代表1体＋体数」で持っているので、体数ぶん同じユニットを並べる（最大3体＝敵レーン数）。 */
+  function enemyBoardOf(n) {
+    if (!n.enemy) return [];
+    const out = [];
+    for (let i = 0; i < Math.min(3, n.enemy.count || 1); i++) out.push(n.enemy.id);
+    return out;
+  }
+
   function battleSetup(run, cards, n) {
     const area = CQAreas.get(run.areaId);
     const isBoss = n.type === 'boss';
@@ -247,22 +269,35 @@
       fieldRules: n.fieldRules || [],
       selfOpts: { lp: run.lp, maxLp: run.maxLp },
       enemyOpts: isBoss ? { lp: area.bossLp, maxLp: area.bossLp } : undefined,
+      /* M6.6 WP6：通常戦闘はフリーユニット戦（敵は配置済み・召還不可・場が空になれば勝ち）。
+       * マスター戦（ボス）だけは従来どおりのＬＰ勝負なので mode を付けない（§2-6）。 */
+      mode: isBoss ? undefined : 'field',
+      enemyBoard: isBoss ? undefined : enemyBoardOf(n),
       seed: battleSeed(run, n)
     };
   }
 
-  /** 戦闘終了後（M.winner が確定した後）に呼ぶ。戦利品・Ｇ・ＬＰをランに反映する */
-  function reportBattle(run, n, M) {
+  /** 戦闘終了後（M.winner が確定した後）に呼ぶ。戦利品・Ｇ・ＬＰをランに反映する。
+   * M6.6 WP6（§2-6）で報酬を変更した：
+   *   通常戦闘（フリーユニット戦）＝**Ｇは出ない**。敵ユニットは金を落とさず、戦利品のカードだけ。
+   *   マスター戦（ボス）＝**ファイトマネーは原作準拠**（areas.js の fightMoney。草原・森はＣ級500G）。
+   *                       すでにクリア済みのエリアを周回しているときは50%。
+   * ラン中の主収入は宝箱に寄る（マップ仕様書§7・追補§7-1の想定どおり）。 */
+  function reportBattle(run, n, M, meta) {
     n.cleared = true;
     if (M.winner === 'self') {
       const loot = (M.loot || []).slice();
       loot.forEach(function (id) { gainCard(run, id); });
-      const base = n.enemy ? n.enemy.price : (CQAreas.get(run.areaId).bossPriceMax * 0.5);
-      const mult = n.strength === 'strong' ? 1.25 : n.strength === 'elite' ? 1.5 : n.type === 'boss' ? 2 : 1;
-      const gold = Math.round(base * 0.12 * mult) + loot.length * 10;
+      const area = CQAreas.get(run.areaId);
+      let gold = 0;
+      if (n.type === 'boss') {
+        const repeat = !!(meta && meta.cleared && meta.cleared.indexOf(run.areaId) >= 0);
+        gold = Math.round((area.fightMoney || 0) * (repeat ? 0.5 : 1));
+      }
       run.gold += gold;
       run.lp = M.players.self.lp;
-      run.log.push((n.type === 'boss' ? 'ボス' : '戦闘') + 'に勝利（Ｇ+' + gold + '・戦利品' + loot.length + '枚）');
+      run.log.push((n.type === 'boss' ? 'ボス' : '戦闘') + 'に勝利（'
+        + (gold ? 'Ｇ+' + gold + '・' : '') + '戦利品' + loot.length + '枚）');
       return { win: true, loot: loot, gold: gold };
     }
     run.lp = 0;

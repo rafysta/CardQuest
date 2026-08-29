@@ -338,7 +338,10 @@
       const ln = lanes[i];
       return ln.unit != null && ln.cap > ln.count && !(ln.acc && ln.acc.closedSkill >= 1);
     };
-    const emptyOwn = Field.freeLanesOf(m, side)[0];       // M6 戦場ルール laneLock を考慮した空きレーン
+    /* M6 戦場ルール laneLock を考慮した空きレーン。
+     * M6.6 WP6：召還が封じられている側（フリーユニット戦の敵）は、そもそも召還を候補に入れない
+     * （入れると先読みが通らない手を延々と評価してしまう）。 */
+    const emptyOwn = Turn.canSummonSide(m, side) ? Field.freeLanesOf(m, side)[0] : undefined;
     const ownRoom = ownLanes.filter(roomOf);
     const foeRoom = foeLanes.filter(roomOf);
     const cands = [];

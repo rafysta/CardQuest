@@ -228,7 +228,9 @@
   function randomPlacement(m) {
     const p = m.players[m.active];
     const own = S.lanesOf(m.active);
-    const empty = Field.freeLanesOf(m, m.active)[0];
+    /* M6.6 WP6：召還が封じられている側（フリーユニット戦の敵）は召還を試さない。
+     * エンジン側でも summon() が弾くが、ここで見ておかないと配置ステップの1手を無駄に使う。 */
+    const empty = Turn.canSummonSide(m, m.active) ? Field.freeLanesOf(m, m.active)[0] : undefined;
     if (empty !== undefined) {
       const idx = p.hand.findIndex(function (id) {
         const c = m.cards[id];
@@ -312,8 +314,12 @@
     const pestIdx = p.hand.findIndex(function (id) { return Field.isPest(id); });
     if (pestIdx >= 0 && Turn.discardPest(m, pestIdx).ok) return true;
 
+    /* M6.6 WP6：フリーユニット戦の敵は召還できない。マリガン（召還できる札を探す引き直し）も
+     * 召還そのものも意味が無いので、まとめて飛ばす。 */
+    const canSummon = Turn.canSummonSide(m, side);
+
     // --- 1. マリガン（§4.1：敵ＡＩも同等のマリガンを持つ。フリーユニットは無し） ---
-    if (cfg.mulligan && ownUnits.length === 0) {
+    if (canSummon && cfg.mulligan && ownUnits.length === 0) {
       const anySummonable = p.hand.slice(0, slots).some(function (id) {
         const c = m.cards[id];
         return c && c.t === 'U' && S.unitStats(c).lv <= 1;
@@ -322,7 +328,7 @@
     }
 
     // --- 2. 召還（§11.2：スコア基礎 rand 20〜60、閾値 ≧30） ---
-    const empty = Field.freeLanesOf(m, side)[0];
+    const empty = canSummon ? Field.freeLanesOf(m, side)[0] : undefined;
     if (empty !== undefined) {
       let score = m.rng.int(20, 60);
       if (ownUnits.length === 0) score += 999;          // 場が空なら必ず出す（近似）

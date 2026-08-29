@@ -89,6 +89,8 @@ input{-webkit-user-select:text;user-select:text}
 .statusbar .side.mine{justify-content:flex-end}
 .who{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lp{color:#ff8fa3;font-weight:800;font-size:20px;letter-spacing:.06em;white-space:nowrap}
+/* フリーユニット戦（M6.6 WP6）で敵のＬＰ欄に出す「残りＮ体」。ＬＰとは別の意味なので色を変える */
+.lp.field-remain{color:#ffd05a}
 .meta{color:var(--dim);font-size:15px;white-space:nowrap}
 .meta b{color:var(--txt);font-size:17px}
 

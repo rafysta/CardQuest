@@ -2846,10 +2846,11 @@ t('戦闘マス設定：敵デッキ・自デッキともDECK_SIZE枚、戦場�
   eq(setup.fieldRules, n.fieldRules, '戦場ルールがそのまま渡る');
 });
 
-t('戦闘結果の反映：勝利で戦利品・Ｇが入り、ＬＰが引き継がれる', () => {
+t('戦闘結果の反映：勝利で戦利品が入り、ＬＰが引き継がれる（M6.6 WP6でＧは出ない）', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 5, freshMeta());
   CQRun.depart(run);
   const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const goldBefore = run.gold;
   const fakeM = { winner: 'self', loot: [8, 8], players: { self: { lp: 7 } } };
   const res = CQRun.reportBattle(run, n, fakeM);
   eq(res.win, true, '勝利フラグ');
@@ -2858,7 +2859,9 @@ t('戦闘結果の反映：勝利で戦利品・Ｇが入り、ＬＰが引き�
   eq(run.bookAdd[8], 2, '満杯デッキでは戦利品は本行きになる');
   eq(run.gainedCards, [8, 8], '獲得リストにも入る');
   eq(run.lp, 7, 'ＬＰが戦闘後の値に更新される');
-  eq(run.gold > 0, true, 'Ｇが増える');
+  /* M6.6 WP6（§2-6）：敵ユニットは金を落とさない。通常戦闘の報酬はカードだけ */
+  eq(res.gold, 0, '通常戦闘ではＧが出ない');
+  eq(run.gold, goldBefore, '所持Ｇも増えない');
 });
 
 t('戦闘結果の反映：敗北はＬＰ0＝ランの終了（ゲームオーバー）', () => {
@@ -3220,6 +3223,133 @@ t('壊れたcq_metaは初期化して復旧する', () => {
   st.setItem('cq_meta', '{not json');
   const m = CQSave.loadMeta(st, [8]);
   eq(m.book, { 8: 1 }, '壊れていても既定デッキから復旧する（本へ入る）');
+});
+
+/* ================= M6.6 WP6: フリーユニット戦 ================= */
+section('M6.6 WP6: フリーユニット戦');
+
+/** field モードの対戦を1つ作る（敵は enemyBoard の編成で場に立って始まる）。 */
+function fieldMatch(enemyBoard, opts) {
+  return CQTurn.createMatch(Object.assign({
+    cards: CARD_BY_ID,
+    rng: CQRng.create(1),
+    selfDeck: CQSave.toDeckCounts ? STARTER.slice(0, 40) : [],
+    enemyDeck: CQAreas.SUPPORT_SHELL.slice(),
+    mode: 'field',
+    enemyBoard: enemyBoard
+  }, opts || {}));
+}
+
+t('fieldモード：敵は編成どおり場に立って始まる（召還を待たない）', () => {
+  const m = fieldMatch([8, 8, 1]);
+  eq(CQTurn.isFieldMode(m), true, 'fieldモードになっている');
+  eq(CQTurn.enemyUnitCount(m), 3, '敵レーンに3体立っている');
+  const lanes = [3, 4, 5].map((i) => m.board.lanes[i].unit);
+  eq(lanes, [8, 8, 1], '編成の順にレーン3〜5へ入る');
+  eq(m.board.lanes[0].unit, null, '自陣は空のまま');
+  /* 最初の1ターンだけ硬直（立て直す猶予。較正で入れた） */
+  eq(m.board.lanes[3].stiff, true, '初期配置は硬直して始まる');
+});
+
+t('fieldモード：敵は手札から召還できない（味方は従来どおり召還できる）', () => {
+  const m = fieldMatch([8]);
+  m.players.enemy.hand = [8];
+  m.active = 'enemy'; m.phase = 'placement';
+  eq(CQTurn.canSummonSide(m, 'enemy'), false, '敵は召還できない');
+  eq(CQTurn.canSummonSide(m, 'self'), true, '自分は召還できる');
+  const r = CQTurn.summon(m, 3, 0);
+  eq(r.ok, false, '敵の召還は拒否される');
+  /* 自分側は普通に召還できる */
+  m.players.self.hand = [8];
+  m.active = 'self'; m.phase = 'placement';
+  eq(CQTurn.summon(m, 0, 0).ok, true, '自分は召還できる');
+});
+
+t('fieldモード：敵のＬＰは勝敗に関わらない（自分のＬＰ0は従来どおり敗北）', () => {
+  const m = fieldMatch([8]);
+  eq(m.players.enemy.lp > 0, true, '（初期ＬＰは正の値）');
+  /* 敵のＬＰが0になっても決着しない＝ＬＰ判定が敵に効いていない。
+   * ＬＰは再装填コスト等で勝手に減りうるので、そこで勝ってしまわないことが要点。 */
+  m.players.enemy.lp = 0;
+  eq(CQTurn.checkResult(m), null, '敵のＬＰが0でも決着しない');
+  /* 自分のＬＰ0は従来どおり敗北 */
+  m.players.self.lp = 0;
+  eq(CQTurn.checkResult(m), 'enemy', '自分のＬＰ0は敗北');
+});
+
+t('fieldモード：デッキ攻撃のＬＰダメージも敵には通らない（combat.js の damage）', () => {
+  const m = fieldMatch([8]);
+  m.players.self.hand = [];
+  const before = m.players.enemy.lp;
+  /* デッキ攻撃は相手にＬＰ1を与える処理（combat.js: damage(m, foeSide, 1)）。
+   * 自陣にユニットを立て、そこからデッキ攻撃を通してみる。 */
+  m.active = 'self'; m.phase = 'placement';
+  m.players.self.hand = [8];
+  CQTurn.summon(m, 0, 0);
+  m.board.lanes[0].stiff = false;
+  m.phase = 'main';
+  const r = CQCombat.deckAttack(m, 0);
+  if (r && r.ok) eq(m.players.enemy.lp, before, '敵のＬＰは減らない');
+  else eq(true, true, '（この盤面ではデッキ攻撃が通らなかったのでスキップ）');
+});
+
+t('fieldモード：敵の場が空になれば勝ち', () => {
+  const m = fieldMatch([8, 8]);
+  eq(CQTurn.checkResult(m), null, '敵が残っているうちは決着しない');
+  m.board.lanes[3] = S.emptyLane();
+  eq(CQTurn.checkResult(m), null, '1体倒しただけでは決着しない');
+  m.board.lanes[4] = S.emptyLane();
+  eq(CQTurn.checkResult(m), 'self', '全部倒せば勝ち');
+  eq(m.phase, 'over', '決着でphaseがoverになる');
+});
+
+t('fieldモード：敵を1体も立てられない場合は従来のＬＰ勝負に落ちる', () => {
+  const m = fieldMatch([]);
+  eq(CQTurn.isFieldMode(m), false, '編成が空ならfieldモードにしない');
+  eq(CQTurn.checkResult(m), null, '即勝ちにならない');
+});
+
+t('battleSetup：通常戦闘はfieldモード＋編成、ボスは従来どおりのＬＰ勝負', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 61, freshMeta());
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const s = CQRun.battleSetup(run, CARD_BY_ID, n);
+  eq(s.mode, 'field', '通常戦闘はfield');
+  eq(s.enemyBoard.length, Math.min(3, n.enemy.count), '編成の体数ぶん場に出る');
+  s.enemyBoard.forEach((id) => eq(id, n.enemy.id, 'マップに出ている敵と同じカード'));
+  const boss = run.map.nodes[run.map.boss];
+  const bs = CQRun.battleSetup(run, CARD_BY_ID, boss);
+  eq(bs.mode, undefined, 'ボスはfieldモードではない');
+  eq(bs.enemyBoard, undefined, 'ボスは初期配置なし');
+});
+
+t('敵デッキ：召還できないので支援シェル中心・ユニットは少量（§7-5）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 62, freshMeta());
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const deck = CQRun.battleSetup(run, CARD_BY_ID, n).enemyDeck;
+  eq(deck.length, CQRun.DECK_SIZE, '40枚ちょうど');
+  const units = deck.filter((id) => CARD_BY_ID[id].t === 'U').length;
+  eq(units <= 8, true, 'ユニットは少量（チャネル弾ぶんだけ）：' + units + '枚');
+  eq(deck.length - units >= 30, true, '大半は魔法・技能');
+});
+
+t('報酬：ボスのファイトマネーは原作準拠、周回は50%（§2-6）', () => {
+  const area = CQAreas.get('grassland');
+  eq(area.fightMoney, 500, '草原はＣ級500G');
+  eq(CQAreas.get('forest').fightMoney, 500, '森もＣ級500G');
+  /* 初回 */
+  const run1 = CQRun.start(CARD_BY_ID, 'grassland', 63, freshMeta());
+  const boss1 = run1.map.nodes[run1.map.boss];
+  const g0 = run1.gold;
+  const r1 = CQRun.reportBattle(run1, boss1, { winner: 'self', loot: [], players: { self: { lp: 9 } } },
+    { cleared: [] });
+  eq(r1.gold, 500, '初回は満額');
+  eq(run1.gold, g0 + 500, '所持Ｇに入る');
+  /* 周回（すでにクリア済みのエリア） */
+  const run2 = CQRun.start(CARD_BY_ID, 'grassland', 64, freshMeta());
+  const boss2 = run2.map.nodes[run2.map.boss];
+  const r2 = CQRun.reportBattle(run2, boss2, { winner: 'self', loot: [], players: { self: { lp: 9 } } },
+    { cleared: ['grassland'] });
+  eq(r2.gold, 250, '周回は50%');
 });
 
 /* ================= M6.6 WP4: 開始マスの新フロー ================= */

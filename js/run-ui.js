@@ -1066,7 +1066,7 @@ function showConfirm(message, onYes, yesLabel) {
 
 function onRunBattleOver(M) {
   const run = RUI.run, n = run.map.nodes[RUI.nodeId];
-  CQRun.reportBattle(run, n, M);
+  CQRun.reportBattle(run, n, M, RUI.meta);
   if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
   if (run.outcome) { CQRun.settle(run, RUI.meta); CQSave.saveMeta(RUN_STORAGE, RUI.meta); CQSave.clearRun(RUN_STORAGE); }
   else runSave();

@@ -127,6 +127,12 @@
       turn: 0,                 // 原作 V335 相当。自他どちらのターンでも +1 される
       phase: 'draw',           // 'draw' | 'discard' | 'placement' | 'main' | 'battle' | 'over'
       winner: null,
+      /* M6.6 WP6 フリーユニット戦（ゲーム仕様書§4.2／実装計画追補M6.6 §2-6）。
+       * mode:'field' … 敵はマップの編成どおりレーンに配置済みで開始し、手札から召還できない。
+       *                敵にＬＰの概念が無く（ＬＰダメージは無効）、**敵の場が空になれば勝ち**。
+       *                マスター戦（ボス）は従来どおりのＬＰ勝負なので mode は付けない。 */
+      mode: opts.mode === 'field' ? 'field' : null,
+      fieldReady: false,       // 敵の初期配置が済んだか（済むまで「敵0体＝勝ち」を判定しない）
       opponentId: opts.opponentId === undefined ? 0 : opts.opponentId,  // 原作 V340。101以上＝フリーユニット＝戦利品あり
       combat: null,            // 戦闘中の状態（js/engine/combat.js が持つ）
       reversing: null,         // リバース行動を継続中のレーン番号（原作 SW583。reverseAction の opts.cont）
@@ -140,7 +146,48 @@
     };
     // M6 戦場ルール：バトル開始時に確定する（途中で増減しない＝「戦闘前に必ず見える」の前提）
     Field.init(m, opts.fieldRules);
+    /* M6.6 WP6：フリーユニット戦は敵ユニットを最初から敵レーンに立てて始める（表向き・チャネルなし）。
+     * laneLock で塞がれているレーンは飛ばす（戦場ルールと同居できるように）。 */
+    if (m.mode === 'field') setupEnemyBoard(m, opts.enemyBoard);
     return m;
+  }
+
+  /** フリーユニット戦の初期配置。敵レーン（3〜5）へ順に立てる（最大3体）。
+   * 硬直させない＝置かれた側は最初のターンから動ける（マップで見えている編成がそのまま出る）。 */
+  function setupEnemyBoard(m, board) {
+    const ids = (board || []).slice(0, S.lanesOf('enemy').length);
+    const lanes = S.lanesOf('enemy').filter(function (i) { return Field.laneUsable(m.board, i); });
+    ids.forEach(function (id, k) {
+      const lane = lanes[k];
+      if (lane === undefined) return;             /* laneLock でレーンが足りない日は入る分だけ */
+      const card = cardOf(m, id);
+      if (!card || card.t !== 'U') return;
+      m.board.lanes[lane] = S.makeLane(id, [], m.cards);
+      /* 最初の1ターンだけ硬直させる（マップ仕様書§4.1の「控えて立っている」）。
+       * 旧仕様では敵は1体ずつ召還してくるので盤面が育つのに数ターン掛かっていた。
+       * WP6で最大3体がいきなり並ぶようになった分、こちらに立て直す猶予が無いと
+       * 一方的になる——simulate-runの較正でも、これが有無で通常戦闘の勝率が大きく動いた。
+       * 硬直は敵の最初のターン終わりに解ける（endTurn が自陣の硬直を落とす）。 */
+      m.board.lanes[lane].stiff = true;
+    });
+    /* 盤面が組み上がってから勝敗判定を有効にする（組む前は敵0体なので即勝ちになってしまう）。
+     * 敵を1体も立てられなかった場合（編成が空・全レーンがlaneLock）は、この対戦は
+     * 勝利条件を満たしようがないので field 扱いをやめて従来のＬＰ勝負に落とす。 */
+    if (enemyUnitCount(m) === 0) { m.mode = null; return; }
+    m.fieldReady = true;
+    recalc(m);
+  }
+
+  /** いまフリーユニット戦か。 */
+  function isFieldMode(m) { return m.mode === 'field'; }
+
+  /** その陣営が手札から召還できるか。フリーユニット戦の敵は封じられる（§2-6）。
+   * ＡＩ（js/engine/ai.js・search.js）も候補を作る前にこれを見て、無駄手を消す。 */
+  function canSummonSide(m, side) { return !(m.mode === 'field' && side === 'enemy'); }
+
+  /** 敵の場に残っているユニット数（フリーユニット戦の勝利条件）。 */
+  function enemyUnitCount(m) {
+    return S.lanesOf('enemy').filter(function (i) { return m.board.lanes[i].unit != null; }).length;
   }
 
   function other(side) { return side === 'self' ? 'enemy' : 'self'; }
@@ -173,9 +220,17 @@
   /* ---- 勝敗判定 ------------------------------------------------------------ */
 
   /** null（継続）または勝者側 'self'|'enemy' を返す。
-   * M5.5：山札切れは敗北条件ではなくなった（再装填ルール）。敗北はＬＰ0のみ */
+   * M5.5：山札切れは敗北条件ではなくなった（再装填ルール）。敗北はＬＰ0のみ。
+   * M6.6 WP6：フリーユニット戦では**敵の場が空になれば勝ち**をＬＰ判定より先に見る。
+   * 敵にＬＰの概念が無いので、敵のＬＰが0でも（再装填のコスト等で下がっても）決着にしない。 */
   function checkResult(m) {
     if (m.winner) return m.winner;
+    if (m.mode === 'field') {
+      /* 初期配置の前（createMatch の途中）は「まだ敵が0体」なので、盤面が組まれるまでは判定しない */
+      if (m.fieldReady && enemyUnitCount(m) === 0) return finish(m, 'self');
+      if (m.players.self.lp <= 0) return finish(m, 'enemy');
+      return null;
+    }
     if (m.players.self.lp <= 0) return finish(m, 'enemy');
     if (m.players.enemy.lp <= 0) return finish(m, 'self');
     return null;
@@ -236,6 +291,8 @@
     const side = m.active, p = activePlayer(m);
     const own = S.lanesOf(side);
     if (own.indexOf(laneIndex) < 0) return { ok: false, reason: '自陣のレーンではありません' };
+    // M6.6 WP6：フリーユニット戦の敵は手札から召還できない（§2-6）
+    if (!canSummonSide(m, side)) return { ok: false, reason: 'この戦いでは召還できません' };
     if (m.board.lanes[laneIndex].unit != null) return { ok: false, reason: 'そのレーンは空いていません' };
     // M6 戦場ルール laneLock：ふさがれたレーンには何も出せない
     if (!Field.laneUsable(m.board, laneIndex)) return { ok: false, reason: '戦場ルール：その列は使えません' };
@@ -606,7 +663,9 @@
     canDiscardPest, discardPest,
     canSpecialAction, specialAction,
     change, endTurn,
-    checkResult
+    checkResult,
+    /* M6.6 WP6 フリーユニット戦 */
+    isFieldMode, canSummonSide, enemyUnitCount
   };
   global.CQTurn = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

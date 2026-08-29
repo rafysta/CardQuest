@@ -60,6 +60,15 @@ function autoCarryOut(meta) {
   });
 }
 
+/* 戦闘の内訳（M6.6 WP6の較正用）。field＝通常戦闘（フリーユニット戦）／boss＝マスター戦 */
+const BSTAT = {
+  field: { n: 0, win: 0, loot: 0, turns: 0 },
+  boss: { n: 0, win: 0, loot: 0, turns: 0 }
+};
+/* 1ランあたりの経済（マップ仕様書§7・追補§7-1の確認用）。
+ * WP6で通常戦闘のＧが無くなったので、宝箱が主収入になっているかを見る。 */
+const ESTAT = { runs: 0, goldEnd: 0, cards: 0 };
+
 function mockStorage() {
   const m = {};
   return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } };
@@ -128,7 +137,13 @@ function playRun(areaId, seed, meta, rng) {
         const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
         const M = autoBattle(setup, 80);
         battles++; totalTurns += M.turn;
-        CQRun.reportBattle(run, n, M);
+        /* M6.6 WP6（§7-5）：フリーユニット戦の較正用の計測。通常戦闘とボス戦を分けて
+         * 勝率と平均獲得枚数を出す（§7-1の経済確認にも使う）。 */
+        const bucket = (n.type === 'boss') ? BSTAT.boss : BSTAT.field;
+        bucket.n++;
+        if (M.winner === 'self') { bucket.win++; bucket.loot += (M.loot || []).length; }
+        bucket.turns += M.turn;
+        CQRun.reportBattle(run, n, M, meta);
         if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
       } else if (n.type === 'chest') {
         CQRun.openChest(run, n);
@@ -159,6 +174,7 @@ function playRun(areaId, seed, meta, rng) {
     CQRun.advance(run, next.id);
   }
   const knownBefore = (meta.known || []).length;
+  ESTAT.runs++; ESTAT.goldEnd += run.gold; ESTAT.cards += (run.gainedCards || []).length;
   CQRun.settle(run, meta);
   checkRunInvariants(run, meta);
   /* 清算後の所持デッキ(meta.deck)は run.deck の複製（レンタル配列は混ぜない）。
@@ -206,6 +222,17 @@ for (let seed = 1; seed <= trials; seed++) {
 console.log(`${trials} キャリア（草原→森）：勝ち ${stat.win} / 負け ${stat.lose} / リタイヤ ${stat.retire}`
   + `（うち森に到達 ${stat.forestRuns} 回）`);
 console.log(`戦闘 ${stat.battles} 回・平均 ${(stat.turns / Math.max(1, stat.battles)).toFixed(1)} ターン/戦`);
+/* M6.6 WP6（§7-5）の較正表。通常戦闘＝フリーユニット戦（場を空にすれば勝ち）、
+ * ボス＝従来どおりのＬＰ勝負。獲得枚数は勝った戦闘あたりの平均。 */
+const pct = (a, b) => (b ? (a / b * 100).toFixed(1) : '—') + '%';
+['field', 'boss'].forEach((k) => {
+  const s = BSTAT[k];
+  console.log(`  ${k === 'field' ? '通常戦闘（フリーユニット戦）' : 'ボス（マスター戦）'}：`
+    + `${s.n} 回 / 勝率 ${pct(s.win, s.n)} / 平均 ${(s.turns / Math.max(1, s.n)).toFixed(1)} ターン`
+    + ` / 勝利1回あたり戦利品 ${(s.loot / Math.max(1, s.win)).toFixed(2)} 枚`);
+});
+console.log(`  1ランあたり：獲得カード ${(ESTAT.cards / Math.max(1, ESTAT.runs)).toFixed(2)} 枚`
+  + ` / 清算前の所持Ｇ ${(ESTAT.goldEnd / Math.max(1, ESTAT.runs)).toFixed(0)}`);
 if (stat.errors.length) {
   console.log(`\n例外 ${stat.errors.length} 件:`);
   stat.errors.slice(0, 10).forEach((e) => console.log('  ' + e));
