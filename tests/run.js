@@ -1453,12 +1453,32 @@ t('121 招来：潜行しているユニット1つを自分の場に召還する
   const summoned = m.board.lanes[1].unit === 1 || m.board.lanes[2].unit === 1;
   eq(summoned, true, '潜行ユニットが空きレーンに召還される');
 });
-t('122 予見：山札を確認する（このエンジンでは山札は無順序のため効果はログのみ）', () => {
-  const m = mkBattleBoard();
+t('122 予見：山札から5枚見て1枚もらう（M6.7 判断4で効果を変更）', () => {
+  /* 原作は「5枚を任意の順で山札の先頭に戻す」だが、このエンジンの山札は無順序なので
+   * 実装できず、v0.16.22までは no-op（説明文だけが嘘をついている状態）だった。 */
+  const m = newMatch(320, { selfDeck: mkDeck(30, [8]) });
+  m.phase = 'main';
   m.board.lanes[0] = lane(8, [down(122)]);
-  const before = JSON.stringify(m.players.self.deck);
+  const deckBefore = m.players.self.deckCount;
+  const handBefore = m.players.self.hand.length;
   CQTurn.reverseAction(m, 0, [1]);
-  eq(JSON.stringify(m.players.self.deck), before, '山札の中身は変化しない');
+  eq(m.players.self.hand.length, handBefore + 1, '手札が1枚増える');
+  eq(m.players.self.deckCount, deckBefore - 1, '山札は差し引き1枚だけ減る（残り4枚は戻す）');
+  eq(m.pendingChoice, null, 'interactiveでなければその場で自動解決される（ＡＩ・シミュレータ用）');
+});
+t('122 予見：interactive なら5枚を提示して選択待ちになる', () => {
+  const m = newMatch(321, { selfDeck: mkDeck(30, [8, 41, 70, 101, 153]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(122)]);
+  const handBefore = m.players.self.hand.length;
+  CQTurn.reverseAction(m, 0, [1], { interactive: true });
+  eq(m.pendingChoice.kind, 'foresee', '選択待ちになる');
+  eq(m.pendingChoice.options.length, 5, '5枚が提示される');
+  eq(m.players.self.hand.length, handBefore, 'まだ手札は増えていない');
+  const want = m.pendingChoice.options[2];
+  CQMagic.resolvePending(m, { pick: 2 });
+  eq(m.players.self.hand[m.players.self.hand.length - 1], want, '選んだ3枚目が手に入る');
+  eq(m.pendingChoice, null, '解決すると選択待ちが解ける');
 });
 t('123 発症：配置されたレベルと同数のＬＰを失う', () => {
   const m = mkBattleBoard();
@@ -1572,13 +1592,48 @@ t('135 雷撃：防御力550以下のユニット1つを無条件に破壊する
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.board.lanes[0].unit, null, '対象条件を満たすユニットが破壊される');
 });
-t('137 潜行爆弾：（簡略実装）敵の山札を1枚破壊する', () => {
-  const m = newMatch(305);
-  m.phase = 'main';
+t('137 潜行爆弾：相手のユニットに爆弾を仕掛ける（M6.7 判断14で本人案に変更）', () => {
+  const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(137)]);
-  const before = m.players.enemy.deckCount;
-  CQTurn.reverseAction(m, 0, [1]);
-  eq(m.players.enemy.deckCount, before - 1, '敵の山札が1枚減る');
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[0].channels.length, 0, '自分は元の位置から消える');
+  eq(m.board.lanes[3].channels.length, 1, '相手のユニットにチャネルされる');
+  eq(m.board.lanes[3].channels[0].card, 137, '爆弾の正体は137のまま');
+  eq(m.board.lanes[3].channels[0].up, false, '裏向きで仕掛けられる');
+  eq(m.board.lanes[3].channels[0].armed, true, '仕掛け済みの印が付く');
+});
+t('137 潜行爆弾：仕掛けた爆弾が表になると、防御力600以下のユニットを破壊する', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[3] = lane(8, []);                       // 8 ピッグマン D450
+  m.board.lanes[3].channels.push({ card: 137, up: false, mine: true, revealed: true, armed: true });
+  m.board.lanes[3].count = 1;
+  m.active = 'enemy';                                    // 仕掛けられた側が自分で開く
+  CQTurn.reverseAction(m, 3, [1]);
+  eq(m.board.lanes[3].unit, null, '防御力450なので爆発で破壊される');
+});
+t('137 潜行爆弾：防御力が600を超えるユニットには効かず、爆弾だけが壊れる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[3] = lane(8, []);
+  /* 魔力の盾(153)で防御力を+200して650にしてから爆発させる */
+  m.board.lanes[3].channels.push({ card: 153, up: true, mine: false, revealed: true });
+  m.board.lanes[3].channels.push({ card: 137, up: false, mine: true, revealed: true, armed: true });
+  m.board.lanes[3].count = 2;
+  m.active = 'enemy';
+  CQTurn.reverseAction(m, 3, [2]);
+  eq(m.board.lanes[3].unit, 8, 'ユニットは生き残る');
+  eq(m.board.lanes[3].channels.some((c) => c.card === 137), false, '爆弾だけが壊れる');
+});
+t('137 潜行爆弾：強制開放で開かせて爆発させられる（108とのコンボ）', () => {
+  /* 判断14で本人案を採ったいちばんの理由がこれ。相手のユニットに仕掛けておき、
+   * 強制開放で自分から開かせて爆発させる、という2枚の噛み合わせが成立する。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, []);
+  m.board.lanes[3].channels.push({ card: 137, up: false, mine: true, revealed: true, armed: true });
+  m.board.lanes[3].count = 1;
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].unit, null, '強制開放で開かれた爆弾が爆発した');
 });
 t('138 潜入：レベル3で他ユニットにチャンネルとして潜行する', () => {
   const m = mkBattleBoard();
@@ -1595,13 +1650,42 @@ t('139 爆雷：敵マスターのＬＰを3点減らす（戦闘中×）', () =
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.players.enemy.lp, lpBefore - 3, '敵のＬＰが3点減る');
 });
-t('140 時の渦：レベル4で手番側がもう1枚ドローする（簡略実装／戦闘中×強制中×）', () => {
+t('140 時の渦：詠唱Ｌｖ4で自分のターンをやり直す（M6.7 判断5で作り直し）', () => {
   const m = newMatch(306);
   m.phase = 'main';
   m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(140)]);
-  const handBefore = m.players.self.hand.length;
+  m.board.lanes[1] = lane(8, []);
+  m.board.lanes[1].stiff = true;                        // 行動済みのユニットが居る
+  m.players.self.actedThisTurn = true;
   CQTurn.reverseAction(m, 0, [4]);
-  eq(m.players.self.hand.length, handBefore + 1, '手札が1枚増える');
+  eq(m.phase, 'placement', '配置ステップからやり直しになる');
+  eq(m.board.lanes[1].stiff, false, '自陣の硬直が解ける＝もう一度動ける');
+  eq(m.board.lanes[0].stiff, false, 'リバースしたユニット自身の硬直も解ける');
+  eq(m.players.self.actedThisTurn, false, '行動済みの印も消える');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 140), false, '時の渦自身は壊れる');
+});
+t('140 時の渦：それより上の階層は開かれない（以降のカード効果を停止する）', () => {
+  const m = newMatch(307);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(140), down(152)]);
+  CQTurn.reverseAction(m, 0, [4, 5]);
+  /* 140が4階層目で発動して自分が消えるので、元の5階層目（152）は4番目に繰り下がる。
+   * 開かれていないこと＝停止したことを確認する。 */
+  eq(m.board.lanes[0].channels.filter((c) => c.up).length, 0, '上の階層は開かれない');
+});
+t('140 時の渦：強制リバース連鎖の最中は、連鎖を止めるだけでターンはやり直さない', () => {
+  /* 2026-08-30 本人確定。連鎖を仕掛けたのは相手・カードの持ち主はこちら、という状況で
+   * 「誰のターンをやり直すのか」が決まらないため、止めるところまでにしてある。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(13, [down(151), down(151), down(151), down(140), down(152)]);
+  m.board.lanes[3].channels.forEach((c) => { c.mine = false; });
+  const phaseBefore = m.phase;
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.lastForcedChain.aborted != null, true, '連鎖が中断される');
+  eq(m.lastForcedChain.steps.length, 4, '4枚目（時の渦）までで止まる');
+  eq(m.board.lanes[3].channels.some((c) => c.up && c.card === 152), false, '5枚目は開かれない');
+  eq(m.phase, phaseBefore, 'ターンのやり直しは起きない');
 });
 
 section('M4 v0.13: 魔法141〜148');
@@ -1657,14 +1741,31 @@ t('144 還元：全ＣＨを破壊しその分だけ手札を得る', () => {
   eq(m.board.lanes[0].channels.length, 0, 'ＣＨが全て破壊される（自分自身も含む）');
   eq(m.players.self.hand.length, handBefore + 2, '破壊した枚数ぶん手札を得る');
 });
-t('146 口寄せ：レベル3で山札から1枚を直接手札に得る（簡略実装）', () => {
-  const m = newMatch(308, { selfDeck: mkDeck(30, [180]) });
+t('146 口寄せ：詠唱Ｌｖ3で山札から1枚めくる（M6.7 判断5：原作仕様に作り直し）', () => {
+  const m = newMatch(308, { selfDeck: mkDeck(30, [8]) });
   m.phase = 'main';
   m.board.lanes[0] = lane(13, [down(151), down(151), down(146)]);
   const before = m.players.self.deckCount;
+  const handBefore = m.players.self.hand.length;
   CQTurn.reverseAction(m, 0, [3]);
   eq(m.players.self.deckCount, before - 1, '山札が1枚減る');
-  eq(m.players.self.hand.indexOf(180) >= 0, true, '手札に加わる');
+  eq(m.players.self.hand.length, handBefore + 1, '採用して手札に加わる');
+  eq(m.pendingChoice, null, 'interactiveでなければ自動解決される');
+});
+t('146 口寄せ：interactive なら「採用する／捨ててもう1枚」を繰り返せる', () => {
+  const m = newMatch(309, { selfDeck: mkDeck(30, [8]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(13, [down(151), down(151), down(146)]);
+  const deckBefore = m.players.self.deckCount;
+  CQTurn.reverseAction(m, 0, [3], { interactive: true });
+  eq(m.pendingChoice.kind, 'summon', '選択待ちになる');
+  eq(m.pendingChoice.options.length, 1, '1枚だけ見せる');
+  CQMagic.resolvePending(m, { keep: false });          // 捨ててもう1枚
+  eq(m.pendingChoice.kind, 'summon', 'まだ選択待ちのまま');
+  eq(m.pendingChoice.tries, 2, '2回目');
+  eq(m.players.self.deckCount, deckBefore - 2, '捨てた札は山札に戻らない＝掘るほど減る');
+  CQMagic.resolvePending(m, { keep: true });           // 今度は採用
+  eq(m.pendingChoice, null, '採用すると終わる');
 });
 t('147 治癒：手札を全て捨てその枚数と同値のＬＰを回復する（戦闘中×）', () => {
   const m = mkBattleBoard();
@@ -1782,13 +1883,50 @@ t('24 シニスターセラフ：開：ＣＨ×１破壊（自分自身は対象
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.board.lanes[1].channels.length, 0, '他ユニットのＣＨが破壊される');
 });
-t('25 スケープゴート：開：摩り替り（簡略実装：手札に分身を得る）', () => {
+t('25 スケープゴート：摩り替り＝チャネル先のユニットと位置を入れ替える（M6.7 判断6）', () => {
+  /* 原作解析 07_unit_abilities.md §ID25 で仕様が判明した。名前どおりの「身代わり」で、
+   * v0.16.22までの「手札に分身を得る」は推測が外れていた。 */
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(25)]);
-  const before = m.players.self.hand.length;
   CQTurn.reverseAction(m, 0, [1]);
-  eq(m.players.self.hand.length, before + 1, '手札が1枚増える');
-  eq(m.players.self.hand[m.players.self.hand.length - 1], 25, '増えたのは25自身の分身');
+  eq(m.board.lanes[0].unit, 25, 'スケープゴートがユニット本体になる');
+  eq(m.board.lanes[0].channels[0].card, 8, '元のユニットがそのＣＨ階層へ落ちる');
+  eq(m.board.lanes[0].channels[0].up, false, '落ちた元ユニットは裏向き');
+});
+t('25 スケープゴート：自分で置いたチャンネルでなければ入れ替わらない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(25)]);
+  m.board.lanes[0].channels[0].mine = false;           // 相手が押し付けた身代わり
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].unit, 8, 'ユニットは入れ替わらない');
+});
+t('25 スケープゴート：スケープゴートに重ねても無限に入れ替わらない（simulate.js seed 1855 の回帰）', () => {
+  /* 入れ替えても盤面が変わらないのにチャンネルが裏へ戻るため、
+   * オープンフェイズが永遠に終わらなくなっていた。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(25, [down(25)]);
+  CQTurn.reverseAction(m, 0, [1]);   /* 無限ループしないこと自体がこのテストの主眼 */
+  eq(m.board.lanes[0].unit, 25, 'ユニットはスケープゴートのまま');
+  /* 入れ替える意味が無いので摩り替りは起きず、ユニットカードとして普通に
+   * リバース召還される（＝この階層からは居なくなる）。 */
+  eq(m.board.lanes[0].channels.length, 0, 'その階層のカードはリバース召還で場へ出る');
+});
+t('25 スケープゴート：入れ替えても階層は無くならない（カーソルをずらさない）', () => {
+  /* consumed を返すと、オープンフェイズ／リバースのカーソルが1つずれて
+   * 同じ階層を読み直してしまう。この階層は「中身が変わった」だけで無くなっていない。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(25), down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, 2, '階層の数は変わらない');
+  eq(m.board.lanes[0].channels[1].card, 151, '上の階層はそのまま');
+});
+t('25 スケープゴート：原作の「2体になる」バグは再現しない（M6.7 §0-1の方針）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(25)]);
+  m.board.lanes[1] = S.emptyLane();                    // 空きレーンがある状態
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].unit, null, '空きレーンにスケープゴートは増えない');
+  eq(m.board.lanes[0].channels[0].card, 8, '元ユニットも消えない');
 });
 t('27 メガゾエア：開：クローズ×１', () => {
   const m = mkBattleBoard();

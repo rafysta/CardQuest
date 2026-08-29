@@ -251,7 +251,10 @@
       // （通常ユニット・カース）は onUnitOpen() が即 {consumed:false} を返すだけで実質ノーオペ
       if (m.hooks && typeof m.hooks.onUnitOpen === 'function') {
         const r = m.hooks.onUnitOpen(m, laneIndex, layer, id) || {};
-        if (r.consumed) return { consumed: true, result: 'unitAbility' };
+        /* M6.7 WP3：consumed（階層が無くなった）と handled（効果は済んだ）を分けた。
+         * 摩り替り(25)は階層を残したまま効果だけ済ませるので handled のみ立つ。
+         * ここで返さないと、開いたユニットカードがそのままリバース召還されてしまう。 */
+        if (r.consumed || r.handled) return { consumed: !!r.consumed, result: 'unitAbility' };
       }
       return reverseSummon(m, laneIndex, layer, ch);
     }
@@ -262,7 +265,10 @@
     if (m.hooks && typeof m.hooks.onMagicOpen === 'function') {
       const nullified = m.board.lanes[laneIndex].acc.nullify >= 1;
       const r = m.hooks.onMagicOpen(m, laneIndex, layer, id,
-        { nullified: nullified, choice: opts && opts.choice });
+        { nullified: nullified, choice: opts && opts.choice,
+          /* M6.7 WP3：効果の途中で選ばせるカード（122予見・146口寄せ）向け。
+           * ＵＩだけが true を渡し、ＡＩ・シミュレータは渡さない＝その場で自動解決される。 */
+          interactive: opts && opts.interactive });
       consumed = !!(r && r.consumed);
     }
     return { consumed: consumed, result: 'magic' };

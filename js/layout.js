@@ -202,7 +202,8 @@ function showFirstTurnRoulette(winner) {
   setTimeout(function () { settle(false); }, FTR_SPIN_MS + 120);
 }
 const UI = {
-  mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-target */
+  mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over
+                     | pick-target（開く前に対象を選ぶ）| draw-pick（引いた札から選ぶ・M6.7 WP3） */
   info: null,     /* 表示中のカード */
   lane: null,     /* 選択中のレーン（アタック元・リバース対象） */
   layers: [],     /* リバースで選んだ階層 */
@@ -309,7 +310,8 @@ const PICK_MSG = {
   108: '強制開放：ＣＨを開かせるユニットを選んでください',
   109: '強制転回：ＣＨを裏返すユニットを選んでください',
   110: '閉門：ＣＨを閉じるユニットを選んでください',
-  113: '透視：中身を見る相手の伏せ札を2枚選んでください'
+  113: '透視：中身を見る相手の伏せ札を2枚選んでください',
+  137: '潜行爆弾：爆弾を仕掛ける相手のユニットを選んでください'
 };
 
 /* 開発用デッキ（screen-deck で組むもの）。**アンロックには一切関係なく全169種から組める**
@@ -1090,6 +1092,7 @@ function renderPanel() {
     case 'unit':      return panelUnit();
     case 'attack':    return panelAttack();
     case 'pick-target': return panelPickTarget();
+    case 'draw-pick': return panelDrawPick();
     case 'confirm':   return;                       /* 確認画面は出したまま */
     case 'info':      return panelInfo();
     case 'field':     return panelField();
@@ -1234,6 +1237,32 @@ function panelAttack() {
 }
 
 /** 憑依解除(101)：破壊する対象を選んでいる最中のパネル（2026-08-24 本人の指定） */
+/** 引いた札から選ぶ画面（122予見・146口寄せ。M6.7 WP3）。
+ * 予見 … 5枚を並べ、押した1枚をもらう。
+ * 口寄せ … 1枚を見せ、「もらう」か「捨ててもう1枚」を選ぶ（捨てた札は山札に戻らない）。 */
+function panelDrawPick() {
+  const pc = M.pendingChoice;
+  if (!pc) return paint('', '', true);
+  const foresee = pc.kind === 'foresee';
+  const cards = pc.options.map((id, i) => {
+    const c = CARD_BY_ID[id];
+    return `<div class="dp-card ${c.t}" data-act="draw-pick" data-i="${i}">
+        <div class="dp-art">${artInner(c, 3)}</div>
+        <div class="dp-nm">${c.n}</div>
+        <div class="dp-ef">${c.e || TYPE_NAME[c.t]}</div>
+      </div>`;
+  }).join('');
+  const q = foresee ? '予見：もらう１枚を選んでください'
+    : '口寄せ：このカードをもらいますか？';
+  const how = foresee
+    ? '選ばなかったカードは山札へ戻ります。'
+    : '「捨ててもう１枚」を選ぶと、この札は山札に戻らずもう１枚めくります（' + (pc.tries || 1) + '枚目）。';
+  const foot = foresee ? ''
+    : `<button class="btn ok" data-act="draw-keep">これをもらう</button>
+       <button class="btn" data-act="draw-skip">捨ててもう１枚</button>`;
+  return paint(askHTML(q, how, 'warn') + `<div class="dp-row">${cards}</div>`, foot, !foresee);
+}
+
 function panelPickTarget() {
   const p = UI.pick;
   if (!p) return paint('', '', true);
@@ -1372,11 +1401,13 @@ function doAttack(atkLane, defLane) {
 function doFlip(laneIdx, layer, choice) {
   markLog(); markFx();
   M.lastForcedChain = null;
-  const r = CQTurn.reverseAction(M, laneIdx, [layer], choice ? { cont: true, choice } : { cont: true });
+  const r = CQTurn.reverseAction(M, laneIdx, [layer],
+    choice ? { cont: true, choice, interactive: true } : { cont: true, interactive: true });
   UI.report = null;
   if (UI.mode === 'info') UI.mode = 'idle';   /* 内容を見たあとに開いたら、結果の表示に戻す */
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
   armChainFx();
+  if (enterDrawPickIfPending()) return;       /* 予見・口寄せ：引いた札から選ばせる */
   step();
 }
 
@@ -1389,6 +1420,17 @@ function doFlip(laneIdx, layer, choice) {
  * ここは見た目の担当。**盤面の状態を触らないこと。**
  * 中断された場合は、実際にめくれた枚数ぶんしか steps に入っていないので、
  * 「途中で止まった」ことがそのまま演出に出る。 */
+/** 122予見・146口寄せのように**引いた結果を見てから決める**カードは、
+ * エンジンが `m.pendingChoice` を残して抜けてくる（`interactive: true` を渡したときだけ）。
+ * それを拾って選択画面に入る。選び終えたら `CQMagic.resolvePending()` を呼ぶ。
+ * ——ＡＩ・シミュレータは `interactive` を渡さないのでここには来ない（自動解決される）。 */
+function enterDrawPickIfPending() {
+  if (!M || !M.pendingChoice) return false;
+  UI.mode = 'draw-pick';
+  renderAll();
+  return true;
+}
+
 function armChainFx() {
   const fc = M.lastForcedChain;
   if (!fc || !fc.steps || !fc.steps.length) { UI.chainFx = null; return; }
@@ -1417,6 +1459,19 @@ function tryStartDestroyPick(laneIdx, layer, ch, resume) {
   if (id === 108 || id === 109 || id === 110) {
     return startPick({ card: id, kind: 'lane',
       targets: forcedLaneCandidates(laneIdx, id === 110), resume: resume });
+  }
+  /* M6.7 WP3：潜行爆弾は「爆弾を仕掛ける相手ユニット」を選ばせる。
+   * エンジン側 h137 と同じ条件（相手陣・自分の居るレーン以外・ＣＨに空きがある）。 */
+  if (id === 137) {
+    const foe = humanSide() === 'self' ? 'enemy' : 'self';
+    const targets = [];
+    M.board.lanes.forEach((ln, i) => {
+      if (ln.unit == null || i === laneIdx) return;
+      if (CQState.sideOf(i) !== foe) return;
+      if (ln.count >= ln.cap) return;
+      targets.push(i);
+    });
+    return startPick({ card: 137, kind: 'lane', targets: targets, resume: resume });
   }
   /* M6.7 WP1：透視は相手の伏せ札を2枚選ばせる（複数選択の初出）。 */
   if (id === 113) {
@@ -1502,9 +1557,26 @@ function doPending() {
   step();
 }
 
+/** 引いた札から選ぶ（122予見・146口寄せ）の確定。M6.7 WP3。
+ * 口寄せで「捨ててもう1枚」を選ぶと、エンジンがもう1枚めくって選択待ちのまま返してくる
+ * （pending が残る）。その場合は画面を描き直して、同じ画面で選び続ける。 */
+function resolveDrawPick(action) {
+  markLog(); markFx();
+  const r = CQMagic.resolvePending(M, action);
+  if (!r || !r.ok) { flash((r && r.reason) || 'その操作はできません'); return renderAll(); }
+  if (M.pendingChoice) return renderAll();          /* まだ選択が続く（口寄せの引き直し） */
+  UI.mode = 'idle';
+  step();
+}
+
 function panelAct(act, data) {
   if (busy) return;                                  /* 演出中は操作を受け付けない */
   switch (act) {
+    /* M6.7 WP3：引いた札から選ぶ。予見はカードそのもの、口寄せは2つのボタン。
+     * どれも情報パネルの中にあるので、盤面のクリック経路ではなくここへ来る。 */
+    case 'draw-pick': return resolveDrawPick({ pick: +data.i });
+    case 'draw-keep': return resolveDrawPick({ keep: true });
+    case 'draw-skip': return resolveDrawPick({ keep: false });
     case 'ok': return doPending();
     case 'cancel':
       UI.pending = null; UI.mode = 'idle'; UI.lane = null; UI.layers = [];
@@ -1653,6 +1725,12 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
 
   /* 憑依解除(101)：破壊する対象を選んでいる最中。光っているＣＨを押したら確定する
      （2026-08-24 本人の指定）。それ以外を押しても何も起きない（選ぶまで先に進めない） */
+  /* 引いた札から選ぶ最中（122予見・146口寄せ）は、選ぶまで盤面の操作を受け付けない。
+   * 選ぶ操作そのものは情報パネルの中で行う（panelAct の draw-pick/keep/skip）。 */
+  if (UI.mode === 'draw-pick') {
+    flash('右のパネルでカードを選んでください');
+    return;
+  }
   if (UI.mode === 'pick-target' && UI.pick) {
     const p = UI.pick;
     const finish = (choice) => {
@@ -1689,17 +1767,19 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     if (tryStartDestroyPick(laneIdx, layer, ch, (choice) => {
       markLog(); markFx();
       M.lastForcedChain = null;
-      const r = CQCombat.open(M, layer, { choice });
+      const r = CQCombat.open(M, layer, { choice, interactive: true });
       if (!r.ok) flash(r.reason);
       armChainFx();
+      if (enterDrawPickIfPending()) return;
       step();
     })) return;
     const openNow = () => {
       markLog(); markFx();
       M.lastForcedChain = null;
-      const r = CQCombat.open(M, layer);
+      const r = CQCombat.open(M, layer, { interactive: true });
       if (!r.ok) flash(r.reason);
       armChainFx();
+      if (enterDrawPickIfPending()) return;
       step();
     };
     if (tryConfirmRitual(laneIdx, layer, ch, openNow)) return;   /* 生贄召還の確認（v0.15.3） */

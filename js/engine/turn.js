@@ -496,6 +496,10 @@
     //   押収(118)・潜入(138)・妄執(148)のようにカード自身がこの階層から消える効果があるため、
     //   それが起きた分だけ以降の階層番号を繰り下げて対応する */
     let shift = 0, ritual = false;
+    /* M6.7 WP3：時の渦(140)が開いたら、以降の階層は一切処理せずに抜ける
+     * （「その後のすべてのカード効果を停止してターンをやり直す」という要求仕様）。
+     * h140 が m.timeWarp を立てるので、その前に前回のぶんを消しておく。 */
+    m.timeWarp = false;
     for (let i = 0; i < layers.length; i++) {
       const n = layers[i] - shift;
       const cur = m.board.lanes[laneIndex];
@@ -519,6 +523,16 @@
       if (!after || after.unit == null) break;         // 呪爆・妄執等でユニットごと消えた（そのレーンはもう無い）
       after.reversePtr = n;
       if (checkResult(m)) break;
+      if (m.timeWarp) break;                           // 時の渦：以降の階層は開かない（M6.7 WP3）
+    }
+    /* M6.7 WP3：時の渦(140)は自陣の硬直・行動済みを全部解除して配置ステップへ戻す。
+     * ここで硬直や actedThisTurn を付け直すと、せっかく巻き戻したものが台無しになるので、
+     * 後片付けを丸ごと飛ばして抜ける。 */
+    if (m.timeWarp) {
+      m.timeWarp = false;
+      m.reversing = null;
+      recalc(m);
+      return { ok: true, result: checkResult(m), timeWarp: true };
     }
     const finalLane = m.board.lanes[laneIndex];
     // リバースしたユニットはその瞬間に硬直する（2026-08-24 本人の指定。従来は継続確定まで

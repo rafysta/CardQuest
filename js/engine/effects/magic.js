@@ -59,7 +59,10 @@
   const NO_COMBAT = { 107: 1, 108: 1, 109: 1, 119: 1, 124: 1, 131: 1, 132: 1, 139: 1, 140: 1, 141: 1 };
   /* 強制開放(108)・強制転回(109)の連鎖中は発動しない（原作 CE0355 強制発動時無効）。
    * 108/109 が入っているのは連鎖の多重起動を防ぐため。資料§2の「強」列と一致。 */
-  const NO_FORCED = { 108: 1, 109: 1, 140: 1, 144: 1 };
+  /* ★M6.7 WP3：140時の渦をここから外した（2026-08-30 本人確定）。
+   * 連鎖中に開かれたら**連鎖を止める**役目を持たせるため（h140 を参照）。
+   * ターンのやり直しは連鎖中には起こさないので、「誰のターンか」の曖昧さは生じない。 */
+  const NO_FORCED = { 108: 1, 109: 1, 144: 1 };
   /* 詠唱レベル（配置階層 ≧ 記載レベル。魔道書(186)が1枚につき-2＝ln.acc.tomeをそのまま引く）。
    * ★M6.7：141思念波を追加した（判断12・2026-08-29 本人確定）。
    * 原作は `V397==6` の分岐が存在せずレベル判定が働かないバグだったが、
@@ -110,6 +113,92 @@
     p.hand.pop();
     return id;
   }
+  /* ==== 効果の途中でプレイヤーの入力が要るカード（M6.7 WP3） =================
+   *
+   * 122予見（5枚引いて1枚もらう）と146口寄せ（1枚ずつ引いて採用するまで繰り返す）は、
+   * **引いた結果を見てから決める**カード。引く前に選択肢が確定しないので、
+   * WP1の `ctx.choice`（開く前に対象を選ぶ）方式では扱えない。
+   *
+   * そこで `m.pendingChoice` を置いて、いったんエンジンを抜ける：
+   *   ＵＩ  … `opts.interactive` を渡す。pendingChoice が残るので、画面で選ばせて
+   *            `CQMagic.resolvePending(m, action)` を呼ぶ。
+   *   ＡＩ・シミュレータ … `interactive` を渡さない。**その場で自動解決**して
+   *            pendingChoice を残さない＝**呼び出し側は無改修**でよい。
+   *
+   * この「interactive を渡した側だけが保留を受け取る」形は、
+   * ＡＩ・`tools/simulate.js` を一切変えずに対話カードを足せるので、以後も踏襲すること。 */
+
+  /** 自動解決の方針（ＡＩ・シミュレータ用）。乱数を使わず決定的にする。 */
+  function autoResolve(m) {
+    const pc = m.pendingChoice;
+    if (!pc) return;
+    if (pc.kind === 'foresee') {
+      /* 5枚のうち「定価がいちばん高いもの」を採る。同値ならＩＤの小さいほう。 */
+      let best = 0;
+      pc.options.forEach(function (id, i) {
+        const a = m.cards[id], b = m.cards[pc.options[best]];
+        if (a && b && (a.p || 0) > (b.p || 0)) best = i;
+      });
+      resolvePending(m, { pick: best });
+      return;
+    }
+    if (pc.kind === 'summon') {
+      /* 空白(180)なら引き直し、それ以外は採用。山札を掘り尽くさないよう回数を制限する
+       * （原作は山札が尽きると即敗北。ＡＩにそれをさせない）。 */
+      const p = m.players[pc.caster];
+      const keep = pc.options[0] !== 180 || pc.tries >= 4 || p.deckCount <= 5;   /* 180＝空白 */
+      resolvePending(m, { keep: keep });
+      return;
+    }
+    m.pendingChoice = null;
+  }
+
+  /** 保留中の選択を確定する。ＵＩは選ばせた結果をここへ渡す。
+   *   予見 … { pick: 0..4 }（5枚のうち何番目をもらうか）
+   *   口寄せ … { keep: true }（採用して終了）／{ keep: false }（捨ててもう1枚引く） */
+  function resolvePending(m, action) {
+    const pc = m.pendingChoice;
+    if (!pc) return { ok: false, reason: '選択待ちではありません' };
+    const a = action || {};
+    if (pc.kind === 'foresee') {
+      const i = Math.max(0, Math.min(pc.options.length - 1, a.pick | 0));
+      const got = pc.options[i];
+      const p = m.players[pc.caster];
+      p.hand.push(got);
+      capHand(m, pc.caster);
+      /* もらわなかった4枚は山札へ戻す（＝山札の枚数は差し引き−1）。 */
+      pc.options.forEach(function (id, k) {
+        if (k === i) return;
+        p.deck[id] = (p.deck[id] || 0) + 1; p.deckCount += 1;
+      });
+      note(m, '予見：' + nameOf(m, got) + ' を手に入れた（残りは山札へ戻した）');
+      m.pendingChoice = null;
+      return { ok: true, got: got };
+    }
+    if (pc.kind === 'summon') {
+      const p = m.players[pc.caster];
+      if (a.keep) {
+        p.hand.push(pc.options[0]);
+        capHand(m, pc.caster);
+        note(m, '口寄せ：' + nameOf(m, pc.options[0]) + ' を手に入れた');
+        m.pendingChoice = null;
+        return { ok: true, got: pc.options[0] };
+      }
+      /* 捨てた札は山札に戻さない（原作どおり＝掘るコストが重い）。もう1枚引く。 */
+      note(m, '口寄せ：' + nameOf(m, pc.options[0]) + ' を捨ててもう1枚引く');
+      const id = drawDirect(m, pc.caster);
+      if (id == null) {
+        note(m, '口寄せ：山札が尽きた');
+        m.pendingChoice = null;
+        return { ok: true, got: null };
+      }
+      pc.options = [id]; pc.tries = (pc.tries || 1) + 1;
+      return { ok: true, pending: true };
+    }
+    m.pendingChoice = null;
+    return { ok: true };
+  }
+
   /** 手札上限7枚を超えたら超過分を捨てる（原作§4.2：手札が7枚を超えた瞬間、強制的に1枚捨てる）。
    * ドローステップ以外（魔法カードによる手札増加）でも成り立たせるためのガード */
   function capHand(m, side) {
@@ -287,12 +376,15 @@
         onMagicOpen(m, target, i + 1, ch.card, { forced: true });
       }
       if (turnApi().checkResult(m)) { aborted = '決着した'; break; }
+      /* 時の渦(140)のように「連鎖そのものを止める」カードが開いた場合の明示的な中断印。 */
+      if (m.forcedAbort) { aborted = m.forcedAbort + 'で止められた'; break; }
       /* 効果で対象のＣＨが減った（押収・潜入など）場合、いま処理した階層がずれることがある。
        * 消えていたら次の周回でインデックスが自然に繰り上がるので、ここでは何もしない。 */
       void wasUp;
     }
 
     m.forcedCtx = null;
+    m.forcedAbort = null;
     recalc(m);
     if (aborted) note(m, nameOf(m, kind) + '：' + aborted + 'ため連鎖が止まった（' + steps.length + '枚で中断）');
     else note(m, nameOf(m, kind) + '：' + steps.length + '枚を処理した');
@@ -432,10 +524,28 @@
     note(m, '招来：' + nameOf(m, taken.card) + ' を召還');
   }
 
-  function h122(m, ctx) {                                     // 予見：山札から5枚引き任意の順番で戻す
-    // 本エンジンの山札は「カードIDごとの残枚数」の無順序テーブル（実装計画・カードバトル仕様書§2.3）
-    // のため、「見て並べ替える」という効果は表現できる状態を持たない。安全な no-op として実装する
-    note(m, '予見：山札の中身を確認した（このエンジンでは山札が無順序のため並べ替えの効果は無い）');
+  /** 予見：山札から5枚引き、その中の1枚をもらう（もらわなかった4枚は山札へ戻す）。
+   *
+   * ★M6.7 WP3（判断4）で効果を変更した。原作は「5枚引いて**任意の順番で山札の先頭に戻す**」
+   * ＝次の5回のドローを完全に決められる、というカードだったが、**このエンジンの山札は
+   * 「カードＩＤごとの残枚数」の無順序テーブル**（カードバトル仕様書§2.3・原作も同じ）で、
+   * 「並べ替えて戻す」は表現できる状態が存在しない。
+   * v0.16.22までは no-op（何も起きない）だったが、カードの説明文には「並べ替えられる」と
+   * 書いてあったため、**プレイヤーからは不具合に見える**状態だった。
+   * 「引きを選べる」という手触りは残しつつ実装できる形に置き換えてある。 */
+  function h122(m, ctx) {
+    const p = m.players[ctx.caster];
+    const drawn = [];
+    for (let k = 0; k < 5; k++) {
+      const id = drawDirect(m, ctx.caster);
+      if (id == null) break;
+      drawn.push(id);
+    }
+    if (!drawn.length) { note(m, '予見：山札が空だった'); return; }
+    note(m, '予見：山札から' + drawn.length + '枚を見た');
+    m.pendingChoice = { kind: 'foresee', caster: ctx.caster, options: drawn };
+    if (!ctx.interactive) autoResolve(m);
+    void p;
   }
 
   function h123(m, ctx) {                                     // 発症：配置レベルと同数のＬＰを失う
@@ -571,13 +681,52 @@
     note(m, '雷撃：' + name + ' を破壊');
   }
 
-  function h137(m, ctx) {                                     // 潜行爆弾：敵デッキに攻撃力600の爆弾を仕込む
-    // 05_magic.md が無く、原作の「戦闘中はほぼ不発」バグの原因（カーソル変数の参照ずれ）も
-    // 本エンジンには存在しないため再現できない。簡略化した推測実装：敵の山札を即座に1枚破壊する
-    // （CardQuest_開発メモ.md に要見直し事項として記載）
+  /** 潜行爆弾：選んだ相手ユニットに、自分自身を裏向きの爆弾として仕掛け直す。
+   * 仕掛けた爆弾が**表になった瞬間**、そのユニットに攻撃力600の一撃が入る
+   * （防御力が600を超えるユニットなら、爆弾だけが壊れる）。
+   *
+   * ★M6.7 WP3（判断14）で本人案を採用した。原作は「自分を壊し、開かせた**相手の山札**へ
+   * 潜り込んで約4枚後のドローで爆発する」時限爆弾だったが、ランの短い戦闘では遅すぎて
+   * 何が起きたのか分かりにくい。**相手のユニットに仕掛ける**形にすると、
+   * 強制開放(108)・強制転回(109)で「開かせて爆発させる」コンボが成立する。
+   *
+   * 実装：カードＩＤは137のまま、チャンネルに `armed` の印を付けて2つの状態を区別する。
+   *   armed なし … 仕掛ける（このハンドラの前半）
+   *   armed あり … 爆発する（後半）
+   * 別のカードＩＤを増やさずに済むので、デッキ・図鑑・記憶データに影響しない。 */
+  function h137(m, ctx) {
+    const here = m.board.lanes[ctx.laneIndex];
+    const self = here && here.channels[ctx.layer - 1];
+
+    /* --- 後半：仕掛けられていた爆弾が開かれた --- */
+    if (self && self.armed) {
+      const def = here.def || 0;
+      const name = here.unit != null ? nameOf(m, here.unit) : '？';
+      dropChannelAt(m, ctx.laneIndex, ctx.layer - 1);          /* 爆弾は必ず壊れる */
+      if (def <= 600) {
+        combatApi().destroy(m, ctx.laneIndex, { normalAttack: false });
+        note(m, '潜行爆弾：爆発して ' + name + '（防御力' + def + '）を破壊');
+      } else {
+        note(m, '潜行爆弾：爆発したが ' + name + '（防御力' + def + '）には効かず、爆弾だけが壊れた');
+      }
+      recalc(m);
+      return { consumed: true };
+    }
+
+    /* --- 前半：相手のユニットへ仕掛ける --- */
     const enemy = other(ctx.caster);
-    const lost = combatApi().destroyDeckCard(m, enemy);
-    note(m, '潜行爆弾：（簡略実装）' + jp(enemy) + ' の山札を1枚破壊' + (lost == null ? '（山札切れ）' : ''));
+    const pool = allUnitLanes(m).filter(function (i) {
+      if (S.sideOf(i) !== enemy || i === ctx.laneIndex) return false;
+      const ln = m.board.lanes[i];
+      return ln.count < ln.cap;                                /* 空きが無いと仕掛けられない */
+    });
+    if (!pool.length) { note(m, '潜行爆弾：仕掛けられる相手のユニットがいない'); return; }
+    const t = chooseTarget(m, ctx, pool);
+    dropChannelAt(m, ctx.laneIndex, ctx.layer - 1);            /* 自分はこの位置から消える */
+    pushChannel(m, t, { card: 137, up: false, mine: ctx.caster === 'self', revealed: false, armed: true });
+    recalc(m);
+    note(m, '潜行爆弾：' + nameOf(m, m.board.lanes[t].unit) + ' に爆弾を仕掛けた');
+    return { consumed: true };
   }
 
   function h138(m, ctx) {                                     // 潜入：他ユニットにチャンネルとして潜行する（レベル3）
@@ -601,12 +750,40 @@
     note(m, '爆雷：' + jp(enemy) + ' のＬＰ -3');
   }
 
-  function h140(m, ctx) {                                     // 時の渦：ドローステップへ戻る（レベル4／戦闘中×強制中×）
-    // 「ドローステップへ戻る」をフェイズ遷移として厳密に再現すると m.phase の不変条件が崩れやすいため、
-    // 簡略化：手番側がもう1枚ドローする（実質的にターン中の追加ドローとして再現）
-    const id = turnApi().draw(m.rng, m.players[m.active], m);
-    capHand(m, m.active);
-    note(m, '時の渦：（簡略実装）' + jp(m.active) + ' がもう1枚ドロー' + (id == null ? '（山札なし）' : ''));
+  /** 時の渦：自分自身が壊れ、**そのターンをもう一度最初からやり直す**（詠唱Ｌｖ4／戦闘中×）。
+   *
+   * ★M6.7 WP3（判断5）。原作も「ドローステップへ戻る」＝硬直・チャネリング済み・リバースの
+   * 各フラグを全部解除して配置ステップから再開、という効果だった（資料§140）。
+   * v0.16.22までは「もう1枚ドローするだけ」の簡略実装だった。
+   *
+   * **連鎖中の扱い（2026-08-30 本人確定）**：強制リバース連鎖の最中に開かれた場合は
+   * **連鎖を止めるだけ**で、ターンのやり直しは起こさない。
+   * ——連鎖を仕掛けたのは相手で、カードの持ち主はこちら、という状況で
+   * 「誰のターンをやり直すのか」が決まらないため。原作はこの曖昧さを避けて
+   * 140を「強制中×」（連鎖中は不発）にしていたが、対抗札としての手触りを残すために
+   * 「止めるところまではやる」形にしてある。 */
+  function h140(m, ctx) {
+    const side = ctx.caster;
+    dropChannelAt(m, ctx.laneIndex, ctx.layer - 1);            /* まず自分が壊れる */
+    recalc(m);
+    if (m.forcedCtx) {
+      /* 連鎖中：連鎖だけ止める。markerAlive() より確実に効くよう、専用の中断印を置く。 */
+      m.forcedAbort = '時の渦';
+      note(m, '時の渦：強制リバースの連鎖を止めた（ターンのやり直しは起きない）');
+      return { consumed: true };
+    }
+    /* 通常時：自陣の硬直・リバース・チャネリング済みを解除して配置ステップからやり直す。 */
+    S.lanesOf(side).forEach(function (i) {
+      const ln = m.board.lanes[i];
+      ln.stiff = false; ln.reversePtr = 0; ln.extraAttack = false; ln.channeled = false;
+    });
+    const p = m.players[side];
+    p.actedThisTurn = false;
+    p.fledThisTurn = false;
+    m.phase = 'placement';
+    m.timeWarp = true;              /* リバースのループを打ち切る印（turn.js が読む） */
+    note(m, '時の渦：' + jp(side) + ' のターンが巻き戻り、配置ステップからやり直しになった');
+    return { consumed: true };
   }
 
   /* ================= 141〜148 ================= */
@@ -661,19 +838,18 @@
     return { consumed: true };
   }
 
-  function h146(m, ctx) {                                     // 口寄せ：何度でもドローし1枚を入手できる（レベル3）
-    // 無順序デッキのための簡略実装：山札に実在する最小IDのカードを1枚探して直接手札に加える
-    // （「引き続けて欲しい1枚を得る」の結果だけを再現する）
-    const p = m.players[ctx.caster];
-    for (let id = 1; id <= 199; id++) {
-      if ((p.deck[id] || 0) > 0) {
-        p.deck[id] -= 1; p.deckCount -= 1; p.hand.push(id);
-        capHand(m, ctx.caster);
-        note(m, '口寄せ：（簡略実装）' + nameOf(m, id) + ' を入手');
-        return;
-      }
-    }
-    note(m, '口寄せ：山札が空だった');
+  /** 口寄せ：山札から1枚めくり、要らなければ捨ててもう1枚——欲しい1枚が出るまで繰り返す
+   * （詠唱Ｌｖ3）。**捨てた札は山札に戻らない**ので、掘るほど山札が減る。
+   *
+   * ★M6.7 WP3（判断5）。本人案が原作仕様とほぼ一致していたので、そのまま実装した。
+   * v0.16.22までは「山札にあるいちばん若いＩＤのカードを1枚」という簡略実装で、
+   * 毎回同じカードが出る不自然な挙動になっていた。 */
+  function h146(m, ctx) {
+    const id = drawDirect(m, ctx.caster);
+    if (id == null) { note(m, '口寄せ：山札が空だった'); return; }
+    note(m, '口寄せ：' + nameOf(m, id) + ' をめくった');
+    m.pendingChoice = { kind: 'summon', caster: ctx.caster, options: [id], tries: 1 };
+    if (!ctx.interactive) autoResolve(m);
   }
 
   function h147(m, ctx) {                                     // 治癒：手札を全て捨てその枚数と同値のＬＰを回復（戦闘中×）
@@ -753,7 +929,8 @@
       if (!ln || ln.unit == null) break;
       const ch = ln.channels[layer - 1];
       if (!ch || ch.card !== cardId) break;               // 既に自ら移動・消滅していたら2回目は発動しない
-      const r = handler(m, { laneIndex: laneIndex, layer: layer, cardId: cardId, opener: opener, caster: caster, choice: o.choice }) || {};
+      const r = handler(m, { laneIndex: laneIndex, layer: layer, cardId: cardId, opener: opener,
+        caster: caster, choice: o.choice, interactive: o.interactive }) || {};
       if (r.consumed) consumed = true;
       if (Turn.checkResult(m)) break;
       if (consumed) break;
@@ -761,7 +938,7 @@
     return { consumed: consumed };
   }
 
-  const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED };
+  const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED, resolvePending, autoResolve };
   global.CQMagic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

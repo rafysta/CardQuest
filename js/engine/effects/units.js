@@ -180,14 +180,48 @@
     note(m, 'ＣＨ破壊：' + nameOf(m, removed.card) + ' を破壊');
   }
 
-  function h25(m, ctx) {                                        // スケープゴート：摩り替り
-    // 07_unit_abilities.md が無く詳細不明。原作の既知バグ「条件次第でスケープゴートが2体になる」
-    // （仕様書§14.1）という記述から、本来の効果は「このカードの分身を手札に加える」ものと
-    // 推測して実装する（簡略実装。要確認事項としてCardQuest_開発メモ.mdに記載）
-    const p = m.players[ctx.caster];
-    p.hand.push(25);
-    capHand(m, ctx.caster);
-    note(m, '摩り替り：（簡略実装）手札に ' + nameOf(m, 25) + ' の分身を得た');
+  /** スケープゴート「開：摩り替り」＝**チャネル先のユニットと位置を入れ替える**。
+   * スケープゴートがユニット本体になり、元のユニットがスケープゴートの居たＣＨ階層に落ちる。
+   * 名前どおりの「身代わり」で、狙われているユニットを庇う使い方ができる。
+   *
+   * ★M6.7 WP3（判断6）：原作解析 `07_unit_abilities.md` §ID25 で仕様が判明した。
+   * v0.16.22までは「手札に分身を加える」という推測実装だったが、外れていた。
+   * 原作は入れ替えたあとも `V284 == 25` のまま召還処理に進んでしまい
+   * 「空きレーンがあるとスケープゴートが2体になり、元ユニットが消える」というバグがあるが、
+   * **これは再現しない**（§0-1 の方針：面白さに寄与しない原作バグは直してよい）。
+   *
+   * 条件：そのチャンネルを置いたのが自分自身であること（原作 SW[442+idx] == OFF）。 */
+  function h25(m, ctx) {
+    const ln = m.board.lanes[ctx.laneIndex];
+    const ch = ln && ln.channels[ctx.layer - 1];
+    if (!ln || ln.unit == null || !ch) return;
+    /* そのユニットの持ち主が自分で置いたチャンネルでなければ発動しない
+     * （原作 SW[442+idx] == OFF）。相手に押し付けられた身代わりでは入れ替わらない。
+     * ctx.caster はチャンネルを置いた側なので、ここでは**レーンの持ち主**と比べる。 */
+    const ownerIsSelf = S.sideOf(ctx.laneIndex) === 'self';
+    if (ch.mine !== ownerIsSelf) {
+      note(m, '摩り替り：そのユニットの持ち主が置いたものではないので入れ替わらない');
+      return;
+    }
+    const mine = ownerIsSelf;
+    const host = ln.unit;
+    /* ★スケープゴートにスケープゴートをチャネルしていると、入れ替えても盤面が変わらないのに
+     * チャンネルが裏へ戻る＝オープンフェイズが永遠に終わらない（simulate.js seed 1855 で検出）。
+     * 入れ替える意味が無いので何もしない。 */
+    if (host === 25) { note(m, '摩り替り：入れ替える相手が同じスケープゴートなので何も起きない'); return; }
+    ln.unit = 25;                                  /* スケープゴートがユニット本体になる */
+    ln.channels[ctx.layer - 1] = {
+      card: host, up: false, mine: mine, revealed: true   /* 元ユニットはそのＣＨ階層へ落ちる */
+    };
+    recalc(m);
+    note(m, '摩り替り：' + nameOf(m, host) + ' と入れ替わって身代わりになった');
+    /* 戻り値の2つの意味を使い分ける（M6.7 WP3で分離した）：
+     *   consumed … この階層が**無くなった**。カーソルを1つ繰り上げる合図。
+     *   handled  … 効果は済んだので**リバース召還はしない**。階層が残るかどうかとは別。
+     * 摩り替りは「中身が別のカードに変わっただけ」なので handled だけを返す。
+     * consumed を返すとカーソルがずれ、handled を返さないと開いた25がそのまま
+     * 空きレーンへ召還されて**スケープゴートが2体になる**（原作のバグ）。 */
+    return { handled: true };
   }
 
   function h29(m, ctx) {                                        // ステルスゴブリン：敵手札×１奪取
@@ -310,13 +344,14 @@
    * 呼び出し元（combat.js/turn.js のオープンループ）へ知らせる */
   function onUnitOpen(m, laneIndex, layer, cardId) {
     const handler = B_HANDLERS[cardId];
-    if (!handler) return { consumed: false };
+    if (!handler) return { consumed: false, handled: false };
     const ln0 = m.board.lanes[laneIndex];
     const ch0 = ln0 && ln0.channels[layer - 1];
     const caster = ch0 ? (ch0.mine ? 'self' : 'enemy') : m.active;
     const opener = m.combat ? combatApi().openerSide(m) : m.active;
     const r = handler(m, { laneIndex: laneIndex, layer: layer, cardId: cardId, opener: opener, caster: caster }) || {};
-    return { consumed: !!r.consumed };
+    /* handled … 効果を処理したのでリバース召還はしない（階層が残っていても） */
+    return { consumed: !!r.consumed, handled: !!r.consumed || !!r.handled };
   }
 
   /** turn.js の specialAction() から、メインステップの4つ目の主行動として呼ばれる（§10.1）。
