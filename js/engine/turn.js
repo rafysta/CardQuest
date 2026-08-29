@@ -114,6 +114,7 @@
       hand: [],
       turnsTaken: 0,
       actedThisTurn: false,
+      fledThisTurn: false,       // M6.6 WP12：逃走を試せるのは1ターン1回まで
       hasChanged: false,
       pestDiscardTurn: -1        // M6 戦場ルール：おじゃま虫を捨てたターン（1ターン1枚の判定用）
     };
@@ -264,6 +265,7 @@
     m.turn += 1;                                    // 原作 V335：両者のターンで+1
     const side = m.active, p = activePlayer(m);
     p.actedThisTurn = false;
+    p.fledThisTurn = false;                         // 逃走は1ターン1回（M6.6 WP12）
     const second = m.first && side !== m.first;     // この手番の側が後攻か
     const n = p.turnsTaken === 0 ? (FIRST_DRAW + (second ? SECOND_DRAW_BONUS : 0)) : 1;
     for (let i = 0; i < n; i++) {
@@ -576,6 +578,60 @@
     return { ok: true, result: checkResult(m) };
   }
 
+  /* ---- 逃走・降参（M6.6 WP12） ---------------------------------------------
+   * 逃走は**原作にある規定**（『SOULGATE カードバトル仕様書』§4.1）の実装化：
+   *   「フリーユニット戦のみ。そのターンまだ何もしていないことが条件。確率で攻撃を受ける。」
+   * マスター戦で逃げられないことは台本のヒント `bossBattle`（「逃げ道はない」）と
+   * 『世界観とプレイヤー案内』§6.3 #11 が既に前提にしているので、ここは必ず守る。
+   * 確率と代償は CardQuest 側で定める（追補§2-12・§8-4）。 */
+  const FLEE_RATE = 0.5;        /* 成功率。まずは固定50%（追補§8-4 本人回答） */
+  const FLEE_LP_COST = 1;       /* 失敗したときに払うＬＰ */
+
+  /** いま逃げられるか。バトル画面のボタンの出し分けにもそのまま使う。 */
+  function canFlee(m, side) {
+    if (!m || m.winner || m.fled || m.combat) return false;
+    if (m.mode !== 'field') return false;          /* マスター戦（ボス）は逃走不可 */
+    if (m.phase !== 'placement') return false;     /* 配置ステップでのみ（原作の条件） */
+    const s = side || m.active;
+    if (s !== m.active) return false;
+    const p = m.players[s];
+    return !p.actedThisTurn && !p.fledThisTurn;
+  }
+
+  /** 逃走を試みる。成功なら m.fled にその側を立てて対局を終える（勝敗は付かない）。
+   * 失敗ならＬＰを1払って続行——このときＬＰが0になれば checkResult が敗北を確定させる。
+   * 乱数は必ず m.rng を通す（同じランの同じ戦闘が再現できなくなるため Math.random は不可）。 */
+  function flee(m) {
+    if (m.winner || m.fled) return { ok: false, reason: 'もう決着しています' };
+    if (m.mode !== 'field') return { ok: false, reason: 'この相手からは逃げられません' };
+    if (m.phase !== 'placement') return { ok: false, reason: '配置ステップでのみ使えます' };
+    const side = m.active, p = activePlayer(m);
+    if (p.actedThisTurn) return { ok: false, reason: 'このターンに何か操作した後は使えません' };
+    if (p.fledThisTurn) return { ok: false, reason: 'このターンはもう試せません' };
+    p.fledThisTurn = true;
+    p.actedThisTurn = true;                        /* 試した時点で「何かした」扱い */
+    if (m.rng.next() < FLEE_RATE) {
+      m.fled = side;
+      m.phase = 'over';
+      note(m, jp(side) + ' は戦いから離脱した');
+      return { ok: true, escaped: true };
+    }
+    p.lp -= FLEE_LP_COST;
+    note(m, jp(side) + ' は逃げそこねた（ＬＰ−' + FLEE_LP_COST + '）');
+    return { ok: true, escaped: false, result: checkResult(m) };
+  }
+
+  /** 諦める（自らゲームオーバーを選ぶ）。ＬＰを0にして通常の敗北と同じ経路に乗せるので、
+   * ラン側は特別扱いをしなくてよい（清算はゲームオーバーの▲75%になる）。 */
+  function resign(m, side) {
+    if (m.winner || m.fled) return { ok: false, reason: 'もう決着しています' };
+    const s = side || 'self';
+    m.players[s].lp = 0;
+    m.resigned = s;
+    note(m, jp(s) + ' は探索を諦めた');
+    return { ok: true, result: checkResult(m) };
+  }
+
   function change(m) {
     if (m.phase !== 'placement') return { ok: false, reason: 'いまは使えません' };
     const side = m.active, p = activePlayer(m);
@@ -680,7 +736,9 @@
     change, endTurn,
     checkResult,
     /* M6.6 WP6 フリーユニット戦 */
-    isFieldMode, canSummonSide, enemyUnitCount
+    isFieldMode, canSummonSide, enemyUnitCount,
+    /* M6.6 WP12 逃走・降参 */
+    FLEE_RATE, FLEE_LP_COST, canFlee, flee, resign
   };
   global.CQTurn = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

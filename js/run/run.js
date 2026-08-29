@@ -242,10 +242,17 @@
 
   /* ---- 戦闘マス ------------------------------------------------------------ */
 
-  /** run.seed とマスidから、その戦闘専用の決定的な乱数シードを作る（同じランは常に同じ結果になる） */
+  /** run.seed とマスidから、その戦闘専用の決定的な乱数シードを作る（同じランは常に同じ結果になる）。
+   *
+   * M6.6 WP12：**挑戦回数（n.attempts）も種に混ぜる。** 逃走はマスを cleared にしない
+   * （追補§8-3 案A）ので同じ相手に入り直せるが、種がマスidだけだと**まったく同じ戦闘が
+   * そのまま再生される**（同じ手札・同じ先攻・同じ相手の動き）＝逃げる意味が無くなる。
+   * 挑戦回数を混ぜることで、入り直すたびに別の引きになり、本人の言う「延命ではなく
+   * 仕切り直し」が実際に成立する。決定性は保たれる（同じラン・同じマス・同じ挑戦回数なら
+   * 常に同じ戦闘。attempts は run に入るのでセーブ・再開でも揺れない）。 */
   function battleSeed(run, n) {
     let h = (run.seed >>> 0) ^ 0x9e3779b9;
-    const s = String(n.id);
+    const s = String(n.id) + '#' + (n.attempts || 0);
     for (let i = 0; i < s.length; i++) h = (Math.imul(h ^ s.charCodeAt(i), 16777619)) >>> 0;
     return h >>> 0;
   }
@@ -290,6 +297,27 @@
       enemyBoard: isBoss ? undefined : enemyBoardOf(n),
       seed: battleSeed(run, n)
     };
+  }
+
+  /** 逃走してマップへ戻ったときの反映（M6.6 WP12・追補§4 WP12）。
+   * 戦利品もＧも得ない。持ち越すのは**ＬＰの減少だけ**。
+   * **そのマスは cleared にしない**（追補§8-3 で本人が案Aを採用）＝プレイヤーはそのマスに
+   * 留まり、もう一度入り直せる。こうすることで「逃げる」は延命ではなく仕切り直しになり、
+   * マップ仕様書§1の「通常戦闘3回＋ボス1回」という構造も保たれる（戦闘を避けて
+   * ボスへ直行することができない）。
+   * 逃走失敗のＬＰ−1でＬＰが0になった場合だけは、その場でランが終わる。 */
+  function reportFlee(run, n, M) {
+    run.lp = Math.max(0, M.players.self.lp);
+    /* 挑戦回数を進める＝次に入り直したときは別の引きの戦闘になる（battleSeed 参照）。
+     * これをやらないと、逃げても寸分違わず同じ戦闘が始まるだけで意味が無い。 */
+    n.attempts = (n.attempts || 0) + 1;
+    if (run.lp <= 0) {
+      run.outcome = 'lose';
+      run.log.push('逃げきれずに力尽きた');
+      return { fled: true, dead: true };
+    }
+    run.log.push('戦いから離脱した（このマスはまだ残っている）');
+    return { fled: true, dead: false };
   }
 
   /** 戦闘終了後（M.winner が確定した後）に呼ぶ。戦利品・Ｇ・ＬＰをランに反映する。
@@ -471,7 +499,8 @@
     DECK_SIZE, BLANK, DRAFT_ROUNDS, buildBattleDeck, buildBossDeck, buildPlayerDeck,
     start, gainCard, beginDraftRound, applyDraft, draftTarget, hasBlankSlot, depart,
     node, currentNode, choices, advance,
-    battleSeed, firstTurnOf, battleSetup, reportBattle, canAssignToDeck, resolveLootPick,
+    battleSeed, firstTurnOf, battleSetup, reportBattle, reportFlee,
+    canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
     sell, exchangeLeave, resolveQuestion, retire, settle
   };

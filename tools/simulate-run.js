@@ -62,9 +62,15 @@ function autoCarryOut(meta) {
 
 /* 戦闘の内訳（M6.6 WP6の較正用）。field＝通常戦闘（フリーユニット戦）／boss＝マスター戦 */
 const BSTAT = {
-  field: { n: 0, win: 0, loot: 0, turns: 0 },
-  boss: { n: 0, win: 0, loot: 0, turns: 0 }
+  field: { n: 0, win: 0, loot: 0, turns: 0, fled: 0 },
+  boss: { n: 0, win: 0, loot: 0, turns: 0, fled: 0 }
 };
+/* M6.6 WP12/§2-11：**先攻・後攻それぞれの勝率**。ここがWP5以降いちばん見たい数字。
+ * 全体の勝率だけ見ていると「後攻+1ドロー」の効果は測れない——この補正は
+ * 「後攻の側」に付くので、自分が後攻のときも相手が後攻のときも等しく効き、
+ * ＡＩ同士の対戦では**合計するとほぼ打ち消し合う**（実際 1000キャリアで 43.6%→44.2% と
+ * 誤差程度しか動かなかった）。効いているかどうかは、先攻・後攻に分けて初めて分かる。 */
+const FSTAT = { first: { n: 0, win: 0 }, second: { n: 0, win: 0 } };
 /* 1ランあたりの経済（マップ仕様書§7・追補§7-1の確認用）。
  * WP6で通常戦闘のＧが無くなったので、宝箱が主収入になっているかを見る。 */
 const ESTAT = { runs: 0, goldEnd: 0, cards: 0 };
@@ -90,13 +96,69 @@ function playTurn(m) {
   if (m.phase === 'main') CQTurn.endTurn(m);
 }
 
-function autoBattle(setup, maxTurns) {
+/* M6.6 WP12：プレイヤー側の逃走方策（ヘッドレスでの近似）。
+ *
+ * **案A（逃げてもマスは残る）のもとで、逃走が何の役に立つのかを取り違えないこと。**
+ * 逃げても先へは進めない＝その相手とはいずれ戦う。だから逃走は「勝てない戦いを避ける」
+ * 手ではなく、**引きが悪い初手をやり直す（仕切り直す）**手である
+ * （battleSeed が挑戦回数を含むので、入り直すと別の引きになる）。
+ *
+ * 実際、初版は「ＬＰが3以下になったら逃げる」という方策にしていたが、これは
+ * **明確に下手な打ち方**で、数字が悪化するだけだった（通常戦闘 45.6%→36.3%）。
+ * ＬＰ3で逃げても、結局ＬＰ3のまま同じ相手と戦い直すことになり、逃走失敗のＬＰ−1と
+ * 1ターンぶんの手番を捨てるだけ損をする。方策の欠陥であって、ゲームの欠陥ではない。
+ *
+ * そこで、人がやるであろう使い方＝**初手が悪いときの1回だけの引き直し**を近似する：
+ *   ・自分の1ターン目であること（＝まだ何も起きていない）
+ *   ・手札に**すぐ場に出せるユニットが1枚も無い**（＝盤面を作れない＝勝ち目が薄い初手）
+ *   ・そのマスでまだ逃げていない（FLEE_MAX_PER_NODE）
+ * この方策はバランス評価用の仮置きで、仕様ではない。 */
+/* CQ_NO_FLEE=1 で逃走方策を切って回せる。「逃走を入れたことで数字がどう動いたか」を
+ * 同じ試行回数で見比べるため（方策の良し悪しとゲームの良し悪しを混同しないための道具）。 */
+const NO_FLEE = process.env.CQ_NO_FLEE === '1';
+const FLEE_MAX_PER_NODE = 1;
+function wantsToFlee(m, node) {
+  if (NO_FLEE) return false;
+  if ((node.attempts || 0) >= FLEE_MAX_PER_NODE) return false;
+  if (m.players.self.turnsTaken !== 1) return false;          /* 1ターン目の引き直しとしてだけ使う */
+  const playable = m.players.self.hand.filter((id) => {
+    const c = CARD_BY_ID[id];
+    return c && c.t === 'U' && (c.lv || 1) <= 1;              /* 手札から直接出せるユニット（召還Lv1） */
+  });
+  return playable.length === 0;
+}
+
+function autoBattle(setup, maxTurns, fleeNode) {
   const rng = CQRng.create(setup.seed);
   const m = CQTurn.createMatch(Object.assign({}, setup, { rng: rng, hooks: HOOKS }));
   m.aiConfig = { self: CQAi.PRESETS.heuristic, enemy: CQAi.PRESETS.heuristic };
   let guard = 0;
-  while (!m.winner && m.turn < maxTurns && guard++ < 5000) playTurn(m);
-  if (!m.winner) { m.winner = m.players.self.lp >= m.players.enemy.lp ? 'self' : 'enemy'; }  // ターン上限：安全弁
+  while (!m.winner && !m.fled && m.turn < maxTurns && guard++ < 5000) {
+    /* 逃走は「自分の配置ステップで、まだ何もしていないうち」だけ＝ターンの頭で判断する。
+     * beginTurn を playTurn の中でやっているので、ここでは1手前に自分で beginTurn する。 */
+    if (fleeNode && m.active === 'self' && m.phase === 'draw') {
+      CQTurn.beginTurn(m);
+      if (m.winner) break;
+      let g2 = 0;
+      while (m.phase === 'discard' && g2++ < 20) CQAi.discardStep(m);
+      if (CQTurn.canFlee(m) && wantsToFlee(m, fleeNode)) {
+        const r = CQTurn.flee(m);
+        if (r.escaped) break;
+        if (m.winner) break;             /* 失敗のＬＰ−1で力尽きた */
+      }
+      if (m.phase === 'placement') { CQAi.playPlacement(m); CQTurn.endPlacement(m); }
+      let g3 = 0;
+      while (m.phase === 'main' && g3++ < 20) {
+        if (!CQAi.mainStep(m)) break;
+        CQAi.finishCombat(m);
+        if (m.combat) throw new Error('オープンフェイズが終わらない');
+      }
+      if (m.phase === 'main') CQTurn.endTurn(m);
+      continue;
+    }
+    playTurn(m);
+  }
+  if (!m.winner && !m.fled) { m.winner = m.players.self.lp >= m.players.enemy.lp ? 'self' : 'enemy'; }  // ターン上限：安全弁
   return m;
 }
 
@@ -136,14 +198,29 @@ function playRun(areaId, seed, meta, rng) {
     if (!n.cleared) {
       if (n.type === 'battle' || n.type === 'boss') {
         const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
-        const M = autoBattle(setup, 80);
+        const M = autoBattle(setup, 80, n.type === 'boss' ? null : n);
         battles++; totalTurns += M.turn;
         /* M6.6 WP6（§7-5）：フリーユニット戦の較正用の計測。通常戦闘とボス戦を分けて
          * 勝率と平均獲得枚数を出す（§7-1の経済確認にも使う）。 */
         const bucket = (n.type === 'boss') ? BSTAT.boss : BSTAT.field;
         bucket.n++;
+        if (M.fled) bucket.fled++;
         if (M.winner === 'self') { bucket.win++; bucket.loot += (M.loot || []).length; }
         bucket.turns += M.turn;
+        /* 先攻・後攻べつの勝率（逃走で終わった戦闘は勝敗が付かないので数えない） */
+        if (!M.fled) {
+          const fb = (M.first === 'self') ? FSTAT.first : FSTAT.second;
+          fb.n++;
+          if (M.winner === 'self') fb.win++;
+        }
+        /* M6.6 WP12：逃走で終わった戦闘は勝敗が付いていない。マスは cleared にならないので、
+         * このループはもう一度同じマスに入る＝再挑戦になる（本物の操作と同じ）。 */
+        if (M.fled) {
+          CQRun.reportFlee(run, n, M);
+          checkRunInvariants(run, meta);
+          if (run.outcome) break;
+          continue;
+        }
         CQRun.reportBattle(run, n, M, meta);
         /* M6.6 WP7：戦利品はここでは自動で振り分けない（振り分け画面待ちに積まれるだけ）。
          * ヘッドレスなので本物のUI操作の代用として、空きがあればデッキへ・無ければ本へ、
@@ -237,8 +314,14 @@ const pct = (a, b) => (b ? (a / b * 100).toFixed(1) : '—') + '%';
   const s = BSTAT[k];
   console.log(`  ${k === 'field' ? '通常戦闘（フリーユニット戦）' : 'ボス（マスター戦）'}：`
     + `${s.n} 回 / 勝率 ${pct(s.win, s.n)} / 平均 ${(s.turns / Math.max(1, s.n)).toFixed(1)} ターン`
-    + ` / 勝利1回あたり戦利品 ${(s.loot / Math.max(1, s.win)).toFixed(2)} 枚`);
+    + ` / 勝利1回あたり戦利品 ${(s.loot / Math.max(1, s.win)).toFixed(2)} 枚`
+    + (s.fled ? ` / うち逃走 ${s.fled} 回（${pct(s.fled, s.n)}）` : ''));
 });
+console.log(`  先攻・後攻べつ（全戦闘）：先攻 ${pct(FSTAT.first.win, FSTAT.first.n)}（${FSTAT.first.n}回）`
+  + ` / 後攻 ${pct(FSTAT.second.win, FSTAT.second.n)}（${FSTAT.second.n}回）`
+  + `　差 ${(FSTAT.first.n && FSTAT.second.n
+      ? (FSTAT.first.win / FSTAT.first.n * 100 - FSTAT.second.win / FSTAT.second.n * 100).toFixed(1)
+      : '—')} ポイント`);
 console.log(`  1ランあたり：獲得カード ${(ESTAT.cards / Math.max(1, ESTAT.runs)).toFixed(2)} 枚`
   + ` / 清算前の所持Ｇ ${(ESTAT.goldEnd / Math.max(1, ESTAT.runs)).toFixed(0)}`);
 if (stat.errors.length) {

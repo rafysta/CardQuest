@@ -442,6 +442,15 @@ img.curse-art{
   font-size:17px;font-weight:800;line-height:1.35;
 }
 .act-btn:active{background:#24406e}
+/* M6.6 WP12「逃げる」「諦める」。進行のボタン（配置を終える等）より控えめにして、
+ * 誤爆しにくいよう幅も文字も小さくする。3つ並んでも #acts に収まる寸法。 */
+.act-btn.sub{
+  flex:0 0 86px;width:86px;font-size:15px;font-weight:700;
+  background:transparent;border-color:#2b3a55;color:var(--dim);
+}
+.act-btn.sub:hover{color:var(--txt);border-color:var(--line)}
+.act-btn.sub.ng{border-color:#5a2b2b;color:#d99}
+.act-btn.sub.ng:hover{color:#ffb4b4;border-color:#7a2b2b}
 
 /* 場のカードはドラッグ・タップで操作するため、ブラウザ標準のタッチスクロールに
  * ジェスチャを奪われないようにする（奪われると pointercancel が起きて
@@ -501,6 +510,8 @@ img.curse-art{
   margin-bottom:10px}
 .i-result.win{background:#0f3d24;border:2px solid #1d9a52;color:#8ff0b5}
 .i-result.lose{background:#3d1414;border:2px solid #f87171;color:#ffb0b0}
+/* M6.6 WP12：逃走成功は勝ちでも負けでもない第3の終わり方なので、色も緑でも赤でもなくする */
+.i-result.flee{background:#2a2a1a;border:2px solid #b8a44a;color:#f0e2a8}
 .acts-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 .act-row{
   text-align:left;background:var(--panel2);border:2px solid var(--line);border-radius:10px;
@@ -1182,12 +1193,18 @@ td.nm{font-weight:800}
  *   ・敵は四角の上・**画面中央**に、従来の半分の大きさで立たせる
  *   ・プレイヤーはもっとゆっくり、上下に揺れながら敵へ向かう
  * 最後だけ、バトル画面へ切り替わる直前に全体を軽く暗転させる（切り替えの継ぎ目を隠す）。 */
+/* 尺は js/run-ui.js の BATTLE_INTRO_MS（4300ms）と揃えること。内訳は
+ *   〜約2.3秒 … 四角が開く→敵が出る→コマが走って体当たりする
+ *   〜約3.9秒 … **静止して見せる時間（約2秒）**。マスター名や戦場ルールを読むための間
+ *               （2026-08-29 本人指定。読む時間が欲しい、との指摘）
+ *   〜4.3秒   … 暗転してバトル画面へ
+ * ぶつかった直後に暗転を始めてしまうと読む時間が無くなるので、暗転は最後の0.4秒だけ。 */
 .battle-intro{
   position:absolute;inset:0;z-index:900;overflow:hidden;cursor:pointer;
-  animation:battleIntroDim 2.6s ease-in forwards;
+  animation:battleIntroDim 4.3s linear forwards;
 }
 @keyframes battleIntroDim{
-  0%,72%{background:rgba(5,7,13,0)}
+  0%,91%{background:rgba(5,7,13,0)}
   100%{background:rgba(5,7,13,.96)}
 }
 /* 黒四角カットイン：画面のおよそ40%（幅46%×高さ56%）を中央に。上下に開いて出る。
@@ -1213,18 +1230,25 @@ td.nm{font-weight:800}
 @keyframes battleIntroFade{ to{opacity:1} }
 
 .battle-intro-stage{position:absolute;inset:0;pointer-events:none}
-/* 敵：画面中央。height 34%＋scale(2)＝実効68%だったものを、指定どおり半分＝実効34%にした */
+/* 敵：height 34%＋scale(2)＝実効68%だったものを、指定どおり半分＝実効34%にした。
+ * 2026-08-29 本人指摘：走り込んだプレイヤーと重なって敵の一部が隠れていたので、
+ * **コマの体の幅ぶん（132px）だけ右へ寄せた**。中央からの寄せ幅は
+ * --intro-foe-shift の1変数にまとめてあり、コマの幅（.battle-intro-hero の width）を
+ * 変えたらここも合わせること。 */
+.battle-intro{--intro-foe-shift:132px}
 .battle-intro-foe{
   position:absolute;left:50%;top:46%;height:34%;max-width:none;
-  transform:translate(-50%,-50%) scale(.4);opacity:0;
+  transform:translate(calc(-50% + var(--intro-foe-shift)),-50%) scale(.4);opacity:0;
   filter:drop-shadow(0 16px 28px rgba(0,0,0,.6));
   animation:battleIntroFoeIn .35s ease-out .4s forwards,
             battleIntroFlinch .18s ease-in-out 1.95s 2;
 }
-@keyframes battleIntroFoeIn{ to{transform:translate(-50%,-50%) scale(1);opacity:1} }
+@keyframes battleIntroFoeIn{
+  to{transform:translate(calc(-50% + var(--intro-foe-shift)),-50%) scale(1);opacity:1}
+}
 @keyframes battleIntroFlinch{
-  0%,100%{transform:translate(-50%,-50%) scale(1) rotate(0)}
-  50%{transform:translate(-50%,-53%) scale(.97) rotate(4deg)}
+  0%,100%{transform:translate(calc(-50% + var(--intro-foe-shift)),-50%) scale(1) rotate(0)}
+  50%{transform:translate(calc(-50% + var(--intro-foe-shift)),-53%) scale(.97) rotate(4deg)}
 }
 /* 自分のコマ：左の画面外から、上下に揺れながらゆっくり敵へ向かう。
  * left の移動（1.5秒）と上下のバウンド（0.42秒周期の繰り返し）を別々のアニメに分け、

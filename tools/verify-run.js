@@ -314,6 +314,53 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     }
     await page.waitForTimeout(1500);   // 手札配布などの演出(FX)が終わるまで待つ。演出中の強制上書きはstep()に打ち消される
     ok('ラン中はバトル画面の「新しい対戦」ボタンが隠れる', !(await page.$('#turnbox [data-act="new"]')));
+
+    /* --- M6.6 WP12：逃げる・諦める --- */
+    ok('ラン中の戦闘には「諦める」が常に出る（M6.6 WP12）', !!(await page.$('[data-act="give-up"]')));
+    /* 通常戦闘（フリーユニット戦）の配置ステップなら「逃げる」も出ているはず。
+     * 相手の手番中など出ない場面もあるので、エンジン側の判定と画面の有無が一致することを見る。 */
+    const fleeState = await page.evaluate(() => ({
+      can: CQTurn.canFlee(M), shown: !!document.querySelector('[data-act="flee"]'), mode: M.mode
+    }));
+    ok('「逃げる」の表示はエンジンの判定と一致する', fleeState.can === fleeState.shown,
+      JSON.stringify(fleeState));
+    ok('通常戦闘はフリーユニット戦なので逃走の対象', fleeState.mode === 'field', String(fleeState.mode));
+    await shot('battle-flee-buttons');
+    /* 実際に逃げて、マップへ戻ったときの扱い（追補§8-3 案A）を確認する。
+     * 乱数任せだと成否が揺れるので、成功する結果をエンジンに直接作らせて画面の流れだけを見る。 */
+    const nodeBefore = await page.evaluate((nid) => ({
+      cleared: !!RUI.run.map.nodes[nid].cleared, attempts: RUI.run.map.nodes[nid].attempts || 0, at: RUI.run.at
+    }), battleId);
+    await page.evaluate(() => { M.fled = 'self'; M.phase = 'over'; UI.mode = 'over'; busy = false; renderAll(); });
+    await wait(() => page.$('.i-result.flee'));
+    ok('逃走成功は勝ちでも負けでもない表示になる', !!(await page.$('.i-result.flee')));
+    await page.click('[data-act="run-over"]');
+    await wait(() => page.$('.run-map'));
+    const nodeAfter = await page.evaluate((nid) => ({
+      cleared: !!RUI.run.map.nodes[nid].cleared, attempts: RUI.run.map.nodes[nid].attempts || 0,
+      at: RUI.run.at, view: RUI.view, outcome: RUI.run.outcome
+    }), battleId);
+    ok('逃げるとマップへ戻る（結果画面にはならない）', nodeAfter.view === 'map' && !nodeAfter.outcome,
+      JSON.stringify(nodeAfter));
+    ok('★逃げたマスは cleared にならない（追補§8-3 案A）', nodeAfter.cleared === false);
+    ok('★そのマスに立ったまま＝入り直せる', nodeAfter.at === battleId);
+    ok('挑戦回数が進む＝入り直すと別の引きになる', nodeAfter.attempts === nodeBefore.attempts + 1,
+      nodeBefore.attempts + '→' + nodeAfter.attempts);
+    ok('逃げたマスがもう一度選べる状態で描かれている',
+      !!(await page.$(`.map-node[data-id="${battleId}"].pickable`)));
+    await shot('map-after-flee');
+    /* もう一度そのマスに入れること（＝再戦できること）まで確かめてから、勝って先へ進む */
+    await page.click(`.map-node[data-id="${battleId}"]`, { force: true });
+    await wait(() => page.$('.battle-intro'));
+    ok('★同じマスに入り直して戦闘をやり直せる', !!(await page.$('.battle-intro')));
+    await page.click('.battle-intro');
+    await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+    const roul2 = await page.$('.first-turn-roulette');
+    if (roul2) {
+      await page.click('.first-turn-roulette');
+      await wait(() => page.evaluate(() => !document.querySelector('.first-turn-roulette')), 4000);
+    }
+    await page.waitForTimeout(800);
     // 決着を強制して「ランへ戻る」フローだけを検証する（戦闘の勝敗そのものは
     // tools/simulate-run.js のヘッドレス自動対戦で別途大量に検証済み）
     await page.evaluate(() => {

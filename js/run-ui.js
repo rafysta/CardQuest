@@ -989,7 +989,11 @@ function renderNode() {
  * 「今日の戦場ルール」の説明の置き場所が無くなる。M6の戦場ルールは『戦闘前に必ず見える』
  * ことが設計の前提（実装計画追補M6・台本のヒント `fieldRule`）なので、黒四角の下部に
  * 同じ内容を出してこの前提を保つ。 */
-const BATTLE_INTRO_MS = 2600;   /* カットインの尺（ゆっくり走る分、1.45秒から延長した） */
+/* カットインの尺。内訳は css の `.battle-intro` のコメントどおりで、
+ * 「動き（約2.3秒）＋**静止して見せる約2秒**＋暗転（0.4秒）」。
+ * 静止の2秒は 2026-08-29 の本人指定——マスター戦で相手の名前や戦場ルールを読む時間が
+ * 欲しい、との指摘による。値を変えるときは css の animation の秒数も一緒に直すこと。 */
+const BATTLE_INTRO_MS = 4300;
 
 function renderBattleIntro() {
   const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
@@ -1285,6 +1289,22 @@ function advanceAfterBattle() {
 
 function onRunBattleOver(M) {
   const run = RUI.run, n = run.map.nodes[RUI.nodeId];
+  /* M6.6 WP12：逃走で終わった戦闘は勝敗が付いていない。戦利品もＧも無く、ＬＰだけ持ち越し、
+   * **そのマスは cleared にしない**（追補§8-3 案A）＝マップに戻ると自分はまだそのマスに
+   * 立っていて、同じ相手にもう一度挑める（runChoiceIds が未解決の現在地を選択可能にする）。 */
+  if (M.fled) {
+    const r = CQRun.reportFlee(run, n, M);
+    if (r.dead) {
+      advanceAfterBattle();                      /* 逃走失敗のＬＰ0＝そのままゲームオーバー */
+    } else {
+      RUI.view = 'map';
+      runSave();
+    }
+    const tabF = document.querySelector('.tab[data-screen="screen-run"]');
+    if (tabF) tabF.click();
+    runRender();
+    return;
+  }
   CQRun.reportBattle(run, n, M, RUI.meta);
   if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
   advanceAfterBattle();
@@ -1381,6 +1401,14 @@ function runAct(act, id) {
     case 'node': {
       const n = run.map.nodes[id];
       if (n.fog && !run.map.fog.cleared) { runFlash('霧の中は入ってみないと分かりません'); }
+      /* M6.6 WP12：いま立っているマスがまだ解決していない（＝逃げてきた戦闘マス）なら、
+       * 歩かず・advance もせずにそのまま入り直す。advance() は「現在地が解決済み」を
+       * 前提にしているので通せない（runChoiceIds も、未解決の現在地は選べる扱いにしている）。 */
+      if (id === run.at && !n.cleared) {
+        RUI.nodeId = id; RUI.view = 'node';
+        runSave();
+        return runRender();
+      }
       const fromId = run.at;
       return playerWalk(run, fromId, id, function () {
         /* そのマスへ実際に進む（＝現在地を更新する）。これをしないと「解決はしたが

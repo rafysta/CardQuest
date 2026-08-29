@@ -3650,6 +3650,180 @@ t('先攻判定：マスが違えば同じランでも結果が変わりうる�
   eq(results.every((r) => r === 'self' || r === 'enemy'), true, 'すべて有効な値');
 });
 
+/* ================= M6.6 WP12: 逃げる・諦める ================= */
+section('M6.6 WP12: 逃げる・諦める');
+
+/** field モード（フリーユニット戦）のマッチを作る。逃走はここでしか使えない。
+ * ※ WP6の節にも `fieldMatch` があるので、名前を分けてある（同名だと巻き上げで
+ *   後ろの定義が前の定義を潰し、WP6のテストが壊れる。実際に一度踏んだ）。 */
+function fleeMatch(seed, opts) {
+  return CQTurn.createMatch(Object.assign({
+    cards: CARD_BY_ID, rng: CQRng.create(seed === undefined ? 1 : seed),
+    selfDeck: mkDeck(40, [8, 101, 151, 180]),
+    enemyDeck: mkDeck(40, [8, 101, 151, 180]),
+    first: 'self', mode: 'field', enemyBoard: [8, 8], hooks: HOOKS
+  }, opts || {}));
+}
+
+t('逃走：フリーユニット戦の配置ステップでだけ使える（原作§4.1の条件）', () => {
+  const m = fleeMatch(1);
+  CQTurn.beginTurn(m);
+  eq(m.phase, 'placement', '配置ステップにいる');
+  eq(CQTurn.canFlee(m), true, '配置ステップなら逃げられる');
+  CQTurn.endPlacement(m);
+  eq(m.phase, 'main', 'メインステップへ');
+  eq(CQTurn.canFlee(m), false, 'メインステップでは逃げられない');
+  eq(CQTurn.flee(m).ok, false, '呼んでも失敗する');
+});
+
+t('逃走：マスター戦（fieldでない）では使えない', () => {
+  const m = CQTurn.createMatch({
+    cards: CARD_BY_ID, rng: CQRng.create(2),
+    selfDeck: mkDeck(40, [8, 101]), enemyDeck: mkDeck(40, [8, 101]),
+    first: 'self', hooks: HOOKS
+  });
+  CQTurn.beginTurn(m);
+  eq(m.mode, null, 'fieldモードではない＝マスター戦');
+  eq(CQTurn.canFlee(m), false, 'ボス戦では逃げられない（台本の「逃げ道はない」と一致）');
+  const r = CQTurn.flee(m);
+  eq(r.ok, false, '呼んでも失敗する');
+  eq(r.reason, 'この相手からは逃げられません', '理由が出る');
+});
+
+t('逃走：そのターンに何かした後は使えない', () => {
+  const m = fleeMatch(3);
+  CQTurn.beginTurn(m);
+  const unit = m.players.self.hand.find((id) => CARD_BY_ID[id].t === 'U');
+  CQTurn.summon(m, 0, m.players.self.hand.indexOf(unit));
+  eq(m.players.self.actedThisTurn, true, '召還したので行動済み');
+  eq(CQTurn.canFlee(m), false, '行動後は逃げられない');
+});
+
+t('逃走：試せるのは毎ターン1回まで（失敗してもその場で再挑戦できない）', () => {
+  /* 失敗するシードを探して、そのうえで2回目が弾かれることを見る */
+  let m = null;
+  for (let s = 1; s < 60 && !m; s++) {
+    const cand = fleeMatch(s);
+    CQTurn.beginTurn(cand);
+    const before = cand.players.self.lp;
+    if (CQTurn.flee(cand).escaped === false) { m = cand; eq(cand.players.self.lp, before - 1, '失敗でＬＰ−1'); }
+  }
+  eq(!!m, true, '失敗するシードが見つかる');
+  if (m) {
+    eq(m.players.self.fledThisTurn, true, 'このターンは試し済みの印が立つ');
+    eq(CQTurn.canFlee(m), false, '同じターンに二度は試せない');
+    eq(CQTurn.flee(m).ok, false, '呼んでも失敗する');
+  }
+});
+
+t('逃走：成功すると m.fled が立ち、勝敗は付かない', () => {
+  let m = null;
+  for (let s = 1; s < 60 && !m; s++) {
+    const cand = fleeMatch(s);
+    CQTurn.beginTurn(cand);
+    const before = cand.players.self.lp;
+    if (CQTurn.flee(cand).escaped === true) { m = cand; eq(cand.players.self.lp, before, '成功ならＬＰは減らない'); }
+  }
+  eq(!!m, true, '成功するシードが見つかる');
+  if (m) {
+    eq(m.fled, 'self', '逃げた側が記録される');
+    eq(m.winner, null, '勝敗は付かない（勝ちでも負けでもない）');
+    eq(m.phase, 'over', '対局は終わっている');
+  }
+});
+
+t('逃走：同じシードなら結果は常に同じ（m.rng を通しているか）', () => {
+  const a = fleeMatch(7); CQTurn.beginTurn(a);
+  const b = fleeMatch(7); CQTurn.beginTurn(b);
+  eq(CQTurn.flee(a).escaped, CQTurn.flee(b).escaped, '同じシードなら同じ結果');
+});
+
+t('逃走：50%前後で成功する（極端に偏っていない）', () => {
+  let ok = 0, n = 0;
+  for (let s = 1; s <= 200; s++) {
+    const m = fleeMatch(s);
+    CQTurn.beginTurn(m);
+    if (CQTurn.flee(m).escaped) ok++;
+    n++;
+  }
+  eq(ok > n * 0.35 && ok < n * 0.65, true, '200試行の成功率が35〜65%に収まる：' + ok + '/' + n);
+});
+
+t('逃走の失敗でＬＰが0になったら、その場で敗北が確定する', () => {
+  let m = null;
+  for (let s = 1; s < 60 && !m; s++) {
+    const cand = fleeMatch(s, { selfOpts: { lp: 1, maxLp: 15 } });
+    CQTurn.beginTurn(cand);
+    if (CQTurn.flee(cand).escaped === false) m = cand;
+  }
+  eq(!!m, true, 'ＬＰ1で失敗するシードが見つかる');
+  if (m) {
+    eq(m.players.self.lp, 0, 'ＬＰ0');
+    eq(m.winner, 'enemy', '敗北が確定する');
+    eq(!!m.fled, false, '逃げられてはいない');
+  }
+});
+
+t('諦める：ＬＰ0の敗北として扱われる', () => {
+  const m = fleeMatch(9);
+  CQTurn.beginTurn(m);
+  const r = CQTurn.resign(m, 'self');
+  eq(r.ok, true, '成功する');
+  eq(m.players.self.lp, 0, 'ＬＰ0になる');
+  eq(m.winner, 'enemy', '相手の勝ち＝こちらの敗北');
+  eq(m.resigned, 'self', '諦めた側が記録される（画面の文言の出し分けに使う）');
+});
+
+t('諦める：マスター戦でも使える（逃走と違って制限なし）', () => {
+  const m = CQTurn.createMatch({
+    cards: CARD_BY_ID, rng: CQRng.create(10),
+    selfDeck: mkDeck(40, [8, 101]), enemyDeck: mkDeck(40, [8, 101]),
+    first: 'self', hooks: HOOKS
+  });
+  CQTurn.beginTurn(m);
+  eq(CQTurn.resign(m, 'self').ok, true, 'ボス戦でも諦められる');
+  eq(m.winner, 'enemy', '敗北になる');
+});
+
+t('ラン側：逃走はマスを cleared にせず、ＬＰだけ持ち越す（追補§8-3 案A）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 21, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const goldBefore = run.gold;
+  const fakeM = { fled: 'self', winner: null, loot: [], players: { self: { lp: 6 } } };
+  const r = CQRun.reportFlee(run, n, fakeM);
+  eq(r.fled, true, '逃走として処理される');
+  eq(r.dead, false, 'まだ死んでいない');
+  eq(!!n.cleared, false, '★マスは解決済みにならない＝そのマスに留まり、入り直せる');
+  eq(run.lp, 6, 'ＬＰは戦闘後の値を持ち越す');
+  eq(run.gold, goldBefore, 'Ｇは増えない');
+  eq(run.lootPending, [], '戦利品も無い');
+  eq(!run.outcome, true, 'ランはまだ続く');
+});
+
+t('ラン側：逃走失敗でＬＰ0ならランが終わる', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 22, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const r = CQRun.reportFlee(run, n, { fled: null, players: { self: { lp: 0 } } });
+  eq(r.dead, true, '力尽きた');
+  eq(run.lp, 0, 'ＬＰ0');
+  eq(run.outcome, 'lose', 'ゲームオーバー');
+  eq(!!n.cleared, false, 'それでもマスは解決済みにしない');
+});
+
+t('ラン側：逃げたマスは「いま立っているのに未解決」なので、選び直せる', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 23, freshMeta());
+  CQRun.depart(run);
+  const first = CQRun.choices(run)[0];
+  CQRun.advance(run, first.id);
+  eq(run.at, first.id, 'そのマスへ進んだ');
+  eq(!!first.cleared, false, 'まだ解決していない');
+  /* この状態が「逃げて戻ってきた直後」と同じ。run-ui の runChoiceIds は
+   * 現在地が未解決なら現在地自身を選択可能として返す（＝もう一度入れる）。 */
+  eq(CQRun.choices(run), [], '未解決のうちは先へは進めない');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

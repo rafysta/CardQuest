@@ -422,7 +422,7 @@ async function runStep() {
   const pv = FXPREV; FXPREV = null;
   if (pv) { const w = await animateFx(pv); if (w) await sleep(w); }   /* 人の操作直後の変化をまず見せる */
   let guard = 0;
-  while (M && !M.winner && guard++ < 500) {
+  while (M && !M.winner && !M.fled && guard++ < 500) {   /* M.fled＝逃走成功。勝敗は付かないが対局は終わり */
     if (M.combat) {                                   /* 戦闘中のオープンフェイズ */
       if (!isAuto(CQCombat.openerSide(M))) break;
       await fxAct(() => CQAi.openStep(M));            /* 相手のオープンは1枚ずつめくって見せる */
@@ -447,7 +447,7 @@ async function runStep() {
   }
   const lines = M.log.slice(mark);
   if (lines.length) UI.report = lines;
-  if (M.winner) UI.mode = 'over';
+  if (M.winner || M.fled) UI.mode = 'over';
   else if (M.combat && !isAuto(CQCombat.openerSide(M))) {
     if (UI.mode !== 'battle') UI.mode = 'battle';
   } else if (UI.mode === 'battle' || UI.mode === 'over') UI.mode = 'idle';
@@ -760,7 +760,7 @@ function renderHand() {
   /* ステップを進めるボタン */
   const acts = document.getElementById('acts');
   let b = '';
-  if (M.winner) {
+  if (M.winner || M.fled) {
     b = RUN_ACTIVE ? '<button class="act-btn" data-act="run-over">ランへ<br>戻る</button>'
                    : '<button class="act-btn" data-act="new">もう一度<br>対戦する</button>';
   }
@@ -778,7 +778,17 @@ function renderHand() {
     if (M.phase === 'placement') b = '<button class="act-btn" data-act="end-place">配置を<br>終える</button>';
     else if (M.phase === 'main') b = '<button class="act-btn" data-act="end-turn">ターンを<br>終了する</button>';
   }
-  acts.innerHTML = b;
+  /* M6.6 WP12：ラン中の戦闘には「逃げる」「諦める」を右下に添える。
+   *   逃げる … フリーユニット戦の配置ステップで、そのターンまだ何もしていないときだけ
+   *             （CQTurn.canFlee が原作の条件をそのまま判定する）。マスター戦では出ない
+   *   諦める … いつでも押せる。確認ダイアログを挟んで自らゲームオーバーを選ぶ
+   * 単発の検証モード（RUN_ACTIVE=false）では出さない——戻る先のランが無いため。 */
+  let sub = '';
+  if (RUN_ACTIVE && !M.winner && !M.fled) {
+    if (CQTurn.canFlee(M)) sub += '<button class="act-btn sub" data-act="flee">逃げる</button>';
+    sub += '<button class="act-btn sub ng" data-act="give-up">諦める</button>';
+  }
+  acts.innerHTML = sub + b;
 }
 
 /* ================= 右の情報パネル ================= */
@@ -904,12 +914,22 @@ function panelField() {
 }
 
 function panelOver() {
+  /* M6.6 WP12：逃走成功は勝ちでも負けでもない第3の終わり方。マスは残ったままなので、
+   * 「入り直せる」ことをここで伝える（そうしないとマップに戻ったとき何が起きたか読めない）。 */
+  if (M.fled) {
+    paint(`<div class="i-result flee">戦いから離脱した</div>
+      <p class="i-t">このマスの相手はまだ残っています。もう一度入り直せます（第 ${M.turn} ターン）</p>
+      ${UI.report ? reportHTML(UI.report) : ''}`,
+      `<p class="i-hint">${RUN_ACTIVE ? '右下の「ランへ戻る」で探索に戻ります' : ''}</p>`);
+    return;
+  }
   const win = M.winner === 'self';
   /* v0.15.1：山札切れ敗北は廃止（尽きたら自動再装填・ＬＰ−2）。敗因はＬＰ0のみ。
-   * M6.6 WP6：フリーユニット戦は勝利条件が違う（敵の場を空にする）ので理由の文も変える。 */
+   * M6.6 WP6：フリーユニット戦は勝利条件が違う（敵の場を空にする）ので理由の文も変える。
+   * M6.6 WP12：自分から諦めた場合はＬＰ0の理由が違うので、その旨を出す。 */
   const why = win
     ? (CQTurn.isFieldMode(M) ? '相手の場のユニットを全て倒しました' : '相手のＬＰが0になりました')
-    : 'あなたのＬＰが0になりました';
+    : (M.resigned === 'self' ? 'あなたが探索を諦めました' : 'あなたのＬＰが0になりました');
   /* 2026-08-29 本人指摘：決着後の「ランへ戻る」が情報パネルと右下の2箇所に出ていた。
    * 進行のボタンは常に右下（#acts）に置く決まりなので、パネル側からは外して右下だけにする。
    * 単発の検証モード（RUN_ACTIVE=false）の「もう一度」も同じ理由で右下だけにする。 */
@@ -1231,6 +1251,27 @@ function panelAct(act, data) {
       if (hook) hook(m);
       return;
     }
+    /* M6.6 WP12：逃げる。成功なら対局はそこで終わり（勝敗は付かない）、
+     * 失敗ならＬＰ−1を払ってそのまま続行する。 */
+    case 'flee': {
+      markLog();
+      const r = CQTurn.flee(M);
+      if (!r.ok) { flash(r.reason); return; }
+      if (r.escaped) { flash('逃げきった'); return step(); }
+      flash('逃げそこねた（ＬＰ−' + CQTurn.FLEE_LP_COST + '）');
+      return step();
+    }
+    /* M6.6 WP12：諦める。ＬＰを0にして通常の敗北と同じ経路に乗せる＝清算はゲームオーバー
+     * （▲75%）。リタイヤ（▲50%）とは別物なので、確認ダイアログでその差を明示する。 */
+    case 'give-up':
+      showConfirm(
+        'この探検をここで終えます。\nゲームオーバー扱いになり、集めたＧの75%を失います。\nよろしいですか？',
+        function () {
+          markLog();
+          CQTurn.resign(M, 'self');
+          step();
+        }, '諦める');
+      return;
     case 'mode':
       foeAuto = !foeAuto;
       flash(foeAuto ? '相手を自動で動かします' : '相手もあなたが操作します');
