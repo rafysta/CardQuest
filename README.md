@@ -15,3 +15,8 @@ SOUL GATE ver1.16（2003年・RPGツクール2000製フリーゲーム）のカ�
 1. ブラウザで `https://rafysta.github.io/CardQuest/` を開く
 2. Chrome のメニュー →「ホーム画面に追加」
 3. 以後はホーム画面のアイコンから起動（全画面・横向き固定）
+
+
+## ローカル環境での確認の仕方
+1. ターミナルで、`python3 -m http.server 8321`を実行
+2. `http://127.0.0.1:8321/index.html`を開く

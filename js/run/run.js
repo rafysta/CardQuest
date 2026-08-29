@@ -400,12 +400,17 @@
     return { gold: n.gold, cardId: n.cardId };
   }
 
+  /* M6.6 WP8：休憩の回復量は+5（本人確定・実装計画追補§2-5）。ショップの有料回復も
+   * 同じ量に揃える（追補が推奨。値が2箇所に分かれないよう定数を1つにまとめた）。 */
+  const REST_HEAL_AMOUNT = 5;
+
   function rest(run, n) {
     n.cleared = true;
     const before = run.lp;
-    run.lp = Math.min(run.maxLp, run.lp + 3);
+    run.lp = Math.min(run.maxLp, run.lp + REST_HEAL_AMOUNT);
+    const healed = run.lp - before;
     run.log.push('休憩：ＬＰ ' + before + '→' + run.lp);
-    return { lp: run.lp };
+    return { lp: run.lp, healed: healed };
   }
 
   const SHOP_RATE = 0.5;   /* ラン中ショップの割引率（初期値。ログショップ本体はM7） */
@@ -427,7 +432,7 @@
     if (run.gold < n.healCost) return { ok: false, reason: 'Ｇが足りません' };
     run.gold -= n.healCost;
     const before = run.lp;
-    run.lp = Math.min(run.maxLp, run.lp + 3);
+    run.lp = Math.min(run.maxLp, run.lp + REST_HEAL_AMOUNT);
     run.log.push('ショップでＬＰ回復：' + before + '→' + run.lp + '（-' + n.healCost + 'Ｇ）');
     return { ok: true, lp: run.lp };
   }

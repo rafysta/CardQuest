@@ -1272,6 +1272,92 @@ td.nm{font-weight:800}
   50%{transform:translateY(-22px)}
 }
 
+/* ---- 休憩・宝箱のカットイン（M6.6 WP8） -------------------------------
+ * 戦闘導入（.battle-intro・WP5）と同じ「画面の一部だけを覆う黒い四角、後ろにマップが
+ * 見えたまま」の形をそのまま共用する（本人指定：全画面にはしない）。開く動きは
+ * battle-intro-cut と同じ battleIntroCut キーフレームをそのまま使う。戦闘導入と違うのは
+ * ①演出がすべて四角の“内側”で完結する点（外へ走り出すものが無い）と、②操作を
+ * 一切必要としない点（コマが着いた瞬間に自動で開始、終わったら自動で閉じてマップへ戻る。
+ * js/run-ui.js の EVENT_INTRO_MS＝4000ms と揃えること：
+ *   〜0.4s 四角が開く／〜1.5s ハート・金貨が動く／〜3.6s メッセージを読む間／〜4.0s 閉じる */
+.event-intro{ position:absolute;inset:0;z-index:900;cursor:pointer; }
+.event-intro-cut{
+  position:absolute;left:27%;right:27%;top:50%;height:56%;
+  transform:translateY(-50%) scaleY(0);transform-origin:center;
+  background:#05070d;border:1px solid #1b2740;border-radius:6px;
+  box-shadow:0 18px 60px rgba(0,0,0,.75);
+  animation:battleIntroCut .4s cubic-bezier(.2,.85,.25,1) forwards;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;overflow:hidden;
+}
+.event-intro-cut.closing{ animation:eventIntroClose .4s cubic-bezier(.4,0,.7,1) forwards; }
+@keyframes eventIntroClose{ to{ transform:translateY(-50%) scaleY(0); } }
+
+.event-intro-title{
+  font-size:19px;font-weight:800;color:#e9eef7;text-shadow:0 2px 6px #000;
+  opacity:0;animation:battleIntroFade .35s ease-out .35s forwards;
+}
+.event-intro-stage{ position:relative;width:100%;height:220px;flex:none; }
+.event-intro-msg{
+  font-size:16px;color:#e9eef7;text-shadow:0 2px 6px #000;text-align:center;line-height:1.7;
+  opacity:0;animation:battleIntroFade .4s ease-out 1.55s forwards;
+}
+/* Ｇ／ＬＰの数値部分だけ大きく見せる（本人指定：金額・回復量がはっきりわかるように） */
+.event-intro-amount{ font-size:30px;font-weight:800;line-height:1.3; }
+.event-intro-amount-gold{ color:var(--accent);text-shadow:0 2px 6px rgba(0,0,0,.6),0 0 12px rgba(250,204,21,.45); }
+.event-intro-amount-lp{ color:#ff6b81;text-shadow:0 2px 6px rgba(0,0,0,.6),0 0 12px rgba(255,107,129,.45); }
+
+/* 休憩：中央のコマ（戦闘導入の .battle-intro-hero と同じ大きさ）へ、ハートが左上・右上から
+ * 弧を描いて飛び込む（本人指定）。円弧の軌跡は transform:translate(%) だと自分自身の小さな
+ * 矩形基準になってしまうため、親要素（.event-intro-stage）基準で動く left/top の％指定で
+ * キーフレームを組んでいる。 */
+.event-rest-hero{
+  position:absolute;left:50%;bottom:0;width:132px;height:172px;margin-left:-66px;
+  filter:drop-shadow(0 10px 10px rgba(0,0,0,.5));
+}
+.event-rest-hero img{ width:100%;height:100%;object-fit:contain; }
+.event-rest-heart{
+  position:absolute;font-size:44px;color:#ff6b81;opacity:0;
+  text-shadow:0 3px 6px rgba(0,0,0,.55);
+  animation-duration:1.15s;animation-timing-function:ease-in;animation-fill-mode:both;
+}
+.event-rest-heart-l{ animation-name:eventHeartArcLeft; }
+.event-rest-heart-r{ animation-name:eventHeartArcRight; }
+@keyframes eventHeartArcLeft{
+  0%{ left:4%;  top:-4%;  transform:scale(.55) rotate(-15deg); opacity:0; }
+  18%{ opacity:1; }
+  55%{ left:26%; top:38%; transform:scale(.95) rotate(-6deg); }
+  100%{ left:44%; top:70%; transform:scale(1.15) rotate(4deg); opacity:0; }
+}
+@keyframes eventHeartArcRight{
+  0%{ left:96%; top:-4%;  transform:scale(.55) rotate(15deg); opacity:0; }
+  18%{ opacity:1; }
+  55%{ left:74%; top:38%; transform:scale(.95) rotate(6deg); }
+  100%{ left:56%; top:70%; transform:scale(1.15) rotate(-4deg); opacity:0; }
+}
+
+/* 宝箱：マップ上と同じ宝箱イラスト（約1.5倍）から、金貨（Ｇ）が大量にど派手にはじけ飛ぶ
+ * （本人指定）。画像が読み込めない環境向けに絵文字フォールバックを用意している。 */
+.event-chest-box{
+  position:absolute;left:50%;bottom:4px;transform:translateX(-50%);
+  width:140px;height:140px;
+}
+.event-chest-box img{ width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 10px 10px rgba(0,0,0,.5)); }
+.event-chest-box-fallback{ font-size:96px;line-height:140px;text-align:center;filter:drop-shadow(0 10px 10px rgba(0,0,0,.5)); }
+.event-chest-coin{
+  position:absolute;left:50%;bottom:60px;font-weight:800;color:var(--accent);
+  opacity:0;text-shadow:0 2px 5px rgba(0,0,0,.6),0 0 10px rgba(250,204,21,.5);
+  animation:eventCoinPop 1.05s cubic-bezier(.15,.8,.3,1) forwards;
+}
+@keyframes eventCoinPop{
+  0%{ transform:translate(-50%,0) scale(.4) rotate(0); opacity:0; }
+  20%{ opacity:1; }
+  100%{
+    transform:translate(calc(-50% + var(--cx,0px)), var(--cy,-70px)) scale(1) rotate(var(--cr,0deg));
+    opacity:0;
+  }
+}
+
 /* ---- フリーバトルの設定画面（開発用・2026-08-29） ----
  * 旧「バトル画面（検証）」の設定（相手ＡＩの強さ・戦場ルール）をここへ集約し、
  * 相手と先攻・後攻の選択を足した画面。デバッグメニューから開く。 */

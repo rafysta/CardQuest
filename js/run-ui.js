@@ -43,6 +43,10 @@ const RUI = {
    * 切り替わるまでの一瞬だけ使う作業用の状態。cq_run には保存しない（保存中に途切れても
    * 単に演出が飛ぶだけで、再開時は素直にマップへ戻る）。 */
   battleIntroNodeId: null, battleIntroLeaving: false,
+  /* 休憩・宝箱のカットイン（M6.6 WP8）用。battleIntro系と同じ役割の作業用の状態。
+   * eventIntroResult は「効果を1回だけ確定させる」ためのガード（CQRun.openChest/rest の
+   * 呼び出しをこの演出の最初の描画だけに限定する）。 */
+  eventIntroNodeId: null, eventIntroLeaving: false, eventIntroKind: null, eventIntroResult: null,
   /* デバッグメニューの「戦闘開始シーンを再生」中だけ入る。入っていると、カットインが
    * 終わっても実戦闘へは進まず、元の画面（battleIntroBackTo）に戻ってコールバックを呼ぶ。 */
   battleIntroPreview: null, battleIntroBackTo: null,
@@ -1039,8 +1043,17 @@ function renderNode() {
     RUI.view = 'battle-intro';
     return renderBattleIntro();
   }
-  if (n.type === 'chest') return renderChestNode(run, n);
-  if (n.type === 'rest') return renderRestNode(run, n);
+  /* M6.6 WP8：宝箱・休憩も、敵のマスと同じように「触れた時点で」自動的に演出へ入る
+   * （「開ける」「休む」のクリックは無くした）。効果の確定と自動でマップへ戻る処理は
+   * renderEventIntro() 側で行う。 */
+  if (n.type === 'chest' || n.type === 'rest') {
+    RUI.eventIntroNodeId = RUI.nodeId;
+    RUI.eventIntroLeaving = false;
+    RUI.eventIntroKind = n.type;
+    RUI.eventIntroResult = null;
+    RUI.view = 'event-intro';
+    return renderEventIntro();
+  }
   if (n.type === 'shop') return renderShopNode(run, n);
   if (n.type === 'exchange') return renderExchangeNode(run, n);
   if (n.type === 'question') return renderQuestionNode(run, n);
@@ -1142,38 +1155,111 @@ function previewBattleIntro(onDone) {
 }
 if (typeof window !== 'undefined') window.previewBattleIntro = previewBattleIntro;
 
-function renderChestNode(run, n) {
-  if (!n.opened) {
-    runRoot().innerHTML = `
-      <div class="node-panel">
-        <h3>${n.rare ? '大きな宝箱' : '宝箱'}</h3>
-        <button class="btn ok" data-act="chest-open">開ける</button>
-      </div>`;
-    return;
+/* ================= 休憩・宝箱の演出カットイン（M6.6 WP8） =================
+ * 戦闘導入（WP5）とまったく同じ形——マップの上に画面の一部だけを覆う黒い四角を重ね、
+ * その後ろにマップを見せたまま四角の内側だけでアニメーションを完結させる——を流用する。
+ * 戦闘導入と違う点は2つ：①演出がすべて四角の内側で終わる（外へ走り出すものが無い）、
+ * ②プレイヤー操作を一切必要としない（コマが着いた瞬間に自動で始まり、終わったら
+ * 自動でマップへ戻る。従来の「開ける」「休む」「進む」のクリックは全部無くした）。
+ *
+ * 効果（Ｇ獲得／ＬＰ回復）は、この演出に入って最初にここへ描画が来たときに1回だけ
+ * 確定させる（RUI.eventIntroResult に結果を持たせるガード）。タップでの早送りと
+ * 二重に走らないようにするだけなら leaveEventIntro 側のガードで足りるが、演出そのものを
+ * 再描画したときに CQRun.openChest/rest を2回呼んでしまわないよう、効果の確定は
+ * こちら側でも別にガードしてある。 */
+const EVENT_INTRO_MS = 4000;   /* 内訳：開く.4s → 演出（ハート/金貨）～1.5s → 読む～2s → 閉じる.4s */
+
+function renderEventIntro() {
+  const run = RUI.run, n = run.map.nodes[RUI.eventIntroNodeId];
+  const kind = RUI.eventIntroKind;
+  if (!RUI.eventIntroResult) {
+    RUI.eventIntroResult = kind === 'chest' ? CQRun.openChest(run, n) : CQRun.rest(run, n);
+    runSave();
   }
-  const cardName = n.cardId != null ? CARD_BY_ID[n.cardId].n : null;
-  runRoot().innerHTML = `
-    <div class="node-panel">
-      <h3>宝箱を開けた</h3>
-      <p>Ｇ +${n.gold}${cardName ? '・' + esc(cardName) + ' を入手' : ''}</p>
-      <button class="btn ok" data-act="node-done">進む</button>
+  const r = RUI.eventIntroResult;
+  /* マップを下に敷いてから、その上にカットインを重ねる（四角の後ろにマップが見える。WP5と同じ） */
+  renderMap();
+  const ov = document.createElement('div');
+  ov.className = 'event-intro';
+  ov.dataset.act = 'event-intro-skip';
+  const title = kind === 'chest' ? (n.rare ? '大きな宝箱' : '宝箱') : '休憩';
+  const stageHTML = kind === 'chest' ? chestIntroStageHTML() : restIntroStageHTML();
+  /* 2026-08-29 本人指定：獲得量の数字は一目で分かるよう大きく強調する。 */
+  const msg = kind === 'chest'
+    ? `<span class="event-intro-amount event-intro-amount-gold">${r.gold}Ｇ</span>を取得した。`
+      + (r.cardId != null ? `<br>${esc(CARD_BY_ID[r.cardId].n)}を入手した。` : '')
+    : (r.healed > 0
+        ? `ＬＰが<span class="event-intro-amount event-intro-amount-lp">${r.healed}</span>回復した。`
+        : 'ＬＰはすでに満タンだった。');
+  ov.innerHTML = `
+    <div class="event-intro-cut">
+      <div class="event-intro-title">${esc(title)}</div>
+      <div class="event-intro-stage">${stageHTML}</div>
+      <div class="event-intro-msg">${msg}</div>
     </div>`;
+  runRoot().appendChild(ov);
+  setTimeout(function () {
+    const cut = ov.querySelector('.event-intro-cut');
+    if (cut) cut.classList.add('closing');
+  }, EVENT_INTRO_MS - 400);
+  setTimeout(leaveEventIntro, EVENT_INTRO_MS);
 }
 
-function renderRestNode(run, n) {
-  if (!n.cleared) {
-    runRoot().innerHTML = `
-      <div class="node-panel">
-        <h3>休憩</h3>
-        <p>ＬＰ：${run.lp}／${run.maxLp}</p>
-        <button class="btn ok" data-act="rest-go">休む（ＬＰ+3）</button>
-        <p class="node-note">※デッキの調整はこのマスではまだできません（今後の版で追加予定）</p>
-      </div>`;
-    return;
-  }
-  runRoot().innerHTML = `
-    <div class="node-panel"><h3>休憩を終えた</h3><p>ＬＰ：${run.lp}／${run.maxLp}</p>
-      <button class="btn ok" data-act="node-done">進む</button></div>`;
+/** 休憩の演出：中央に立つ自分のコマ（戦闘導入の.battle-intro-heroと同じ大きさ）へ、
+ * 左上・右上から弧を描いてハートが飛び込んでくる（回復を表す。2026-08-29 本人指定：
+ * ハートは2倍の大きさ・直線に落とすのではなく弧を描かせる・コマは戦闘導入と同じ大きさに）。 */
+function restIntroStageHTML() {
+  const hearts = [
+    { side: 'l', delay: 0 },
+    { side: 'r', delay: .12 },
+    { side: 'l', delay: .55 },
+    { side: 'r', delay: .67 }
+  ].map(function (h) {
+    return `<span class="event-rest-heart event-rest-heart-${h.side}" style="animation-delay:${h.delay}s">♥</span>`;
+  }).join('');
+  return `<div class="event-rest-hero">
+      <img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()">
+    </div>${hearts}`;
+}
+
+/** 宝箱の演出：マップのマスと同じ宝箱の絵（`assets/map/icon_chest.png`。マップ上より1.5倍の
+ * 大きさ）から、金貨（Ｇ）が大量にはじけて派手に舞い上がる（2026-08-29 本人指定）。
+ * マップ側が画像読み込み失敗時に絵文字へフォールバックするのと同じやり方に揃えてある。 */
+function chestIntroStageHTML() {
+  const coins = [
+    { cx: -70, cy: -104, cr: -30, delay: 0,   size: 20 },
+    { cx: -46, cy: -132, cr: 18,  delay: .05, size: 24 },
+    { cx: -20, cy: -148, cr: -14, delay: .10, size: 18 },
+    { cx: 4,   cy: -156, cr: 8,   delay: .04, size: 26 },
+    { cx: 28,  cy: -146, cr: -20, delay: .14, size: 20 },
+    { cx: 54,  cy: -128, cr: 26,  delay: .08, size: 22 },
+    { cx: 76,  cy: -100, cr: -10, delay: .18, size: 18 },
+    { cx: -84, cy: -60,  cr: 34,  delay: .22, size: 16 },
+    { cx: 84,  cy: -58,  cr: -28, delay: .24, size: 16 },
+    { cx: -10, cy: -180, cr: 12,  delay: .12, size: 22 },
+    { cx: 40,  cy: -170, cr: -18, delay: .20, size: 18 },
+    { cx: -40, cy: -168, cr: 22,  delay: .16, size: 18 }
+  ].map(function (c) {
+    return `<span class="event-chest-coin" style="animation-delay:${c.delay}s;font-size:${c.size}px;--cx:${c.cx}px;--cy:${c.cy}px;--cr:${c.cr}deg">Ｇ</span>`;
+  }).join('');
+  return `<div class="event-chest-box">
+      <img src="assets/map/icon_chest.png" alt="" draggable="false"
+        onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'event-chest-box-fallback',textContent:'🎁'}))">
+    </div>${coins}`;
+}
+
+/** カットインを終えて自動でマップへ戻る。タイマー経由・タップスキップ経由のどちらから
+ * 呼ばれても一度しか進まないよう eventIntroLeaving で防ぐ（leaveBattleIntro と同じ形）。
+ * 効果はすでに renderEventIntro() の最初の呼び出しで確定・保存済みなので、ここでは
+ * 演出用の状態を片付けてマップへ戻すだけでよい。 */
+function leaveEventIntro() {
+  if (RUI.eventIntroLeaving || RUI.view !== 'event-intro') return;
+  RUI.eventIntroLeaving = true;
+  RUI.eventIntroNodeId = null;
+  RUI.eventIntroKind = null;
+  RUI.eventIntroResult = null;
+  RUI.view = 'map';
+  runRender();
 }
 
 function renderShopNode(run, n) {
@@ -1311,6 +1397,7 @@ function runRender() {
   else if (RUI.view === 'map') renderMap();
   else if (RUI.view === 'node') renderNode();
   else if (RUI.view === 'battle-intro') renderBattleIntro();
+  else if (RUI.view === 'event-intro') renderEventIntro();
   else if (RUI.view === 'loot') renderLoot();
   else if (RUI.view === 'result') renderResult();
 }
@@ -1496,10 +1583,8 @@ function runAct(act, id) {
      * 時点で renderNode() が直接カットインへ振り分ける。 */
     case 'battle-intro-skip':
       return leaveBattleIntro();
-    case 'chest-open':
-      CQRun.openChest(run, run.map.nodes[RUI.nodeId]);
-      runSave();
-      return runRender();
+    case 'event-intro-skip':
+      return leaveEventIntro();
     case 'loot-deck': {
       const r = CQRun.resolveLootPick(run, +id, 'deck', CARD_BY_ID);
       if (!r.ok) { runFlash(r.reason); return runRender(); }
@@ -1512,10 +1597,6 @@ function runAct(act, id) {
       advanceAfterBattle();
       return runRender();
     }
-    case 'rest-go':
-      CQRun.rest(run, run.map.nodes[RUI.nodeId]);
-      runSave();
-      return runRender();
     case 'shop-buy': {
       const r = CQRun.shopBuy(run, CARD_BY_ID, run.map.nodes[RUI.nodeId], +id);
       if (!r.ok) runFlash(r.reason);

@@ -99,15 +99,37 @@
     };
   }
 
+  /** M6.6 WP8：宝箱の金額は「このマップに配置された敵編成から1体を選び、その定価の50%」
+   * （10G単位に丸め・マップ生成時に確定＝決定的。§7-1）に変更した。ただし生成はマスを
+   * 順番に作っていく途中で行われるため、この時点ではまだ他の敵が出揃っていない。
+   * そのためここでは仮に0を入れておき、全ノードが揃った後（generate() の末尾）で
+   * まとめて確定させる（fixChestGold 参照）。カード抽選（cardId）はここまで通り。 */
   function rollChest(rng, pool, rare) {
-    const gold = rare ? rng.int(300, 500) : rng.int(80, 200);
     let cardId = null;
     if (rare || rng.next() < 0.6) {
       const cut = rare ? Math.max(1, Math.floor(pool.length * 0.5)) : 0;
       const cand = pool.slice(cut);
       if (cand.length) cardId = rng.pick(cand).id;
     }
-    return { type: 'chest', rare: !!rare, gold: gold, cardId: cardId, opened: false };
+    return { type: 'chest', rare: !!rare, gold: 0, cardId: cardId, opened: false };
+  }
+
+  /** 全ノードが出揃った後、宝箱の金額をまとめて確定する（M6.6 WP8・§7-1）。
+   * 対象は「このマップに実際に配置された敵編成」＝type==='battle' で敵が居るノード全部
+   * （ボスは enemy が null なので自動的に除外される）。1体をランダムに選び、
+   * その定価の50%を10G単位に丸めた額にする。配置された敵が万一0体のとき
+   * （理論上は起きない）だけ、rare かどうかで控えめな既定額にフォールバックする。 */
+  function fixChestGold(rng, nodes) {
+    const roster = Object.keys(nodes)
+      .map(function (id) { return nodes[id]; })
+      .filter(function (nd) { return nd.type === 'battle' && nd.enemy; })
+      .map(function (nd) { return nd.enemy; });
+    Object.keys(nodes).forEach(function (id) {
+      const nd = nodes[id];
+      if (nd.type !== 'chest') return;
+      const price = roster.length ? rng.pick(roster).price : (nd.rare ? 800 : 400);
+      nd.gold = Math.round(price * 0.5 / 10) * 10;
+    });
   }
 
   function rollShop(rng, pool, area, fogActive) {
@@ -251,6 +273,11 @@
     const order = [start];
     segIds.forEach(function (s) { order.push(s.a0, s.a1, s.b0, s.b1); });
     order.push(boss);
+
+    /* M6.6 WP8：ここで全ノードの敵編成が出揃っているので、宝箱の金額を確定する。
+     * fog対策（霧マップの片方を強制ショップにする処理）より後・returnより前に置く
+     * ことで、ショップへ変わったノードは type!=='chest' として自然に除外される。 */
+    fixChestGold(rng, nodes);
 
     return {
       seed: opts.seed, areaId: area.id, segTemplates: segTemplates,

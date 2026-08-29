@@ -326,14 +326,25 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   if (nonBattle) {
     const t = await nodeType(nonBattle);
     await page.click(`.map-node[data-id="${nonBattle}"]`, { force: true });
-    await wait(() => page.$('.node-panel'));
-    ok('非戦闘マス(' + t + ')の解決パネルが出る', !!(await page.$('.node-panel')), t);
-    await shot('node-' + t);
-    if (t === 'chest') { await page.click('[data-act="chest-open"]'); await page.waitForTimeout(200); await page.click('[data-act="node-done"]'); }
-    else if (t === 'rest') { await page.click('[data-act="rest-go"]'); await page.waitForTimeout(200); await page.click('[data-act="node-done"]'); }
-    else if (t === 'shop') { await page.click('[data-act="shop-leave"]'); }
-    else if (t === 'exchange') { await page.click('[data-act="exchange-leave"]'); }
-    else if (t === 'question') { await page.click('[data-act="node-done"]'); }
+    if (t === 'chest' || t === 'rest') {
+      /* M6.6 WP8：宝箱・休憩はクリック不要で自動的にカットイン（.event-intro）へ入り、
+       * 終わったら自動でマップへ戻る（戦闘導入＝.battle-introと同じ「四角の後ろに
+       * マップが見えたまま」の形）。 */
+      await wait(() => page.$('.event-intro'));
+      ok('非戦闘マス(' + t + ')は自動でカットインに入る（M6.6 WP8）', !!(await page.$('.event-intro')), t);
+      ok('カットインの後ろにマップが見えている', !!(await page.$('.event-intro')) && !!(await page.$('.run-map')));
+      await page.waitForTimeout(900);   // ハート／金貨の演出が動いている途中の絵を撮る
+      await shot('node-' + t);
+      await page.click('.event-intro');   // タップでスキップ
+      await wait(() => page.evaluate(() => !document.querySelector('.event-intro')));
+    } else {
+      await wait(() => page.$('.node-panel'));
+      ok('非戦闘マス(' + t + ')の解決パネルが出る', !!(await page.$('.node-panel')), t);
+      await shot('node-' + t);
+      if (t === 'shop') { await page.click('[data-act="shop-leave"]'); }
+      else if (t === 'exchange') { await page.click('[data-act="exchange-leave"]'); }
+      else if (t === 'question') { await page.click('[data-act="node-done"]'); }
+    }
     await wait(() => page.$('.run-map'));
     ok('非戦闘マスを解決するとマップへ戻る', !!(await page.$('.run-map')));
   } else {

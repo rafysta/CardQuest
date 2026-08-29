@@ -2919,11 +2919,35 @@ t('宝箱：開封は1回だけ、Ｇとカードが入る', () => {
   eq(run.gold, before + 100, 'Ｇは増えない');
 });
 
-t('休憩：ＬＰ+3・maxLpで頭打ち', () => {
+t('休憩：ＬＰ+5・maxLpで頭打ち（M6.6 WP8）', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 11, freshMeta());
+  run.lp = 8;
+  const r1 = CQRun.rest(run, {});
+  eq(run.lp, 13, 'ＬＰ+5される');
+  eq(r1.healed, 5, '回復した量がそのまま返る');
   run.lp = 14;
-  CQRun.rest(run, {});
+  const r2 = CQRun.rest(run, {});
   eq(run.lp, 15, 'maxLp(15)で頭打ち');
+  eq(r2.healed, 1, '頭打ちのぶんだけ回復量が減って返る');
+});
+
+t('宝箱：金額は「配置された敵編成」のいずれか1体の定価の50%（10G単位・M6.6 WP8）', () => {
+  for (let seed = 1; seed <= 40; seed++) {
+    const m = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed, ownedIds: [] });
+    const roster = Object.values(m.nodes).filter((n) => n.type === 'battle' && n.enemy).map((n) => n.enemy);
+    const candidates = roster.map((e) => Math.round(e.price * 0.5 / 10) * 10);
+    const chests = Object.values(m.nodes).filter((n) => n.type === 'chest');
+    chests.forEach((n) => {
+      eq(n.gold % 10, 0, 'seed ' + seed + '：宝箱の金額は10G単位');
+      eq(candidates.indexOf(n.gold) >= 0, true,
+        'seed ' + seed + '：宝箱の金額(' + n.gold + ')は配置された敵の定価の50%のいずれかと一致');
+    });
+  }
+  /* 同じseedなら常に同じ金額になる（マップ生成時に決定的に確定） */
+  const a = CQMap.generate({ cards: CARD_BY_ID, areaId: 'forest', seed: 99, ownedIds: [] });
+  const b = CQMap.generate({ cards: CARD_BY_ID, areaId: 'forest', seed: 99, ownedIds: [] });
+  const chestGolds = (m) => Object.values(m.nodes).filter((n) => n.type === 'chest').map((n) => n.gold);
+  eq(chestGolds(a), chestGolds(b), '同じseedなら宝箱の金額も再現される');
 });
 
 t('ショップ：購入・回復・霧払いはＧが無いと断られる', () => {
