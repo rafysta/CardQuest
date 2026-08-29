@@ -2855,9 +2855,11 @@ t('戦闘結果の反映：勝利で戦利品が入り、ＬＰが引き継が�
   const res = CQRun.reportBattle(run, n, fakeM);
   eq(res.win, true, '勝利フラグ');
   eq(n.cleared, true, 'マスが解決済みになる');
-  /* M6.6 WP3：スターターのデッキは40枚ちょうど＝満杯なので、戦利品は本行き（run.bookAdd）になる */
-  eq(run.bookAdd[8], 2, '満杯デッキでは戦利品は本行きになる');
-  eq(run.gainedCards, [8, 8], '獲得リストにも入る');
+  /* M6.6 WP7：戦利品は自動でデッキ／本へ振り分けない。まず lootPending に積まれ、
+   * gainedCards（NEW・記憶データの元）だけはこの時点で確定する。 */
+  eq(run.lootPending, [8, 8], '戦利品はまず振り分け待ちに積まれる');
+  eq(run.bookAdd[8], undefined, 'この時点ではまだ本に入らない（振り分け画面待ち）');
+  eq(run.gainedCards, [8, 8], '獲得リストにはこの時点で入る（NEW・記憶データの元）');
   eq(run.lp, 7, 'ＬＰが戦闘後の値に更新される');
   /* M6.6 WP6（§2-6）：敵ユニットは金を落とさない。通常戦闘の報酬はカードだけ */
   eq(res.gold, 0, '通常戦闘ではＧが出ない');
@@ -3469,6 +3471,76 @@ t('メタ：visits／seenHintsが無い既存セーブでも落ちない（後�
   eq(m.visits, {}, 'visitsが空で補われる');
   eq(m.seenHints, {}, 'seenHintsが空で補われる');
   eq(CQSave.visitCount(m, 'grassland'), 0, '数えられる');
+});
+
+/* ================= M6.6 WP7: 戦利品の振り分け ================= */
+section('M6.6 WP7: 戦利品の振り分け');
+
+t('戦利品振り分け：デッキに空きがあれば「デッキに加える」が選べ、run.deckに入る', () => {
+  const meta = { book: {}, deck: { 8: 1 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 60, meta);
+  const n = { type: 'battle', cleared: false };
+  CQRun.reportBattle(run, n, { winner: 'self', loot: [41], players: { self: { lp: 10 } } });
+  eq(run.lootPending, [41], '振り分け待ちに積まれる');
+  eq(CQRun.canAssignToDeck(run, 41), true, '空きがあるのでデッキに加えられる');
+  const r = CQRun.resolveLootPick(run, 41, 'deck', CARD_BY_ID);
+  eq(r.ok, true, '成功する');
+  eq(run.deck[41], 1, 'デッキに入る');
+  eq(run.lootPending, [], '振り分け待ちから消える');
+});
+
+t('戦利品振り分け：デッキが満杯でも「本に送る」は必ず成功する（本は上限なし）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 61, freshMeta()); /* スターター40枚＝満杯 */
+  const n = { type: 'battle', cleared: false };
+  CQRun.reportBattle(run, n, { winner: 'self', loot: [41], players: { self: { lp: 10 } } });
+  eq(CQRun.canAssignToDeck(run, 41), false, '満杯なのでデッキには加えられない');
+  const r = CQRun.resolveLootPick(run, 41, 'book', CARD_BY_ID);
+  eq(r.ok, true, '本行きは常に成功する');
+  eq(run.bookAdd[41], 1, '本行きに積まれる');
+  eq(run.lootPending, [], '振り分け待ちから消える');
+});
+
+t('戦利品振り分け：デッキが満杯のとき「デッキに加える」を無理に呼んでも失敗し、振り分け待ちは減らない', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 62, freshMeta());
+  const n = { type: 'battle', cleared: false };
+  CQRun.reportBattle(run, n, { winner: 'self', loot: [41], players: { self: { lp: 10 } } });
+  const r = CQRun.resolveLootPick(run, 41, 'deck', CARD_BY_ID);
+  eq(r.ok, false, '満杯なので失敗する');
+  eq(run.lootPending, [41], '振り分け待ちのまま残る（何度でもやり直せる）');
+});
+
+t('戦利品振り分け：同じIDが複数あっても1回の振り分けで1枚だけ減る', () => {
+  const meta = { book: {}, deck: { 8: 1 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 63, meta);
+  const n = { type: 'battle', cleared: false };
+  CQRun.reportBattle(run, n, { winner: 'self', loot: [41, 41], players: { self: { lp: 10 } } });
+  eq(run.lootPending, [41, 41], '2枚とも振り分け待ちに積まれる');
+  CQRun.resolveLootPick(run, 41, 'deck', CARD_BY_ID);
+  eq(run.deck[41], 1, '1枚目がデッキに入る');
+  eq(run.lootPending, [41], '残り1枚だけになる（2枚とも消えない）');
+  CQRun.resolveLootPick(run, 41, 'book', CARD_BY_ID);
+  eq(run.bookAdd[41], 1, '2枚目は本に入る');
+  eq(run.lootPending, [], '振り分け待ちが空になる');
+});
+
+t('戦利品振り分け：全部振り分けた後にsettleすると、デッキ／本のどちらも正しく反映される', () => {
+  const meta = { book: {}, deck: { 8: 1 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 64, meta);
+  const n = { type: 'battle', cleared: false };
+  CQRun.reportBattle(run, n, { winner: 'self', loot: [41, 42], players: { self: { lp: 10 } } });
+  CQRun.resolveLootPick(run, 41, 'deck', CARD_BY_ID);
+  CQRun.resolveLootPick(run, 42, 'book', CARD_BY_ID);
+  CQRun.settle(run, meta);
+  eq(meta.deck[41], 1, 'デッキ行きは保存デッキに残る');
+  eq(meta.book[42], 1, '本行きはmeta.bookへ加算される');
+  eq(meta.known.indexOf(41) >= 0 && meta.known.indexOf(42) >= 0, true, 'どちらもknownに登録される');
+});
+
+t('戦利品0枚：lootPendingは空のまま（振り分け画面はスキップされる想定）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 65, freshMeta());
+  const n = { type: 'battle', cleared: false };
+  CQRun.reportBattle(run, n, { winner: 'self', loot: [], players: { self: { lp: 10 } } });
+  eq(run.lootPending, [], '戦利品が無ければ何も積まれない');
 });
 
 t('台本（lore.js）：規約どおりの形になっている', () => {

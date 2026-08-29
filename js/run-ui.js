@@ -83,12 +83,16 @@ function enterStartNode(fresh) {
 function runInit() {
   RUI.meta = CQSave.loadMeta(RUN_STORAGE, STARTER_BOOK);
   const saved = CQSave.loadRun(RUN_STORAGE);
-  if (saved && !saved.outcome) {
+  /* M6.6 WP7：ボス撃破は勝利確定と同時に run.outcome='win' が立つが、戦利品の振り分け
+   * （lootPending）が残っているうちは settle() 前＝まだ「進行中のラン」として扱う
+   * （さもないと結果画面に飛ばされずこの run 自体を見失う）。 */
+  if (saved && (!saved.outcome || (saved.lootPending && saved.lootPending.length))) {
     RUI.run = saved;
     /* 出発済みかどうかで戻り先を変える（M6.6 WP4）。開始マスは案内＋持ち出し＋ドラフトと
      * 長くなったので、その途中で再読み込みしてもマップへ飛ばされないようにする
      * （depart() が開始マスを cleared にするので、それが出発済みの印になる）。 */
-    if (saved.map.nodes[saved.map.start].cleared) { RUI.view = 'map'; }
+    if (saved.lootPending && saved.lootPending.length) { RUI.view = 'loot'; }
+    else if (saved.map.nodes[saved.map.start].cleared) { RUI.view = 'map'; }
     else { RUI.view = 'start'; enterStartNode(false); }
   } else if (!RUI.meta.openingSeen) {
     /* 初回起動のみ（M6.6 WP1）：目覚めの場面へ。§4 WP2「最初からやり直す」→リロード後もここを通る。 */
@@ -1070,6 +1074,38 @@ function renderQuestionNode(run, n) {
     </div>`;
 }
 
+/* ================= 戦利品の振り分け（M6.6 WP7） ================= */
+
+/** 勝利直後、マップに戻る前に出す画面。得た戦利品を全部並べ、1枚ずつ「デッキに加える」
+ * 「本に送る」を選ばせる（§4 WP7）。確定ボタンは無く、全部選び終えたら自動で次へ進む
+ * （runAct の 'loot-deck'／'loot-book' が空になったタイミングで進める）。 */
+function renderLoot() {
+  const run = RUI.run;
+  const pending = run.lootPending || [];
+  const remain = Math.max(0, CQRun.DECK_SIZE - CQCollection.countsTotal(run.deck)
+    - (run.rentals ? run.rentals.length : 0));
+  const items = pending.map(function (id) {
+    const c = CARD_BY_ID[id];
+    const canDeck = CQRun.canAssignToDeck(run, id);
+    return `<div class="loot-item">
+      <div class="dc-art">${artInner(c, 4)}</div>
+      <div class="shop-item-n">${esc(c.n)}</div>
+      <div class="loot-btns">
+        <button class="loot-btn deck" data-act="loot-deck" data-id="${id}" ${canDeck ? '' : 'disabled'}>デッキに加える</button>
+        <button class="loot-btn book" data-act="loot-book" data-id="${id}">本に送る</button>
+      </div>
+    </div>`;
+  }).join('');
+  runRoot().innerHTML = `
+    <div class="node-panel wide">
+      <h3>戦利品</h3>
+      <p>デッキの空き：${remain}枚</p>
+      <div class="shop-row">${items}</div>
+      <p class="node-note">「本に送る」を選んだカードは<b>このランでは使えません</b>
+        （次のランから持ち出せます）。どちらを選んでもカードは必ず手に入ります。</p>
+    </div>`;
+}
+
 /* ================= 結果画面 ================= */
 
 function renderResult() {
@@ -1095,12 +1131,17 @@ function renderResult() {
 function runRender() {
   const el = runRoot();
   if (!el) return;
-  if (RUI.run && RUI.run.outcome) RUI.view = 'result';
+  /* M6.6 WP7：戦利品の振り分けが残っているうちは、勝敗が確定していても結果画面より先に
+   * この画面を見せる（settle() もまだ済んでいない）。 */
+  const lootWaiting = !!(RUI.run && RUI.run.lootPending && RUI.run.lootPending.length);
+  if (RUI.run && RUI.run.outcome && !lootWaiting) RUI.view = 'result';
+  else if (lootWaiting) RUI.view = 'loot';
   if (RUI.view === 'opening') renderOpening();
   else if (RUI.view === 'areaSelect') renderAreaSelect();
   else if (RUI.view === 'start') renderStart();
   else if (RUI.view === 'map') renderMap();
   else if (RUI.view === 'node') renderNode();
+  else if (RUI.view === 'loot') renderLoot();
   else if (RUI.view === 'result') renderResult();
 }
 
@@ -1133,13 +1174,28 @@ function showConfirm(message, onYes, yesLabel) {
 
 /* ================= 操作 ================= */
 
+/** 戦利品の振り分けが終わった（または最初から無かった）ときに、続きへ進める（M6.6 WP7）。
+ * lootPending が残っていれば振り分け画面のまま。無ければ、勝敗が確定済みなら結果画面へ
+ * 清算して進み（従来 onRunBattleOver が直接やっていた処理）、未確定ならマップへ戻る。 */
+function advanceAfterBattle() {
+  const run = RUI.run;
+  if (run.lootPending && run.lootPending.length) { RUI.view = 'loot'; runSave(); return; }
+  if (run.outcome) {
+    CQRun.settle(run, RUI.meta);
+    CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+    CQSave.clearRun(RUN_STORAGE);
+    RUI.view = 'result';
+  } else {
+    RUI.view = 'map';
+    runSave();
+  }
+}
+
 function onRunBattleOver(M) {
   const run = RUI.run, n = run.map.nodes[RUI.nodeId];
   CQRun.reportBattle(run, n, M, RUI.meta);
   if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
-  if (run.outcome) { CQRun.settle(run, RUI.meta); CQSave.saveMeta(RUN_STORAGE, RUI.meta); CQSave.clearRun(RUN_STORAGE); }
-  else runSave();
-  RUI.view = run.outcome ? 'result' : 'map';
+  advanceAfterBattle();
   const tab = document.querySelector('.tab[data-screen="screen-run"]');
   if (tab) tab.click();
   runRender();
@@ -1253,6 +1309,18 @@ function runAct(act, id) {
       CQRun.openChest(run, run.map.nodes[RUI.nodeId]);
       runSave();
       return runRender();
+    case 'loot-deck': {
+      const r = CQRun.resolveLootPick(run, +id, 'deck', CARD_BY_ID);
+      if (!r.ok) { runFlash(r.reason); return runRender(); }
+      advanceAfterBattle();
+      return runRender();
+    }
+    case 'loot-book': {
+      const r = CQRun.resolveLootPick(run, +id, 'book', CARD_BY_ID);
+      if (!r.ok) { runFlash(r.reason); return runRender(); }
+      advanceAfterBattle();
+      return runRender();
+    }
     case 'rest-go':
       CQRun.rest(run, run.map.nodes[RUI.nodeId]);
       runSave();

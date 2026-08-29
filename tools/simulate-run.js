@@ -106,6 +106,7 @@ function checkRunInvariants(run, meta) {
   if (run.lp < 0) throw new Error('ＬＰが負になった');
   Object.keys(run.deck).forEach((k) => { if (run.deck[k] < 0) throw new Error('所持デッキが負になった: ' + k); });
   Object.keys(run.bookAdd || {}).forEach((k) => { if (run.bookAdd[k] < 0) throw new Error('本行き分が負になった: ' + k); });
+  if ((run.lootPending || []).length) throw new Error('戦利品の振り分け（M6.6 WP7）が終わらないまま次に進んだ');
   if (meta.book) Object.keys(meta.book).forEach((k) => { if (meta.book[k] < 0) throw new Error('本が負になった: ' + k); });
   if (run.map.fog.active === false && run.map.fog.cleared !== true) throw new Error('霧なしランで cleared が立っていない');
   const seg = {};
@@ -144,6 +145,13 @@ function playRun(areaId, seed, meta, rng) {
         if (M.winner === 'self') { bucket.win++; bucket.loot += (M.loot || []).length; }
         bucket.turns += M.turn;
         CQRun.reportBattle(run, n, M, meta);
+        /* M6.6 WP7：戦利品はここでは自動で振り分けない（振り分け画面待ちに積まれるだけ）。
+         * ヘッドレスなので本物のUI操作の代用として、空きがあればデッキへ・無ければ本へ、
+         * という単純な方針でその場で確定させる（本物のプレイヤー操作の近似）。 */
+        (run.lootPending || []).slice().forEach((id) => {
+          const dest = CQRun.canAssignToDeck(run, id) ? 'deck' : 'book';
+          CQRun.resolveLootPick(run, id, dest);
+        });
         if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
       } else if (n.type === 'chest') {
         CQRun.openChest(run, n);

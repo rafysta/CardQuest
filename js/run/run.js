@@ -112,6 +112,7 @@
       bookAdd: {},
       rentals: [],
       gainedCards: [],
+      lootPending: [],
       draftDone: 0, draftPending: null,
       log: [], outcome: null
     };
@@ -282,12 +283,20 @@
    *   通常戦闘（フリーユニット戦）＝**Ｇは出ない**。敵ユニットは金を落とさず、戦利品のカードだけ。
    *   マスター戦（ボス）＝**ファイトマネーは原作準拠**（areas.js の fightMoney。草原・森はＣ級500G）。
    *                       すでにクリア済みのエリアを周回しているときは50%。
-   * ラン中の主収入は宝箱に寄る（マップ仕様書§7・追補§7-1の想定どおり）。 */
+   * ラン中の主収入は宝箱に寄る（マップ仕様書§7・追補§7-1の想定どおり）。
+   * M6.6 WP7：戦利品はここでは自動でデッキ／本へ振り分けない。`run.lootPending` に積むだけにして、
+   * どちらに送るかはプレイヤーが振り分け画面（resolveLootPick）で選ぶ。ただし「入手した」事実
+   * （NEWバッジ・記憶データ登録の元になる gainedCards）はここで確定させる——カードは必ず
+   * 手に入る（§2-7）ので、置き先が未定でも「入手済み」扱いにしてよい。 */
   function reportBattle(run, n, M, meta) {
     n.cleared = true;
     if (M.winner === 'self') {
       const loot = (M.loot || []).slice();
-      loot.forEach(function (id) { gainCard(run, id); });
+      if (!run.lootPending) run.lootPending = [];
+      loot.forEach(function (id) {
+        run.gainedCards.push(id);
+        run.lootPending.push(id);
+      });
       const area = CQAreas.get(run.areaId);
       let gold = 0;
       if (n.type === 'boss') {
@@ -304,6 +313,38 @@
     run.outcome = 'lose';
     run.log.push((n.type === 'boss' ? 'ボス' : '戦闘') + 'に敗北');
     return { win: false };
+  }
+
+  /* ---- 戦利品の振り分け（M6.6 WP7） ---------------------------------------- */
+
+  /** そのカードを今すぐ「デッキに加える」が選べるか（合計40未満・同種上限内。
+   * gainCard の判定と同じ理由でレンタルも空き枠の計算に数える）。 */
+  function canAssignToDeck(run, id) {
+    const rentals = run.rentals ? run.rentals.length : 0;
+    const hasSlot = CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE;
+    return hasSlot && CQCollection.canAddToDeck(run.deck, id).ok;
+  }
+
+  /** 戦利品カード1枚を「デッキ」か「本」へ確定する（§4 WP7）。run.lootPending から
+   * 該当の1枚を取り除く（同じIDが複数あるときはどれを消しても結果は同じなので先頭を消す）。
+   * 「本に送る」は常に成功（本は上限なし＝必ず貰える）。「デッキに加える」は空きが無ければ
+   * 失敗を返す（画面側は無効化しておくのが基本だが、二重タップ等の保険として弾く）。
+   * cards はログ表示用（省略可・applyDraft と同じ規約）。 */
+  function resolveLootPick(run, id, dest, cards) {
+    if (!run.lootPending) run.lootPending = [];
+    const idx = run.lootPending.indexOf(+id);
+    if (idx < 0) return { ok: false, reason: '対象のカードが見つかりません' };
+    if (dest === 'deck') {
+      if (!canAssignToDeck(run, id)) return { ok: false, reason: 'デッキに空きがありません' };
+      run.deck[id] = (run.deck[id] || 0) + 1;
+    } else {
+      if (!run.bookAdd) run.bookAdd = {};
+      run.bookAdd[id] = (run.bookAdd[id] || 0) + 1;
+    }
+    run.lootPending.splice(idx, 1);
+    const name = cards && cards[id] ? cards[id].n : id;
+    run.log.push('戦利品：' + name + '→' + (dest === 'deck' ? 'デッキ' : '本'));
+    return { ok: true, dest: dest };
   }
 
   /* ---- 宝箱・休憩・ショップ・換金・？イベント ------------------------------------- */
@@ -416,7 +457,7 @@
     DECK_SIZE, BLANK, DRAFT_ROUNDS, buildBattleDeck, buildBossDeck, buildPlayerDeck,
     start, gainCard, beginDraftRound, applyDraft, draftTarget, hasBlankSlot, depart,
     node, currentNode, choices, advance,
-    battleSeed, battleSetup, reportBattle,
+    battleSeed, battleSetup, reportBattle, canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
     sell, exchangeLeave, resolveQuestion, retire, settle
   };

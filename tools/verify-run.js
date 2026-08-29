@@ -298,6 +298,16 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.click('[data-act="run-over"]');
     await wait(() => page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
     ok('「ランへ戻る」でラン画面に戻る', await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
+    /* M6.6 WP7：マップへ戻る前に、まず戦利品（loot:[8]）の振り分け画面が出る */
+    await wait(() => page.$('[data-act="loot-deck"], [data-act="loot-book"]'));
+    const lootBtn = await page.$('[data-act="loot-deck"], [data-act="loot-book"]');
+    ok('マップに戻る前に戦利品の振り分け画面が出る（M6.6 WP7）', !!lootBtn);
+    if (lootBtn) {
+      await shot('loot');
+      await page.click('[data-act="loot-book"]');   // 「本に送る」は空きの有無に関わらず必ず選べる
+      await wait(() => page.$('.run-map'));
+      ok('振り分けを終えるとマップへ戻る', !!(await page.$('.run-map')));
+    }
     ok('戦闘結果がランに反映される（そのマスが解決済み）',
       await page.evaluate((nid) => RUI.run.map.nodes[nid].cleared, battleId));
     /* 2026-08-29 本人指摘：倒した敵はマップから消す（M6.6 §4 WP10） */

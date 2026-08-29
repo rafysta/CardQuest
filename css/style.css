@@ -32,6 +32,7 @@ body{
   touch-action:manipulation;
 }
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+button:disabled{opacity:.35;cursor:default}
 input{-webkit-user-select:text;user-select:text}
 
 /* ---- 画面サイズは Galaxy Tab S11 横向き（1280×800）に固定する ----
@@ -1174,3 +1175,10 @@ td.nm{font-weight:800}
 .shop-item-n{font-size:12px;font-weight:700;margin:4px 0}
 .shop-services{display:flex;gap:10px;justify-content:center;margin-top:6px}
 /* 絵は assets/cards/200.png を置けば自動で使われる（未配置ならカード名の文字表示） */
+
+/* 戦利品の振り分け画面（M6.6 WP7）。shop-item と同じ並びを使い、各カードの下に
+ * 「デッキに加える／本に送る」の2択を縦に並べる。確定ボタンは無く、押した瞬間に決まる。 */
+.loot-item{width:150px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center}
+.loot-btns{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.loot-btn{padding:7px 4px;border-radius:7px;border:1px solid var(--line);background:#1a2338;font-size:12px;font-weight:700}
+.loot-btn.deck{background:var(--accent);color:#241c00;border-color:var(--accent)}
