@@ -498,8 +498,11 @@ function finishCarryOut() {
 
 /* ---- ③ おまかせドラフト ---- */
 
-/** ドラフトの候補カード1枚。§4 WP4「モンスターはA/D/CH・召還Lv・効果・価格まで全情報を出す」
- * ため、バトル画面のカード描画ではなく専用の大きめカードで描く（画面高さの約40%）。 */
+/** ドラフトの候補カード1枚。§4 WP4「モンスターはA/D/CH・召還Lv・効果まで全情報を出す」ため、
+ * バトル画面のカード描画ではなく専用の大きめカードで描く。
+ * 2026-08-28 本人指定：**価格は出さない**。おまかせドラフトは無料のレンタルなのに、
+ * Ｇが書いてあると「借りるのに金が要る」と読めてしまうため（本文§4 WP4の「価格まで」は
+ * 購入UIでの話として、ここでは外す）。 */
 function draftCardBig(id, isRental) {
   const c = CARD_BY_ID[id];
   const stat = c.t === 'U'
@@ -510,7 +513,6 @@ function draftCardBig(id, isRental) {
     <div class="dc-n">${esc(c.n)}</div>
     <div class="dc-stat">${stat}</div>
     <div class="dc-e">${esc(c.e || '')}</div>
-    <div class="dc-p">${c.p}Ｇ</div>
   </div>`;
 }
 
@@ -542,8 +544,9 @@ function renderStartDraft() {
       <span class="draft-sub">${esc(DRAFT_ROUND_NOTE[dp.round] || '')}</span>
     </div>
     <div class="draft-row">${opts}${draftKeepCardHTML(dp.targetId)}</div>
-    <p class="draft-note">選んだカードは<b>このラン限定のレンタル</b>です（記憶データには入らず、
-      探索が終わると返却されます）。デッキの空白1枚と入れ替わります。</p>`;
+    <p class="draft-note">選んだカードは<b>このラン限定のレンタル</b>です。無料で借りられますが、
+      記憶データには入らず、探索が終わると返却されます。デッキの空白1枚と入れ替わります。
+      <b>レンタルしたカードは売ることができません</b>（換金所には出せません）。</p>`;
 }
 
 /* ---- ④ 出発（暗転→明転） ---- */
