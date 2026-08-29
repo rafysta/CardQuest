@@ -19,6 +19,8 @@
     ? require('../engine/turn.js') : global.CQTurn;
   const CQCollection = (typeof require === 'function' && typeof module !== 'undefined')
     ? require('../meta/collection.js') : global.CQCollection;
+  const CQRng = (typeof require === 'function' && typeof module !== 'undefined')
+    ? require('../engine/rng.js') : global.CQRng;
   const DECK_SIZE = (CQTurnRef && CQTurnRef.DECK_SIZE) || 40;
   const BLANK = 180;
   /* おまかせドラフトの回数（マップ仕様書§1.2は3回だったが、実装計画追補M6.6 §2-4で
@@ -248,6 +250,18 @@
     return h >>> 0;
   }
 
+  /** 先攻／後攻（M6.6 WP5・追補§4）。従来はここが常に 'self' 固定だったため、ラン中の
+   * 戦闘は必ずプレイヤーが先攻という有利が付いたままだった。戦闘シードから battleSeed() と
+   * 別の乱数列を1回引くだけの、決定的な50%抽選にする——同じランの同じマスなら常に同じ結果
+   * （タイトルの「先攻ルーレット」演出は、この確定済みの結果を見せるだけで乱数は使わない。
+   *  見た目のブレ角±10°などは演出側でMath.randomを使ってよい＝結果には影響しない）。
+   * battleSetup() の seed（=戦闘本編のRNG）とは別インスタンスから1回 next() を引くだけなので、
+   * 本編の乱数列（手札・引きなど）を消費せず、抽選結果にも影響しない。 */
+  function firstTurnOf(run, n) {
+    const r = CQRng.create(battleSeed(run, n) ^ 0x51ed270b);
+    return r.next() < 0.5 ? 'self' : 'enemy';
+  }
+
   /** CQTurn.createMatch にそのまま渡せる引数を作る（rng/hooksは呼び出し側＝layout.jsが足す） */
   /** そのマスの敵編成を、実際に場へ立てる並びにする（M6.6 WP6）。
    * マップは「代表1体＋体数」で持っているので、体数ぶん同じユニットを並べる（最大3体＝敵レーン数）。 */
@@ -265,7 +279,7 @@
       cards: cards,
       selfDeck: buildPlayerDeck(run),
       enemyDeck: isBoss ? buildBossDeck(cards, area) : buildBattleDeck(cards, area, n),
-      first: 'self',
+      first: firstTurnOf(run, n),
       opponentId: 900 + (n.seg == null ? 90 : n.seg * 10) + (n.slot || 0),
       fieldRules: n.fieldRules || [],
       selfOpts: { lp: run.lp, maxLp: run.maxLp },
@@ -457,7 +471,7 @@
     DECK_SIZE, BLANK, DRAFT_ROUNDS, buildBattleDeck, buildBossDeck, buildPlayerDeck,
     start, gainCard, beginDraftRound, applyDraft, draftTarget, hasBlankSlot, depart,
     node, currentNode, choices, advance,
-    battleSeed, battleSetup, reportBattle, canAssignToDeck, resolveLootPick,
+    battleSeed, firstTurnOf, battleSetup, reportBattle, canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
     sell, exchangeLeave, resolveQuestion, retire, settle
   };

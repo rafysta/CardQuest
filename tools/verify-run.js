@@ -278,8 +278,26 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     ok('戦闘マスの概要パネルが出る（相手の絵・「たたかう」）', !!(await page.$('[data-act="battle-go"]')));
     await shot('node-battle');
     await page.click('[data-act="battle-go"]');
+    /* M6.6 WP5：即バトル画面ではなく、まず一瞬の戦闘導入カットイン（黒カットイン＋敵の
+     * 切り抜き＋自分のコマの突撃）が挟まる。タップでスキップできることも合わせて確認する。 */
+    await wait(() => page.$('.battle-intro'));
+    ok('「たたかう」で戦闘導入カットインが挟まる（M6.6 WP5）', !!(await page.$('.battle-intro')));
+    await page.waitForTimeout(700);   // カットインが開いて敵とコマが出てくる途中の絵を撮る
+    await shot('battle-intro');
+    await page.click('.battle-intro');   // タップでスキップ
     await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
-    ok('「たたかう」でバトル画面に切り替わる', await page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+    ok('カットインの後にバトル画面に切り替わる', await page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+    /* バトル画面表示と同時に先攻ルーレットが出る（追補§4 WP5）。これもタップでスキップできる */
+    await wait(() => page.$('.first-turn-roulette'));
+    const rouletteEl = await page.$('.first-turn-roulette');
+    ok('バトル画面表示と同時に先攻ルーレットが出る（M6.6 WP5）', !!rouletteEl);
+    if (rouletteEl) {
+      await page.waitForTimeout(900);   // 回転の途中の絵を撮る
+      await shot('first-turn-roulette');
+      await page.click('.first-turn-roulette');   // タップでスキップ
+      await wait(() => page.evaluate(() => !document.querySelector('.first-turn-roulette')));
+      ok('ルーレットはタップでスキップして消える', await page.evaluate(() => !document.querySelector('.first-turn-roulette')));
+    }
     await page.waitForTimeout(1500);   // 手札配布などの演出(FX)が終わるまで待つ。演出中の強制上書きはstep()に打ち消される
     ok('ラン中はバトル画面の「新しい対戦」ボタンが隠れる', !(await page.$('#turnbox [data-act="new"]')));
     // 決着を強制して「ランへ戻る」フローだけを検証する（戦闘の勝敗そのものは

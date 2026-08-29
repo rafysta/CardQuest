@@ -3599,6 +3599,45 @@ t('台本：プレースホルダの置換と候補群の抽選', () => {
   eq(CQLore.pickOne([], () => 0).length, 0, '空でも落ちない');
 });
 
+/* ================= M6.6 WP5: 戦闘導入カットインと先攻ルーレット ================= */
+section('M6.6 WP5: 先攻ルーレット');
+
+t('先攻判定：同じラン・同じマスなら常に同じ結果（決定的）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 42, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const a = CQRun.firstTurnOf(run, n);
+  const b = CQRun.firstTurnOf(run, n);
+  eq(a === 'self' || a === 'enemy', true, '結果は self か enemy のどちらか');
+  eq(b, a, '同じ入力なら同じ結果');
+  const setup1 = CQRun.battleSetup(run, CARD_BY_ID, n);
+  const setup2 = CQRun.battleSetup(run, CARD_BY_ID, n);
+  eq(setup1.first, a, 'battleSetup().first が firstTurnOf() と一致する');
+  eq(setup2.first, a, 'battleSetup() を何度呼んでも同じ結果');
+});
+
+t('先攻判定：シードが違えば偏りなく self / enemy の両方が出る', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 7, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const seen = {};
+  for (let seed = 0; seed < 40; seed++) {
+    const r2 = CQRun.start(CARD_BY_ID, 'grassland', seed, freshMeta());
+    CQRun.depart(r2);
+    const n2 = Object.values(r2.map.nodes).find((x) => x.type === 'battle');
+    seen[CQRun.firstTurnOf(r2, n2)] = true;
+  }
+  eq(Object.keys(seen).sort(), ['enemy', 'self'], '40シード試せば両方の結果が出る');
+});
+
+t('先攻判定：マスが違えば同じランでも結果が変わりうる（マスidも種にしている）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 9, freshMeta());
+  CQRun.depart(run);
+  const battles = Object.values(run.map.nodes).filter((x) => x.type === 'battle' || x.type === 'boss');
+  const results = battles.map((n) => CQRun.firstTurnOf(run, n));
+  eq(results.every((r) => r === 'self' || r === 'enemy'), true, 'すべて有効な値');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

@@ -38,7 +38,11 @@ const RUI = {
   carryFilters: {},
   carryShown: { U: {}, MS: {} },
   /* 出発の明転を1度だけ再生するためのフラグ（§4 WP4「暗転→明転のtransition」） */
-  mapFadeIn: false
+  mapFadeIn: false,
+  /* 戦闘導入カットイン（M6.6 WP5）：「たたかう／挑む」を押してから実際にバトル画面へ
+   * 切り替わるまでの一瞬だけ使う作業用の状態。cq_run には保存しない（保存中に途切れても
+   * 単に演出が飛ぶだけで、再開時は素直にマップへ戻る）。 */
+  battleIntroNodeId: null, battleIntroLeaving: false
 };
 
 function runRoot() { return document.getElementById('run-root'); }
@@ -977,6 +981,48 @@ function renderBattleNode(run, n) {
     </div>`;
 }
 
+/* ================= 戦闘導入カットイン（M6.6 WP5） =================
+ * 「たたかう／挑む」を押した直後、マップ画面の上に一瞬だけ重ねる演出。黒カットインの中で
+ * 敵（またはボス）の切り抜きを2倍サイズで見せ、自分のコマが左から跳ねながら現れて敵に
+ * ぶつかりに行く（敵は小さく怯む）。そのまま暗転してバトル画面へ切り替わる。
+ * 合計1.5秒以内・タップでスキップ可（追補§4 WP5）。乱数は使わない——先攻／後攻は
+ * すでに CQRun.battleSetup() が戦闘シードから決定的に決めている（js/run/run.js の
+ * firstTurnOf）。ここでは「誰と当たるか」を見せるだけ。 */
+function renderBattleIntro() {
+  const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
+  const area = CQAreas.get(run.areaId);
+  const isBoss = n.type === 'boss';
+  const figure = isBoss
+    ? `<img class="battle-intro-foe" src="assets/masters/m_${run.areaId}_cut.png" alt="" draggable="false"
+         onerror="masterCutoutFallback(this, '${area.master}')">`
+    : (n.enemy
+        ? `<img class="battle-intro-foe" src="assets/cutouts/${n.enemy.id}.png" alt="" draggable="false"
+             onerror="nodeArtFallback(this, ${n.enemy.id})">`
+        : '');
+  runRoot().innerHTML = `
+    <div class="battle-intro" data-act="battle-intro-skip">
+      <div class="battle-intro-cut"></div>
+      <div class="battle-intro-stage">
+        ${figure}
+        <div class="battle-intro-hero"><img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()"></div>
+      </div>
+    </div>`;
+  /* この画面に来て初めての描画のときだけ、実際の切り替えタイマーを仕掛ける（タップでの
+   * 早送りと二重に走らないよう battleIntroLeaving で一度きりにする） */
+  setTimeout(leaveBattleIntro, 1450);
+}
+
+/** カットインを終えて実際の戦闘へ進む。タイマー経由・タップスキップ経由のどちらから
+ * 呼ばれても一度しか進まないよう battleIntroLeaving で防ぐ。 */
+function leaveBattleIntro() {
+  if (RUI.battleIntroLeaving || RUI.view !== 'battle-intro') return;
+  RUI.battleIntroLeaving = true;
+  const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
+  RUI.battleIntroNodeId = null;
+  startRunBattle(setup, onRunBattleOver);
+}
+
 function renderChestNode(run, n) {
   if (!n.opened) {
     runRoot().innerHTML = `
@@ -1141,6 +1187,7 @@ function runRender() {
   else if (RUI.view === 'start') renderStart();
   else if (RUI.view === 'map') renderMap();
   else if (RUI.view === 'node') renderNode();
+  else if (RUI.view === 'battle-intro') renderBattleIntro();
   else if (RUI.view === 'loot') renderLoot();
   else if (RUI.view === 'result') renderResult();
 }
@@ -1301,10 +1348,15 @@ function runAct(act, id) {
       });
     }
     case 'battle-go': {
-      const n = run.map.nodes[RUI.nodeId];
-      const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
-      return startRunBattle(setup, onRunBattleOver);
+      /* M6.6 WP5：即バトル画面へ切り替えず、まず一瞬の導入カットインを挟む
+       * （実際の CQRun.battleSetup / startRunBattle はカットインが終わってから呼ぶ）。 */
+      RUI.battleIntroNodeId = RUI.nodeId;
+      RUI.battleIntroLeaving = false;
+      RUI.view = 'battle-intro';
+      return runRender();
     }
+    case 'battle-intro-skip':
+      return leaveBattleIntro();
     case 'chest-open':
       CQRun.openChest(run, run.map.nodes[RUI.nodeId]);
       runSave();

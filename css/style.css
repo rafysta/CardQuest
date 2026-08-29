@@ -1154,6 +1154,87 @@ td.nm{font-weight:800}
 .cq-confirm-box p{line-height:1.6;margin-bottom:16px}
 .cq-confirm-btns{display:flex;gap:12px;justify-content:center}
 
+/* ---- 戦闘導入カットイン（M6.6 WP5・追補§4） ----
+ * .opening-scene と同じやり方：#run-root（position:relative）いっぱいに position:absolute で
+ * 重ねる（renderBattleIntro() が run-root の innerHTML をまるごとこれに差し替えるので、
+ * 実際には兄弟要素は無い＝z-indexは他の演出との比較のためだけに揃えてある）。
+ * 「たたかう／挑む」を押してから約1.4秒（＋暗転の余韻）だけ見せてバトル画面へ切り替わる。
+ * タップで即スキップ（data-act="battle-intro-skip"）。乱数は使わない。 */
+.battle-intro{
+  position:absolute;inset:0;z-index:900;overflow:hidden;cursor:pointer;
+  background:#05070d;
+  animation:battleIntroBg 1.3s ease-in forwards;
+}
+@keyframes battleIntroBg{
+  0%{background:rgba(5,7,13,0)}
+  22%{background:rgba(5,7,13,.7)}
+  78%{background:rgba(5,7,13,.82)}
+  100%{background:rgba(5,7,13,0)}
+}
+/* 黒四角カットイン：中央から上下に開く帯。開ききったところで敵の切り抜きが現れる */
+.battle-intro-cut{
+  position:absolute;left:0;right:0;top:50%;height:52%;transform:translateY(-50%) scaleY(0);
+  background:#05070d;
+  animation:battleIntroCut .55s cubic-bezier(.2,.85,.25,1) forwards;
+}
+@keyframes battleIntroCut{
+  0%{transform:translateY(-50%) scaleY(0)}
+  45%{transform:translateY(-50%) scaleY(1)}
+  80%{transform:translateY(-50%) scaleY(1)}
+  100%{transform:translateY(-50%) scaleY(0)}
+}
+.battle-intro-stage{position:absolute;inset:0}
+.battle-intro-foe{
+  position:absolute;right:16%;top:50%;height:34%;max-width:none;
+  transform:translateY(-50%) scale(.001);opacity:0;
+  filter:drop-shadow(0 16px 28px rgba(0,0,0,.6));
+  animation:battleIntroFoeIn .3s ease-out .42s forwards, battleIntroFlinch .16s ease-in-out .98s 2;
+}
+@keyframes battleIntroFoeIn{ to{transform:translateY(-50%) scale(2);opacity:1} }
+@keyframes battleIntroFlinch{
+  0%,100%{transform:translateY(-50%) scale(2) rotate(0)}
+  50%{transform:translateY(-47%) scale(1.94) rotate(4deg)}
+}
+/* 自分のコマ：左の画面外から2倍サイズで跳ねながら現れ、敵にぶつかって止まる */
+.battle-intro-hero{
+  position:absolute;left:-22%;bottom:30%;width:200px;height:260px;
+  animation:battleIntroHero .68s cubic-bezier(.32,.6,.24,1) .34s forwards;
+}
+.battle-intro-hero img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 12px 10px rgba(0,0,0,.5))}
+@keyframes battleIntroHero{
+  0%{left:-22%;transform:translateY(0)}
+  60%{left:46%;transform:translateY(-34px)}
+  78%{left:52%;transform:translateY(0)}
+  100%{left:49%;transform:translateY(0)}
+}
+
+/* ---- 先攻ルーレット（M6.6 WP5・追補§4） ----
+ * js/layout.js の showFirstTurnRoulette() が #app 直下に position:absolute で足す
+ * （cq-confirm-overlay と同じ理由——#appのtransform:scaleと一緒に縮む必要がある）。
+ * バトル画面（ラン画面ではなくどの画面の上にも）出るので、既存の最大z-index（.flashの999）
+ * より確実に高くしてある。タップで data-act 無しでも click ハンドラが直接効く（js側で
+ * addEventListener しているため、[data-act]の配線には乗らない）。 */
+.first-turn-roulette{
+  position:absolute;inset:0;z-index:1200;cursor:pointer;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+}
+.ftr-cut{
+  position:absolute;inset:0;background:#05070d;
+  animation:ftrCutFade .5s ease-in .55s forwards;
+}
+@keyframes ftrCutFade{ from{opacity:1} to{opacity:0} }
+.ftr-stage{position:relative;width:260px;height:260px;display:flex;align-items:center;justify-content:center}
+.ftr-compass{
+  width:100%;height:100%;object-fit:contain;transform:rotate(0deg);
+  filter:drop-shadow(0 12px 26px rgba(0,0,0,.65));
+}
+.ftr-result{
+  position:absolute;bottom:-56px;left:50%;transform:translateX(-50%);
+  font-size:28px;font-weight:800;color:#ffe9a8;text-shadow:0 2px 8px #000;
+  opacity:0;transition:opacity .25s ease-out;white-space:nowrap;
+}
+.ftr-result.show{opacity:1}
+
 /* ---- マス解決パネル（宝箱・休憩・ショップ・換金・？・戦闘導入） ---- */
 .node-panel{
   background:var(--panel);border:1px solid var(--line);border-radius:16px;

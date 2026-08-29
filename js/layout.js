@@ -116,9 +116,56 @@ function startRunBattle(setup, onOver) {
   M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
+  /* M6.6 WP5：先攻／後攻はここ（createMatch直後）の M.active で確定している。
+   * step() は非同期（相手の自動手番などを間を置いて進める）ので、あとから読むと
+   * すでに手番が進んでしまっている可能性がある——必ずこの時点で控えておく。 */
+  const first = M.active;
   const tab = document.querySelector('.tab[data-screen="screen-battle"]');
   if (tab) tab.click();
   step();
+  /* バトル画面が表示されると同時に先攻ルーレットを見せる。結果はもう決定済み（上のfirst。
+   * CQRun.battleSetup の first＝戦闘シードから決定的に決まっている）なので、ここでは
+   * 乱数を使わず、その結果を演出として見せるだけ。 */
+  showFirstTurnRoulette(first);
+}
+
+/** 先攻／後攻ルーレット（M6.6 WP5・追補§4）。黒カットイン→中央の羅針盤（矢印は画像に
+ * 焼き込み済み＝assets/ui/first_turn_roulette.png）を回して見せ、自分（0°）か相手（180°）を
+ * 指して止まる。抽選そのものはここでは行わない（すでに決まった winner を見せるだけ）ので
+ * どれだけタップでスキップしても結果は変わらない。演出の揺れ角(±10°)だけ Math.random。
+ * 尺は固定3秒（FTR_DURATION 1箇所にまとめる。タップで即座に早送りできる）。 */
+const FTR_DURATION = 3000;
+function showFirstTurnRoulette(winner) {
+  const app = document.getElementById('app');
+  if (!app) return;
+  const finalDeg = winner === 'enemy' ? 180 : 0;
+  const wobble = Math.random() * 20 - 10;
+  const ov = document.createElement('div');
+  ov.className = 'first-turn-roulette';
+  ov.innerHTML =
+    '<div class="ftr-cut"></div>' +
+    '<div class="ftr-stage">' +
+      '<img class="ftr-compass" src="assets/ui/first_turn_roulette.png" alt="" draggable="false" onerror="this.style.visibility=\'hidden\'">' +
+      '<div class="ftr-result">' + (winner === 'enemy' ? '後攻' : '先攻') + '</div>' +
+    '</div>';
+  app.appendChild(ov);
+  const compass = ov.querySelector('.ftr-compass');
+  const result = ov.querySelector('.ftr-result');
+  let done = false;
+  function finish() {
+    if (done) return;
+    done = true;
+    compass.style.transition = 'transform .25s ease-out';
+    compass.style.transform = 'rotate(' + finalDeg + 'deg)';
+    result.classList.add('show');
+    setTimeout(function () { ov.remove(); }, 260);
+  }
+  ov.addEventListener('click', finish);
+  requestAnimationFrame(function () {
+    compass.style.transition = 'transform 2.2s cubic-bezier(.14,.8,.2,1)';
+    compass.style.transform = 'rotate(' + (1080 + finalDeg + wobble) + 'deg)';
+  });
+  setTimeout(finish, FTR_DURATION - 260);
 }
 const UI = {
   mode: 'idle',   /* idle | info | confirm | unit | attack | reverse | battle | over | pick-destroy */
