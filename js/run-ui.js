@@ -959,14 +959,44 @@ function nodePct(run, id) {
   return { x: (n.x / 1280 * 100), y: (n.y / 800 * 100) };
 }
 
+/** fromId → toId の辺が、画面上「辻」（道の交差点）を経由して描かれているかどうかを判定し、
+ * 経由するならその辻の座標（%）を返す（M6.6 WP10・本人指定）。
+ *
+ * pathSvg() は、同じ2つの行き先（connectsTo）へ枝分かれする2つの手前のマスがあるとき、
+ * 単純に4本の直線を引くとXに交差して見えてしまう問題を避けるため、間に中間の辻を1つ置いて
+ * 「手前→辻→行き先」の形で描いている（合流点・マップ仕様書§4）。歩行のときも見えている
+ * 道と同じ経路を通らせるため、pathSvg と**まったく同じ条件・同じ座標の求め方**でここを判定する
+ * （ロジックが2箇所に分かれるので、pathSvg 側の合流条件を変えたときはここも直すこと）。
+ * 経由しない（辻の無い直線区間）なら null。 */
+function roadJointBetween(run, fromId, toId) {
+  const nodes = run.map.nodes;
+  const from = nodes[fromId];
+  if (!from || from.connectsTo.length !== 2 || from.connectsTo.indexOf(toId) < 0) return null;
+  const sig = from.connectsTo.slice().sort().join(',');
+  const group = Object.keys(nodes)
+    .map(function (id) { return nodes[id]; })
+    .filter(function (n) { return n.connectsTo.length === 2 && n.connectsTo.slice().sort().join(',') === sig; });
+  if (group.length !== 2) return null;                 /* 枝分かれ元が1つだけ＝直線でよい */
+  const ids = sig.split(',');
+  const targetA = nodes[ids[0]], targetB = nodes[ids[1]];
+  const midX = (group[0].x + group[1].x) / 2 + (targetA.x + targetB.x - group[0].x - group[1].x) / 4;
+  const midY = (targetA.y + targetB.y) / 2;
+  return { x: midX / 1280 * 100, y: midY / 800 * 100 };
+}
+
 /** クリックしたマスへ、コマが上下に跳ねながら歩いて移動する演出。終わったら done() を呼ぶ。
  * マップ画面が実際にDOM上にあるとき（＝マップから分岐先をクリックした瞬間）だけ再生し、
- * それ以外（開始マスからの出発など、マップがまだ無い場面）は演出をスキップして即座に進む。 */
+ * それ以外（開始マスからの出発など、マップがまだ無い場面）は演出をスキップして即座に進む。
+ *
+ * 2026-08-29 本人指定（M6.6 WP10）：道が交差しているマスへ移動するときは、一直線ではなく
+ * **辻（roadJointBetween）を経由して**折れながら進む。辻が無い区間は従来どおり直線で1回。 */
 function playerWalk(run, fromId, toId, done) {
   const mapEl = runRoot().querySelector('.run-map');
   if (!mapEl || fromId === toId) { done(); return; }
   const tok = document.createElement('div');
   const from = nodePct(run, fromId), to = nodePct(run, toId);
+  const joint = roadJointBetween(run, fromId, toId);
+  const waypoints = joint ? [from, joint, to] : [from, to];
   tok.className = 'player-token walking';
   tok.style.left = from.x + '%'; tok.style.top = from.y + '%';
   tok.innerHTML = '<img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()">';
@@ -974,8 +1004,18 @@ function playerWalk(run, fromId, toId, done) {
   if (existing) existing.remove();
   mapEl.appendChild(tok);
   void tok.offsetWidth;
-  requestAnimationFrame(function () { tok.style.left = to.x + '%'; tok.style.top = to.y + '%'; });
-  setTimeout(done, 460);
+  /* 1区間の所要時間はCSS（.player-token.walking の transition）と合わせて460ms。
+   * 辻を経由する区間は単純に2区間ぶん（920ms）かかる——距離が伸びるぶん自然に長くなる形。 */
+  const LEG_MS = 460;
+  let leg = 1;
+  function nextLeg() {
+    if (leg >= waypoints.length) { done(); return; }
+    const p = waypoints[leg];
+    requestAnimationFrame(function () { tok.style.left = p.x + '%'; tok.style.top = p.y + '%'; });
+    leg++;
+    setTimeout(nextLeg, LEG_MS);
+  }
+  nextLeg();
 }
 
 /* ================= ノード解決 ================= */

@@ -1,7 +1,7 @@
 /* CardQuest - バージョン情報と更新履歴 */
 'use strict';
 
-const APP_VERSION = '0.16.14';
+const APP_VERSION = '0.16.15';
 const APP_BUILD = '2026-08-29';
 
 /**
@@ -9,6 +9,13 @@ const APP_BUILD = '2026-08-29';
  * type: 'new' 新機能 / 'fix' 修正 / 'change' 変更
  */
 const CHANGELOG = [
+  {
+    version: '0.16.15',
+    date: '2026-08-29',
+    items: [
+      { type: 'change', text: '🗺️ <b>マップ上のコマの移動を、実際の道に沿うようにしました</b>（M6.6 WP10）。道が交差しているマスへ移るとき、今までは目的地へ一直線に進んでいましたが、これからは<b>いったん道の交差点（辻）に寄ってから</b>折れて進みます' }
+    ]
+  },
   {
     version: '0.16.14',
     date: '2026-08-29',

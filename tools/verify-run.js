@@ -246,6 +246,68 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     `boss.right=${bossBox.right.toFixed(0)} map.right=${bossBox.mapRight.toFixed(0)}`);
   ok('道の合流点（辻）が描かれている（M6.5b）', (await page.$$('.road-joint')).length >= 2,
     String((await page.$$('.road-joint')).length));
+
+  /* M6.6 WP10：プレイヤーのコマの移動は、道が交差している区間では辻を経由すること
+   * （本人指定：一直線の斜め移動ではなく、交差点で一度折れる）。playerWalk() が使う
+   * roadJointBetween() を直接呼び、①辻を経由する辺では実際に描かれている .road-joint と
+   * 同じ座標を返すこと、②枝分かれの無い区間では辻を経由しない（null）ことを確認する。 */
+  const jointCheck = await page.evaluate(() => {
+    const nodes = RUI.run.map.nodes;
+    const bySig = {};
+    Object.values(nodes).forEach((n) => {
+      if (n.connectsTo.length === 2) {
+        const sig = n.connectsTo.slice().sort().join(',');
+        (bySig[sig] = bySig[sig] || []).push(n);
+      }
+    });
+    const sig = Object.keys(bySig).find((s) => bySig[s].length === 2);
+    if (!sig) return null;
+    const src = bySig[sig][0];
+    const toId = src.connectsTo[0];
+    return { srcId: src.id, toId, joint: roadJointBetween(RUI.run, src.id, toId) };
+  });
+  ok('辻を経由する辺では roadJointBetween が交点を返す（M6.6 WP10）',
+    !!(jointCheck && jointCheck.joint), JSON.stringify(jointCheck));
+  if (jointCheck && jointCheck.joint) {
+    const svgMatch = await page.evaluate((j) => {
+      return Array.from(document.querySelectorAll('.road-joint')).some((c) => {
+        const cx = +c.getAttribute('cx') / 1280 * 100, cy = +c.getAttribute('cy') / 800 * 100;
+        return Math.abs(cx - j.x) < 0.5 && Math.abs(cy - j.y) < 0.5;
+      });
+    }, jointCheck.joint);
+    ok('その交点は画面に描かれている辻（.road-joint）と同じ座標', svgMatch, JSON.stringify(jointCheck.joint));
+  }
+  const directCheck = await page.evaluate(() => {
+    const nodes = RUI.run.map.nodes;
+    const n = Object.values(nodes).find((x) => x.connectsTo.length === 1);
+    return n ? roadJointBetween(RUI.run, n.id, n.connectsTo[0]) : 'no-such-node';
+  });
+  ok('枝分かれの無い区間は辻を経由しない（直線のまま）', directCheck === null, JSON.stringify(directCheck));
+
+  /* 実際に playerWalk() を辻ありの辺で走らせ、演出の途中経過が辻の座標を通ること
+   * （一直線の中間点ではなく）を確認する。マップの状態は変えない（run.at 等には触らない）。 */
+  if (jointCheck && jointCheck.joint) {
+    await page.evaluate(({ srcId, toId }) => {
+      window.__walkDone = false;
+      playerWalk(RUI.run, srcId, toId, () => { window.__walkDone = true; });
+    }, jointCheck);
+    await page.waitForTimeout(200);   // 1区間目（460ms）の途中——まだ辻へ向かっている最中
+    const midPos = await page.evaluate(() => {
+      const t = document.querySelector('.run-map .player-token.walking');
+      return t ? { x: parseFloat(t.style.left), y: parseFloat(t.style.top) } : null;
+    });
+    ok('演出の途中、辻と同じ座標を通る（一直線ではなく折れて進む）',
+      !!midPos && Math.abs(midPos.x - jointCheck.joint.x) < 1.5 && Math.abs(midPos.y - jointCheck.joint.y) < 1.5,
+      JSON.stringify({ mid: midPos, joint: jointCheck.joint }));
+    await wait(() => page.evaluate(() => window.__walkDone === true), 2000);
+    ok('演出が終わるとコールバックが呼ばれる', await page.evaluate(() => window.__walkDone === true));
+    /* 動作確認用に作った一時的なコマ要素を掃除しておく（本来のマップ状態には影響していない） */
+    await page.evaluate(() => {
+      const t = document.querySelector('.run-map .player-token.walking');
+      if (t) t.remove();
+    });
+  }
+
   await page.waitForTimeout(400);
   await shot('map');
 
