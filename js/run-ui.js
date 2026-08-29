@@ -53,7 +53,14 @@ const RUI = {
   /* デバッグメニューの「目覚めの場面を見返す」中だけ入る（2026-08-29）。入っていると、
    * 台本を最後まで見る／スキップしたときに openingSeen を書き換えず、元の画面
    * （openingBackTo）に戻ってコールバックを呼ぶ。previewBattleIntro と同じ形。 */
-  openingPreview: null, openingBackTo: null
+  openingPreview: null, openingBackTo: null,
+  /* カードグリッド＋情報パネル（M6.6 WP9）の選択中カード。換金所・デッキ確認・ショップ・
+   * 戦利品振り分けの4画面で共用する。gridCtx が変わった（＝違う画面に入った）ときだけ
+   * gridSel をリセットする——同じ画面内での再描画（購入・売却のたび）では選択を保つため。
+   * gridSelIdx は「押した1タイル」を指す表示専用の添字（本人指摘：同じカードが複数あると
+   * 全部のタイルが黄色く光り、どの1枚を選んでいるか分からなかった。ゲーム内の判定は今まで
+   * どおり gridSel（カードid）で行い、光らせる先だけ gridSelIdx に絞る）。 */
+  gridSel: null, gridCtx: null, gridSelIdx: null
 };
 
 function runRoot() { return document.getElementById('run-root'); }
@@ -937,6 +944,7 @@ function mapHudHTML(run, withRetire) {
         </div>
         <div class="map-hud-g"><span class="map-hud-g-icon">Ｇ</span><b>${run.gold}</b></div>
       </div>
+      ${withRetire ? '<button class="map-hud-deck" data-act="deckview-open">デッキ</button>' : ''}
       ${withRetire ? '<button class="map-hud-retire" data-act="retire">リタイヤ</button>' : ''}
     </div>`;
 }
@@ -1262,47 +1270,167 @@ function leaveEventIntro() {
   runRender();
 }
 
-function renderShopNode(run, n) {
-  const stockHTML = n.stock.length ? n.stock.map(function (id) {
-    const c = CARD_BY_ID[id], price = CQRun.shopPrice(CARD_BY_ID, id);
-    return `<div class="shop-item">
-      <div class="dc-art">${artInner(c, 4)}</div>
-      <div class="shop-item-n">${esc(c.n)}</div>
-      <button class="tiny" data-act="shop-buy" data-id="${id}" ${run.gold < price ? 'disabled' : ''}>Ｇ${price}で購入</button>
-    </div>`;
-  }).join('') : '<p>品切れです</p>';
-  runRoot().innerHTML = `
-    <div class="node-panel wide">
-      <h3>ショップ</h3>
-      <p>所持Ｇ：${run.gold}／ＬＰ：${run.lp}／${run.maxLp}</p>
-      <div class="shop-row">${stockHTML}</div>
-      <div class="shop-services">
-        <button class="tiny" data-act="shop-heal" ${run.gold < n.healCost || run.lp >= run.maxLp ? 'disabled' : ''}>
-          ＬＰ回復（Ｇ${n.healCost}）</button>
-        ${n.hasFogClear && !run.map.fog.cleared
-          ? `<button class="tiny" data-act="shop-fog" ${run.gold < n.fogClearCost ? 'disabled' : ''}>
-              霧払い（Ｇ${n.fogClearCost}）</button>` : ''}
-      </div>
-      <button class="btn ok" data-act="shop-leave">立ち去る</button>
+/* ================= カードグリッド＋情報パネル（M6.6 WP9・共通部品） =================
+ *
+ * 実装計画追補§4 WP9-a。換金所・デッキ確認・ショップ・戦利品振り分けの4画面は、
+ * 見た目も操作感もすべて「左〜中央にカードのイラストを敷き詰め、右300pxの情報パネルに
+ * 選択中のカードの詳細を出す」という同じ部品でできている。違うのは①並べる対象
+ * （デッキ／在庫／戦利品）と②情報パネル下部のボタン（売る／購入／デッキに加える・本に送る／
+ * 無し）の2点だけなので、共通部分をここにまとめ、呼び出し側は items（並べる1枚1枚）と
+ * actionsHTML（選択中カードに対するボタン）だけを渡す。
+ *
+ * カードは「本/デッキの合計40枚」を前提に、枚数ぶんタイルを並べる（例：同じカードを3枚
+ * 持っていればタイルも3枚）。§7-3の寸法（940×620・8列×5行）はスクロールが要らない前提の
+ * 目安で、実際の格子は CSS の grid で可変（fr）にしてあるので画面の余白に合わせて伸縮する。 */
+
+/** 画面が切り替わった（＝別のgridCtx）ときだけ選択中カードをリセットする。
+ * 同じ画面内での再描画（購入・売却のたび）では選択を保つ——さもないと1枚ずつしか
+ * 連続購入・連続売却できない。 */
+function gridEnter(ctx) {
+  if (RUI.gridCtx !== ctx) { RUI.gridCtx = ctx; RUI.gridSel = null; RUI.gridSelIdx = null; }
+}
+
+/** グリッドのタイル1枚（イラストのみ・9-a「カードをイラストのみで敷き詰める」）。
+ * レンタルには「借」バッジを付ける（換金所・デッキ確認の両方で使う）。 */
+function cgTileHTML(id, rental, idx) {
+  const c = CARD_BY_ID[id];
+  return `<div class="cg-tile ${RUI.gridSelIdx === idx ? 'on' : ''}" data-act="grid-pick" data-id="${id}" data-idx="${idx}">
+      <div class="cg-tile-art">${artInner(c, 3)}</div>
+      ${rental ? '<span class="cg-badge">借</span>' : ''}
     </div>`;
 }
 
-function renderExchangeNode(run, n) {
-  const items = Object.keys(run.deck).filter(function (k) { return run.deck[k] > 0 && +k !== CQRun.BLANK; });
-  const rows = items.length ? items.map(function (k) {
-    const id = +k, c = CARD_BY_ID[id];
-    const gold = c ? Math.max(10, Math.round(c.p * 0.4)) : 0;
-    return `<div class="shop-item">
-      <div class="dc-art">${artInner(c, 4)}</div>
-      <div class="shop-item-n">${esc(c.n)} ×${run.deck[k]}</div>
-      <button class="tiny" data-act="sell" data-id="${id}">Ｇ${gold}で売る</button>
+function cgGridHTML(items, emptyMsg) {
+  if (!items.length) return `<div class="cg-empty">${esc(emptyMsg || 'カードがありません')}</div>`;
+  return `<div class="cg-grid">${items.map(function (it, idx) { return cgTileHTML(it.id, it.rental, idx); }).join('')}</div>`;
+}
+
+/** タイルの直下に、そのカード専用のボタン（購入・売る・振り分け等）を添えたカード
+ * （2026-08-29 本人指摘：ボタンを情報パネル側に置くと、選んだカードから離れていて見にくい。
+ * ショップ・換金所・戦利品振り分けの3画面で共用。btnsFn(item, idx) がそのカードのボタン欄の
+ * HTMLを返す——空文字なら見た目はcgGridHTMLのタイルと同じになる）。 */
+function cgCardHTML(item, idx, btnsHTML) {
+  return `<div class="cg-card">
+      ${cgTileHTML(item.id, item.rental, idx)}
+      ${btnsHTML ? `<div class="cg-card-btns">${btnsHTML}</div>` : ''}
     </div>`;
-  }).join('') : '<p>売れるカードがありません</p>';
+}
+
+function cgCardGridHTML(items, emptyMsg, btnsFn) {
+  if (!items.length) return `<div class="cg-empty">${esc(emptyMsg || 'カードがありません')}</div>`;
+  return `<div class="cg-grid cg-grid-btn">${items.map(function (it, idx) {
+    return cgCardHTML(it, idx, btnsFn(it, idx));
+  }).join('')}</div>`;
+}
+
+/** 右の情報パネル（screen-deck・持ち出し画面の .detail .big と同じ体裁を流用）。
+ * actionsHTML は画面ごとに差し替える下部のボタン（9-a）。 */
+function cgDetailHTML(actionsHTML) {
+  const c = CARD_BY_ID[RUI.gridSel];
+  if (!c) return '<div class="carry-detail-empty">カードを選ぶと、ここに絵と詳細が出ます。</div>';
+  const stat = c.t === 'U'
+    ? `<span>攻撃力 ${c.a}</span><span>防御力 ${c.d}</span>
+       <span>ＣＨ ${c.ch}</span><span>召還Ｌｖ ${c.lv}</span><span>${c.p} G</span>`
+    : `<span>${TYPE_NAME[c.t]}</span><span>${c.p} G</span>`;
+  return `
+    <div class="big ${c.t}">
+      <div class="bigart">${artInner(c)}</div>
+      <div class="bn">${esc(c.n)}</div>
+      <div class="bstat">${stat}</div>
+      <div class="btext">${esc(c.e || '')}</div>
+    </div>
+    <div class="cg-actions">${actionsHTML || ''}</div>`;
+}
+
+/** ラン中に「持ち出している」全部（9-b・9-c で共用）：デッキのカードを枚数ぶん展開し、
+ * レンタルを個別に足す。空白(180)は実体が無いので含めない。 */
+function runCarryItems(run) {
+  const items = [];
+  Object.keys(run.deck).forEach(function (k) {
+    const id = +k;
+    if (id === CQRun.BLANK) return;
+    for (let i = 0; i < run.deck[k]; i++) items.push({ id: id, rental: false });
+  });
+  (run.rentals || []).forEach(function (id) { items.push({ id: id, rental: true }); });
+  return items;
+}
+
+function renderShopNode(run, n) {
+  gridEnter('shop:' + RUI.nodeId);
+  const items = n.stock.map(function (id) { return { id: id, rental: false }; });
+  const showFog = n.hasFogClear && !run.map.fog.cleared;
   runRoot().innerHTML = `
-    <div class="node-panel wide">
-      <h3>換金</h3><p>所持Ｇ：${run.gold}</p>
-      <div class="shop-row">${rows}</div>
-      <button class="btn ok" data-act="exchange-leave">立ち去る</button>
+    <div class="cg-head">
+      <div class="cg-title">ショップ</div>
+      <div class="cg-stats">
+        <span>所持Ｇ <b>${run.gold}</b></span>
+        <span>ＬＰ <b>${run.lp}</b>／${run.maxLp}</span>
+      </div>
+      <div class="cg-head-actions">
+        <button class="tiny" data-act="shop-heal" ${run.gold < n.healCost || run.lp >= run.maxLp ? 'disabled' : ''}>
+          ＬＰ回復（Ｇ${n.healCost}）</button>
+        ${showFog ? `<button class="tiny" data-act="shop-fog" ${run.gold < n.fogClearCost ? 'disabled' : ''}>
+          霧払い（Ｇ${n.fogClearCost}）</button>` : ''}
+        <button class="btn ok cg-done" data-act="shop-leave">立ち去る</button>
+      </div>
+    </div>
+    <div class="cg-wrap">
+      <div class="cg-main">${cgCardGridHTML(items, '品切れです', function (it) {
+        const price = CQRun.shopPrice(CARD_BY_ID, it.id);
+        return `<button class="tiny" data-act="shop-buy" data-id="${it.id}" ${run.gold < price ? 'disabled' : ''}>Ｇ${price}で購入</button>`;
+      })}</div>
+      <div class="detail cg-detail">${cgDetailHTML('')}</div>
+    </div>`;
+}
+
+/* 2026-08-29 本人指摘（再修正）：換金所はカード枚数が多いとボタン込みタイルで
+ * 縦スクロールが必要になり見にくかったため、ショップ・戦利品とは違い、この画面だけ
+ * 「カード一覧＋情報パネルに売るボタン」という以前の形に戻す。 */
+function renderExchangeNode(run, n) {
+  gridEnter('exchange:' + RUI.nodeId);
+  const items = runCarryItems(run);
+  let actions = '';
+  if (RUI.gridSel != null) {
+    const sellable = (run.deck[RUI.gridSel] || 0) > 0;
+    if (sellable) {
+      const price = CQRun.sellPrice(CARD_BY_ID, RUI.gridSel);
+      actions = `<button class="btn ok" data-act="sell" data-id="${RUI.gridSel}">Ｇ${price}で売る</button>`;
+    } else {
+      actions = '<p class="cg-note">レンタルは売れません（換金所には出せません）。</p>';
+    }
+  }
+  runRoot().innerHTML = `
+    <div class="cg-head">
+      <div class="cg-title">換金</div>
+      <div class="cg-stats"><span>所持Ｇ <b>${run.gold}</b></span></div>
+      <button class="btn ok cg-done" data-act="exchange-leave">立ち去る</button>
+    </div>
+    <div class="cg-wrap">
+      <div class="cg-main">${cgGridHTML(items, '売れるカードがありません')}</div>
+      <div class="detail cg-detail">${cgDetailHTML(actions)}</div>
+    </div>`;
+}
+
+/** デッキ確認（M6.6 WP9-c・新規）。ラン中いつでもマップのHUD「デッキ」ボタンから開ける。
+ * 操作は一切できない（閲覧のみ）——編集は開始マスだけ、という§2-3の原則はここでも崩さない。 */
+function renderDeckView() {
+  const run = RUI.run;
+  gridEnter('deckview');
+  const items = runCarryItems(run);
+  const total = CQCollection.countsTotal(run.deck) + (run.rentals ? run.rentals.length : 0);
+  const blank = Math.max(0, CQRun.DECK_SIZE - total);
+  runRoot().innerHTML = `
+    <div class="cg-head">
+      <div class="cg-title">デッキ</div>
+      <div class="cg-stats">
+        <span>デッキ <b>${total}</b>／${CQRun.DECK_SIZE}</span>
+        <span>空白 <b>${blank}</b>枚</span>
+      </div>
+      <button class="btn ok cg-done" data-act="deckview-leave">マップに戻る</button>
+    </div>
+    <div class="cg-wrap">
+      <div class="cg-main">${cgGridHTML(items, '持ち出しているカードがありません')}</div>
+      <div class="detail cg-detail">${cgDetailHTML('')}</div>
     </div>`;
 }
 
@@ -1329,32 +1457,35 @@ function renderQuestionNode(run, n) {
 
 /** 勝利直後、マップに戻る前に出す画面。得た戦利品を全部並べ、1枚ずつ「デッキに加える」
  * 「本に送る」を選ばせる（§4 WP7）。確定ボタンは無く、全部選び終えたら自動で次へ進む
- * （runAct の 'loot-deck'／'loot-book' が空になったタイミングで進める）。 */
+ * （runAct の 'loot-deck'／'loot-book' が空になったタイミングで進める）。
+ * 2026-08-29 本人指摘：ボタンを情報パネル側に置くと、選んだカードから離れていて見にくい。
+ * 情報パネルは詳細表示のみに戻し、「デッキへ／本へ」は**各カードのタイル直下**に常時出す
+ * （選ばなくても押せる。resolveLootPick は同じidが複数あっても先頭の1枚を消すだけなので、
+ * どのタイルの下のボタンを押しても結果は同じ）。タイル自体は引き続き押すと選択状態になり、
+ * 右の情報パネルに絵と詳細が出る（cgTileHTML／cgDetailHTMLをそのまま流用）。 */
 function renderLoot() {
   const run = RUI.run;
+  gridEnter('loot');
   const pending = run.lootPending || [];
   const remain = Math.max(0, CQRun.DECK_SIZE - CQCollection.countsTotal(run.deck)
     - (run.rentals ? run.rentals.length : 0));
-  const items = pending.map(function (id) {
-    const c = CARD_BY_ID[id];
-    const canDeck = CQRun.canAssignToDeck(run, id);
-    return `<div class="loot-item">
-      <div class="dc-art">${artInner(c, 4)}</div>
-      <div class="shop-item-n">${esc(c.n)}</div>
-      <div class="loot-btns">
-        <button class="loot-btn deck" data-act="loot-deck" data-id="${id}" ${canDeck ? '' : 'disabled'}>デッキに加える</button>
-        <button class="loot-btn book" data-act="loot-book" data-id="${id}">本に送る</button>
-      </div>
-    </div>`;
-  }).join('');
+  const items = pending.map(function (id) { return { id: id, rental: false }; });
   runRoot().innerHTML = `
-    <div class="node-panel wide">
-      <h3>戦利品</h3>
-      <p>デッキの空き：${remain}枚</p>
-      <div class="shop-row">${items}</div>
-      <p class="node-note">「本に送る」を選んだカードは<b>このランでは使えません</b>
-        （次のランから持ち出せます）。どちらを選んでもカードは必ず手に入ります。</p>
-    </div>`;
+    <div class="cg-head">
+      <div class="cg-title">戦利品</div>
+      <div class="cg-stats"><span>デッキの空き <b>${remain}</b>枚</span></div>
+    </div>
+    <div class="cg-wrap">
+      <div class="cg-main">${cgCardGridHTML(items, '戦利品はありません', function (it) {
+        const canDeck = CQRun.canAssignToDeck(run, it.id);
+        return `<button class="tiny" data-act="loot-deck" data-id="${it.id}" ${canDeck ? '' : 'disabled'}>デッキへ</button>
+          <button class="tiny" data-act="loot-book" data-id="${it.id}">本へ</button>`;
+      })}</div>
+      <div class="detail cg-detail">${cgDetailHTML('')}</div>
+    </div>
+    <p class="node-note cg-foot">カードごとに「デッキへ」か「本へ」を選んでください。
+      「本へ」を選んだカードは<b>このランでは使えません</b>（次のランから持ち出せます）。
+      どちらを選んでもカードは必ず手に入ります。</p>`;
 }
 
 /* ================= 結果画面 ================= */
@@ -1399,6 +1530,7 @@ function runRender() {
   else if (RUI.view === 'battle-intro') renderBattleIntro();
   else if (RUI.view === 'event-intro') renderEventIntro();
   else if (RUI.view === 'loot') renderLoot();
+  else if (RUI.view === 'deckview') renderDeckView();
   else if (RUI.view === 'result') renderResult();
 }
 
@@ -1473,7 +1605,7 @@ function onRunBattleOver(M) {
 }
 if (typeof window !== 'undefined') window.onRunBattleOver = onRunBattleOver;
 
-function runAct(act, id) {
+function runAct(act, id, idx) {
   const run = RUI.run;
   switch (act) {
     case 'opening-next': {
@@ -1588,12 +1720,16 @@ function runAct(act, id) {
     case 'loot-deck': {
       const r = CQRun.resolveLootPick(run, +id, 'deck', CARD_BY_ID);
       if (!r.ok) { runFlash(r.reason); return runRender(); }
+      RUI.gridSel = null;   /* M6.6 WP9：決まったら情報パネルを空へ戻し、次の1枚を選ばせる */
+      RUI.gridSelIdx = null;
       advanceAfterBattle();
       return runRender();
     }
     case 'loot-book': {
       const r = CQRun.resolveLootPick(run, +id, 'book', CARD_BY_ID);
       if (!r.ok) { runFlash(r.reason); return runRender(); }
+      RUI.gridSel = null;
+      RUI.gridSelIdx = null;
       advanceAfterBattle();
       return runRender();
     }
@@ -1631,6 +1767,17 @@ function runAct(act, id) {
     case 'exchange-leave':
       CQRun.exchangeLeave(run, run.map.nodes[RUI.nodeId]);
       RUI.view = 'map'; runSave();
+      return runRender();
+    /* M6.6 WP9：カードグリッド＋情報パネルの共通操作。タイルを押すと選ぶだけ（4画面共通）。 */
+    case 'grid-pick':
+      RUI.gridSel = +id;
+      RUI.gridSelIdx = idx != null ? +idx : null;
+      return runRender();
+    case 'deckview-open':
+      RUI.view = 'deckview';
+      return runRender();
+    case 'deckview-leave':
+      RUI.view = 'map';
       return runRender();
     case 'node-done':
       RUI.view = 'map'; runSave();
@@ -1699,7 +1846,7 @@ function bootRunUI() {
   el.addEventListener('click', function (ev) {
     const t = ev.target.closest('[data-act]');
     if (!t) return;
-    runAct(t.dataset.act, t.dataset.id);
+    runAct(t.dataset.act, t.dataset.id, t.dataset.idx);
   });
   bindCarryFilters(el);
   runInit();

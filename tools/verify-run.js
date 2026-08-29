@@ -337,13 +337,22 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
       await shot('node-' + t);
       await page.click('.event-intro');   // タップでスキップ
       await wait(() => page.evaluate(() => !document.querySelector('.event-intro')));
+    } else if (t === 'shop' || t === 'exchange') {
+      /* M6.6 WP9：換金所・ショップは「開ける／立ち去る」の.node-panelから、カードグリッド＋
+       * 情報パネル（.cg-head/.cg-wrap、換金所・デッキ確認・戦利品振り分けと共通の部品）に
+       * 作り直した。ここでは画面が出ることと「立ち去る」で戻れることだけ確認する（カードの
+       * 選択・購入・売却の詳細な検証は tests/run.js のエンジン側テストが担当）。 */
+      await wait(() => page.$('.cg-head'));
+      ok('非戦闘マス(' + t + ')の画面が出る（M6.6 WP9：カードグリッド＋情報パネル）',
+        !!(await page.$('.cg-head')), t);
+      await shot('node-' + t);
+      if (t === 'shop') { await page.click('[data-act="shop-leave"]'); }
+      else { await page.click('[data-act="exchange-leave"]'); }
     } else {
       await wait(() => page.$('.node-panel'));
       ok('非戦闘マス(' + t + ')の解決パネルが出る', !!(await page.$('.node-panel')), t);
       await shot('node-' + t);
-      if (t === 'shop') { await page.click('[data-act="shop-leave"]'); }
-      else if (t === 'exchange') { await page.click('[data-act="exchange-leave"]'); }
-      else if (t === 'question') { await page.click('[data-act="node-done"]'); }
+      if (t === 'question') { await page.click('[data-act="node-done"]'); }
     }
     await wait(() => page.$('.run-map'));
     ok('非戦闘マスを解決するとマップへ戻る', !!(await page.$('.run-map')));
@@ -460,13 +469,18 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.click('[data-act="run-over"]');
     await wait(() => page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
     ok('「ランへ戻る」でラン画面に戻る', await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
-    /* M6.6 WP7：マップへ戻る前に、まず戦利品（loot:[8]）の振り分け画面が出る */
-    await wait(() => page.$('[data-act="loot-deck"], [data-act="loot-book"]'));
-    const lootBtn = await page.$('[data-act="loot-deck"], [data-act="loot-book"]');
-    ok('マップに戻る前に戦利品の振り分け画面が出る（M6.6 WP7）', !!lootBtn);
-    if (lootBtn) {
+    /* M6.6 WP7：マップへ戻る前に、まず戦利品（loot:[8]）の振り分け画面が出る。
+     * M6.6 WP9でカードグリッド＋情報パネルに乗せ替え、さらに2026-08-29の本人指摘で
+     * 「デッキへ／本へ」を各カードのタイル直下に常時表示する形に戻した——選ばなくても
+     * 押せる（複数枚あっても各カードに専用のボタンが付くので、最初の1個を押せばよい）。 */
+    await wait(() => page.$('.cg-card'));
+    const lootCard = await page.$('.cg-card');
+    ok('マップに戻る前に戦利品の振り分け画面が出る（M6.6 WP7・WP9でグリッド化）', !!lootCard);
+    if (lootCard) {
       await shot('loot');
-      await page.click('[data-act="loot-book"]');   // 「本に送る」は空きの有無に関わらず必ず選べる
+      const bookBtn = await page.$('.cg-card-btns [data-act="loot-book"]');
+      ok('「デッキへ／本へ」は各カードの下に最初から出ている（2026-08-29再修正）', !!bookBtn);
+      if (bookBtn) await bookBtn.click();   // 「本に送る」は空きの有無に関わらず必ず選べる（複数枚あっても最初の1枚でよい）
       await wait(() => page.$('.run-map'));
       ok('振り分けを終えるとマップへ戻る', !!(await page.$('.run-map')));
     }

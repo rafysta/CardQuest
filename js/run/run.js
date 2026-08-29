@@ -446,12 +446,18 @@
   }
   function shopLeave(run, n) { n.cleared = true; }
 
-  const SELL_RATE = 0.4;
+  /* M6.6 WP9：換金所の売却率は定価の40%→50%に変更（実装計画追補§4 WP9-b）。
+   * 表示側（js/run-ui.js の換金所グリッド）も同じ式を使えるよう sellPrice() として公開する
+   * ——以前は画面側で 0.4 を再計算しており、率を変えるときに2箇所直す必要があった。 */
+  const SELL_RATE = 0.5;
+  function sellPrice(cards, cardId) {
+    const c = cards[cardId];
+    return c ? Math.max(10, Math.round(c.p * SELL_RATE)) : 0;
+  }
   function sell(run, cards, cardId) {
     if ((run.deck[cardId] || 0) <= 0) return { ok: false, reason: '所持していません' };
     if (cardId === BLANK) return { ok: false, reason: '空白は売れません' };
-    const c = cards[cardId];
-    const gold = c ? Math.max(10, Math.round(c.p * SELL_RATE)) : 0;
+    const gold = sellPrice(cards, cardId);
     run.deck[cardId] -= 1;
     run.gold += gold;
     run.log.push('換金：' + (cards[cardId] ? cards[cardId].n : cardId) + '（+' + gold + 'Ｇ）');
@@ -507,7 +513,7 @@
     battleSeed, firstTurnOf, battleSetup, reportBattle, reportFlee,
     canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
-    sell, exchangeLeave, resolveQuestion, retire, settle
+    sell, sellPrice, exchangeLeave, resolveQuestion, retire, settle
   };
   global.CQRun = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

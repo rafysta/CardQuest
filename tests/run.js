@@ -2974,6 +2974,19 @@ t('換金：所持カードだけ売れる。空白は売れない', () => {
   eq(run.deck[8], before - 1, '1枚減る');
 });
 
+t('換金：売却価格は定価の50%（M6.6 WP9・40%→50%に変更）', () => {
+  /* 実装計画追補§4 WP9-b「SELL_RATEを0.4→0.5に変更」。js/run-ui.jsの換金所グリッドも
+   * CQRun.sellPrice() を経由して同じ式を出す（画面側で率を再計算しない）ので、
+   * ここでエンジン側の式だけ固定しておけば表示側の金額もズレない。 */
+  const meta = { book: {}, deck: { 101: 1 }, known: [101], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 27, meta);
+  const c = CARD_BY_ID[101];
+  const expected = Math.max(10, Math.round(c.p * 0.5));
+  eq(CQRun.sellPrice(CARD_BY_ID, 101), expected, 'sellPrice()は定価の50%（10G未満は10G）');
+  const r = CQRun.sell(run, CARD_BY_ID, 101);
+  eq(r.gold, expected, 'sell()の実際の売却額もsellPrice()と一致する');
+});
+
 t('？イベント：一度解決したら再解決しない', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 14, freshMeta());
   const n = { type: 'question', event: { id: 'coin', text: 't', effect: { gold: 150 } }, resolved: false };
