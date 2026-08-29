@@ -43,7 +43,13 @@ const RUI = {
 
 function runRoot() { return document.getElementById('run-root'); }
 function runSave() { if (RUI.run) CQSave.saveRun(RUN_STORAGE, RUI.run); }
-function runFlash(msg) { RUI.flash = msg; }
+/** 短いお知らせを画面に出す。js/layout.js の flash()（#flash のトースト）をそのまま使う。
+ * 2026-08-29 修正：以前は RUI.flash に文字列を入れるだけで、どこも描画していなかったため
+ * 「本にありません」「デッキは40枚までです」等のメッセージが一切出ていなかった。 */
+function runFlash(msg) {
+  RUI.flash = msg;
+  if (typeof flash === 'function') flash(msg);
+}
 
 /** 開始マスに入る（または中断からそこへ戻る）ときの段階を決める（M6.6 WP4）。
  * fresh＝ラン開始直後なら案内から。再開のときは、案内は見た後なので持ち出しから
@@ -483,6 +489,7 @@ function renderCarryOut() {
         <span>デッキ <b>${CQCollection.deckTotal(meta)}</b>／${CQCollection.DECK_MAX}</span>
         <span class="carry-blank">空白カード <b>${CQCollection.blankCount(meta)}</b>枚</span>
       </div>
+      <button class="carry-auto" data-act="carry-auto">おまかせで選ぶ</button>
       <button class="btn ok carry-done" data-act="carry-done">デッキの編集を終える</button>
     </div>
     <div class="carry-wrap">
@@ -502,6 +509,64 @@ function renderCarryOut() {
       </div>
       <div class="detail carry-detail">${carryDetailHTML()}</div>
     </div>`;
+}
+
+/* おまかせで選ぶ（2026-08-29 本人指定）。スターターだけで28枚あり、1枚ずつ▶を押すのは手間なので、
+ * 本から自動でデッキを組む。**38枚まで**にするのがポイントで、残り2枠は空白として置いておく——
+ * おまかせドラフト（最大2回）は「デッキに空白があるときだけ」発生するので、満杯にすると
+ * レンタルが1回も引けなくなる（M6.6 §2-4）。本が38枚未満のときは全部持ち出す。 */
+const CARRY_AUTO_MAX = 38;
+/* 種類の配分。原作のスターター（ピッグマン10＋魔法7＋技能11）に近い比率を既定にしてある。
+ * 実際には本の中身に偏りがあるので、足りない種類の枠は他の種類に回す。 */
+const CARRY_AUTO_MIX = { U: 0.40, M: 0.25, S: 0.35 };
+
+/** 本にあるカードを種類ごとに、安い順で並べた配列にする（同じカードは所持枚数ぶん並ぶ）。 */
+function carryAutoPool(meta, type) {
+  const out = [];
+  Object.keys(meta.book).forEach(function (k) {
+    const c = CARD_BY_ID[+k];
+    if (!c || c.t !== type) return;
+    for (let i = 0; i < meta.book[k]; i++) out.push(c);
+  });
+  /* 高いカードほど強い、という原作の価格設計に乗って「良いものから持つ」 */
+  return out.sort(function (a, b) { return (b.p || 0) - (a.p || 0) || a.id - b.id; });
+}
+
+/** 本→デッキへ、種類の割合を整えながら自動で持ち出す。 */
+function carryAutoFill() {
+  const meta = RUI.meta;
+  const room = Math.max(0, CARRY_AUTO_MAX - CQCollection.deckTotal(meta));
+  if (room <= 0) { runFlash('もう持ち出せません（' + CARRY_AUTO_MAX + '枚に達しています）'); return runRender(); }
+  const pools = { U: carryAutoPool(meta, 'U'), M: carryAutoPool(meta, 'M'), S: carryAutoPool(meta, 'S') };
+  /* まず割合ぶんの目標枚数を決め、足りない種類は後で他へ回す */
+  const want = { U: Math.round(room * CARRY_AUTO_MIX.U), M: Math.round(room * CARRY_AUTO_MIX.M) };
+  want.S = room - want.U - want.M;
+  let moved = 0;
+  const take = function (type, n) {
+    let got = 0;
+    const pool = pools[type];
+    while (got < n && pool.length) {
+      const c = pool.shift();
+      /* 同種3枚・ピッグマン無制限・合計40枚の制限は collection.js が見る。
+       * 入らなかった札は捨てて次へ（同じカードが続くだけなので詰まらない）。 */
+      if (CQCollection.moveToDeck(meta, c.id, 1).ok) { got++; moved++; }
+    }
+    return got;
+  };
+  ['U', 'M', 'S'].forEach(function (t) { take(t, want[t]); });
+  /* 割合どおりに取れなかった分（その種類を持っていない等）を、残っている種類で埋める */
+  let guard = 0;
+  while (moved < room && guard++ < 200) {
+    const before = moved;
+    ['U', 'M', 'S'].forEach(function (t) { if (moved < room) take(t, 1); });
+    if (moved === before) break;                 /* もう本に入れられる札が無い */
+  }
+  const total = CQCollection.deckTotal(meta);
+  runFlash(moved > 0
+    ? 'おまかせで' + moved + '枚を持ち出しました（デッキ' + total + '枚・空白'
+      + CQCollection.blankCount(meta) + '枚）'
+    : '持ち出せるカードが本にありません');
+  runRender();
 }
 
 /** 持ち出しを終えてドラフトへ。ここで run.deck を meta.deck に同期するのが要点：
@@ -634,6 +699,10 @@ function nodeFigureHTML(n, run) {
   /* 開始マスにはアイコンを何も置かない（2026-08-26 本人指定）。台座タイルだけが残る。 */
   if (n.type === 'start') return '';
   const hiddenHere = !nodeVisible(n, run);
+  /* 倒した敵はマップから消す（2026-08-29 本人指摘・M6.6 §4 WP10「撃破敵の消去」）。
+   * 台座タイルと踏破の表示（.map-node.done）は残るので、通った跡としては読める。
+   * ボスも撃破後は同じ扱い（マスターが最奥に立ったままだと決着した感じが出ない）。 */
+  if ((n.type === 'battle' || n.type === 'boss') && n.cleared) return '';
   if (n.type === 'battle') {
     /* 霧の中の戦闘マスは「敵の形は見えるが正体は分からない」＝切り抜きをそのまま
      * シルエット加工して出す（マップ仕様書§5。以前は一律「？」で、何がいるのか
@@ -1153,6 +1222,8 @@ function runAct(act, id) {
       RUI.carrySel = +id;
       return carryRefreshBody();
     }
+    case 'carry-auto':
+      return carryAutoFill();
     case 'carry-done':
       return finishCarryOut();
     case 'pick-draft':

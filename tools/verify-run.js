@@ -291,11 +291,23 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     });
     await wait(() => page.$('[data-act="run-over"]'));
     ok('決着後は「ランへ戻る」ボタンが出る', !!(await page.$('[data-act="run-over"]')));
+    /* 2026-08-29 本人指摘：情報パネルと右下の2箇所に同じボタンが出ていた。右下だけにする */
+    ok('「ランへ戻る」は画面に1つだけ（右下）', (await page.$$('[data-act="run-over"]')).length === 1,
+      String((await page.$$('[data-act="run-over"]')).length) + '個');
+    ok('「ランへ戻る」は右下（#acts）にある', !!(await page.$('#acts [data-act="run-over"]')));
     await page.click('[data-act="run-over"]');
     await wait(() => page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
     ok('「ランへ戻る」でラン画面に戻る', await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
     ok('戦闘結果がランに反映される（そのマスが解決済み）',
       await page.evaluate((nid) => RUI.run.map.nodes[nid].cleared, battleId));
+    /* 2026-08-29 本人指摘：倒した敵はマップから消す（M6.6 §4 WP10） */
+    ok('倒した敵はマップから消える',
+      await page.evaluate((nid) => {
+        const el = document.querySelector('.map-node[data-id="' + nid + '"]');
+        return !!el && !el.querySelector('.node-cutout') && !!el.querySelector('.node-tile');
+      }, battleId));
+    /* 決着後の「ランへ戻る」は右下だけ（情報パネルに二重に出さない） */
+    ok('「ランへ戻る」は1つだけ', true, '（下の戦闘決着時に検査済み）');
   } else {
     ok('戦闘マスの橋渡し(このランでは戦闘マスが選べなかった)', true, '');
   }

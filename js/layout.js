@@ -834,14 +834,19 @@ function panelField() {
 
 function panelOver() {
   const win = M.winner === 'self';
-  /* v0.15.1：山札切れ敗北は廃止（尽きたら自動再装填・ＬＰ−2）。敗因はＬＰ0のみ */
-  const why = win ? '相手のＬＰが0になりました' : 'あなたのＬＰが0になりました';
+  /* v0.15.1：山札切れ敗北は廃止（尽きたら自動再装填・ＬＰ−2）。敗因はＬＰ0のみ。
+   * M6.6 WP6：フリーユニット戦は勝利条件が違う（敵の場を空にする）ので理由の文も変える。 */
+  const why = win
+    ? (CQTurn.isFieldMode(M) ? '相手の場のユニットを全て倒しました' : '相手のＬＰが0になりました')
+    : 'あなたのＬＰが0になりました';
+  /* 2026-08-29 本人指摘：決着後の「ランへ戻る」が情報パネルと右下の2箇所に出ていた。
+   * 進行のボタンは常に右下（#acts）に置く決まりなので、パネル側からは外して右下だけにする。
+   * 単発の検証モード（RUN_ACTIVE=false）の「もう一度」も同じ理由で右下だけにする。 */
   paint(`<div class="i-result ${win ? 'win' : 'lose'}">${win ? 'あなたの勝ち' : 'あなたの負け'}</div>
     <p class="i-t">${why}（第 ${M.turn} ターン）</p>
     ${M.loot.length ? `<div class="i-loot">戦利品：${M.loot.map((id) => CARD_BY_ID[id].n).join('・')}</div>` : ''}
     ${UI.report ? reportHTML(UI.report) : ''}`,
-    RUN_ACTIVE ? `<button class="btn ok" data-act="run-over">ランへ戻る</button>`
-               : `<button class="btn ok" data-act="new">もう一度</button>`, true);
+    `<p class="i-hint">${RUN_ACTIVE ? '右下の「ランへ戻る」で探索に戻ります' : '右下の「もう一度対戦する」で次の対戦を始めます'}</p>`);
 }
 
 /* --- メインステップ：ユニットを選んだときの行動メニュー --- */

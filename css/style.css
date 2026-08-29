@@ -396,6 +396,9 @@ img.curse-art{
 
 /* #app の中に入れてある（＝画面と一緒に縮む）。以前は body 直下の position:fixed だったが、
  * 画面が小さいときに bottom:170px が見える範囲の外に出ることがあった */
+/* 起動時のローディング（index.html に直書きの #boot を消すときだけCSSが要る） */
+#boot.gone{opacity:0;pointer-events:none}
+
 #flash{
   position:absolute;left:50%;bottom:170px;transform:translateX(-50%);z-index:500;
   background:#241c00;color:var(--accent);border:2px solid var(--accent);
@@ -837,6 +840,12 @@ td.nm{font-weight:800}
 .carry-counts b{font-size:18px;color:var(--fg)}
 .carry-blank{color:var(--dim)}
 .carry-done{flex:none;white-space:nowrap;padding:10px 18px;font-size:15px}
+/* おまかせで選ぶ（2026-08-29 本人指定）。主役は「編集を終える」なので、こちらは控えめな見た目 */
+.carry-auto{
+  flex:none;white-space:nowrap;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;
+  background:var(--panel2);border:1px solid var(--line);color:#cfe0f5;border-radius:10px;
+}
+.carry-auto:hover{border-color:var(--accent);color:#fff;background:#1c2740}
 /* 左＝表／右＝カードの詳細（screen-deck の .deck-wrap と同じ二段組み） */
 .carry-wrap{flex:1;min-height:0;display:flex;gap:14px}
 .carry-main{flex:1;min-width:0;display:flex;flex-direction:column}
@@ -1013,23 +1022,34 @@ td.nm{font-weight:800}
 
 /* プレイヤーのコマ：常時アイドルで小さく揺れ、移動時は上下に跳ねながら横へ滑る（マップ仕様書§4.2）。
  * 2026-08-26 本人指定：1.2倍→1.3倍→さらに1.1倍に拡大（58×76 → 70×91 → 91×118 → 100×130）。 */
+/* 2026-08-29 本人指摘：コマが浮いて見えるので、足元がマスの台座タイルと同じ高さに来るよう下げた
+ * （M6.6 §4 WP10「敵と同じ台座タイル＋接地影の方式で接地させる」）。
+ * マスの箱は 146px・translate(-50%,-62%) で、台座タイル（20px）は箱の下端＝ノード座標+約45px。
+ * コマは 130px なので、足を同じ +45px に置くには translateY を -65% にする。
+ * ゆれ・歩きのキーフレームも同じ基準を使う（ここがズレると跳ねた瞬間だけ地面が変わる）。 */
 .player-token{
-  position:absolute;transform:translate(-50%,-96%);
+  position:absolute;transform:translate(-50%,-65%);
   width:100px;height:130px;z-index:6;pointer-events:none;
 }
-.player-token img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 8px 6px rgba(0,0,0,.55))}
+/* 接地影。敵の .node-tile と同じ楕円で、コマの足元に敷く */
+.player-token::after{
+  content:'';position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);
+  width:64px;height:16px;border-radius:50%;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,.5) 0%, rgba(0,0,0,.22) 55%, transparent 78%);
+}
+.player-token img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 6px 5px rgba(0,0,0,.5))}
 .player-token.idle{animation:player-idle 1.7s ease-in-out infinite}
 @keyframes player-idle{
-  0%,100%{transform:translate(-50%,-96%) translateY(0)}
-  50%{transform:translate(-50%,-96%) translateY(-6px)}
+  0%,100%{transform:translate(-50%,-65%) translateY(0)}
+  50%{transform:translate(-50%,-65%) translateY(-6px)}
 }
 .player-token.walking{
   transition:left .46s ease-in-out, top .46s ease-in-out;
   animation:player-hop .46s ease-in-out infinite;
 }
 @keyframes player-hop{
-  0%,100%{transform:translate(-50%,-96%) translateY(0)}
-  50%{transform:translate(-50%,-96%) translateY(-15px)}
+  0%,100%{transform:translate(-50%,-65%) translateY(0)}
+  50%{transform:translate(-50%,-65%) translateY(-15px)}
 }
 
 /* ---- 霧（マップ仕様書§5・M6.5b） ----

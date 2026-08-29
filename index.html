@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=0.16.7">
+<link rel="stylesheet" href="css/style.css?v=0.16.8">
 </head>
 <body>
 
@@ -206,29 +206,44 @@
   <div id="flash"></div>
 </div>
 
+<!-- 起動時のローディング（2026-08-29）。CSSが届く前でも必ず出るよう、見た目はここに直書きする。
+     js/boot.js が主要な絵を先読みしながらバーを進め、読み終わったら自分で消える。 -->
+<div id="boot" style="position:fixed;inset:0;z-index:9999;background:#0b1220;color:#e8eefc;
+     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+     font-family:system-ui,-apple-system,'Segoe UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif;
+     transition:opacity .4s ease">
+  <div style="font-size:30px;font-weight:800;letter-spacing:.08em">CardQuest</div>
+  <div style="width:min(420px,64vw);height:8px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden">
+    <div id="boot-bar" style="width:0;height:100%;border-radius:99px;
+         background:linear-gradient(90deg,#facc15,#fde68a);transition:width .25s ease-out"></div>
+  </div>
+  <div style="font-size:13px;color:#96a7c6">読み込んでいます… <span id="boot-pct">0%</span></div>
+</div>
+
 <div id="sa-probe"></div>
 
-<script src="js/data.js?v=0.16.7"></script>
-<script src="js/engine/rng.js?v=0.16.7"></script>
-<script src="js/engine/state.js?v=0.16.7"></script>
-<script src="js/engine/stats.js?v=0.16.7"></script>
-<script src="js/engine/fieldrules.js?v=0.16.7"></script>
-<script src="js/engine/turn.js?v=0.16.7"></script>
-<script src="js/engine/combat.js?v=0.16.7"></script>
-<script src="js/engine/effects/magic.js?v=0.16.7"></script>
-<script src="js/engine/effects/units.js?v=0.16.7"></script>
-<script src="js/engine/ai.js?v=0.16.7"></script>
-<script src="js/engine/search.js?v=0.16.7"></script>
-<script src="js/meta/collection.js?v=0.16.7"></script>
-<script src="js/run/areas.js?v=0.16.7"></script>
-<script src="js/run/map.js?v=0.16.7"></script>
-<script src="js/run/run.js?v=0.16.7"></script>
-<script src="js/meta/save.js?v=0.16.7"></script>
-<script src="js/lore.js?v=0.16.7"></script>
-<script src="js/version.js?v=0.16.7"></script>
-<script src="js/layout.js?v=0.16.7"></script>
-<script src="js/run-ui.js?v=0.16.7"></script>
-<script src="js/simulate.js?v=0.16.7"></script>
-<script src="js/update.js?v=0.16.7"></script>
+<script src="js/boot.js?v=0.16.8"></script>
+<script src="js/data.js?v=0.16.8"></script>
+<script src="js/engine/rng.js?v=0.16.8"></script>
+<script src="js/engine/state.js?v=0.16.8"></script>
+<script src="js/engine/stats.js?v=0.16.8"></script>
+<script src="js/engine/fieldrules.js?v=0.16.8"></script>
+<script src="js/engine/turn.js?v=0.16.8"></script>
+<script src="js/engine/combat.js?v=0.16.8"></script>
+<script src="js/engine/effects/magic.js?v=0.16.8"></script>
+<script src="js/engine/effects/units.js?v=0.16.8"></script>
+<script src="js/engine/ai.js?v=0.16.8"></script>
+<script src="js/engine/search.js?v=0.16.8"></script>
+<script src="js/meta/collection.js?v=0.16.8"></script>
+<script src="js/run/areas.js?v=0.16.8"></script>
+<script src="js/run/map.js?v=0.16.8"></script>
+<script src="js/run/run.js?v=0.16.8"></script>
+<script src="js/meta/save.js?v=0.16.8"></script>
+<script src="js/lore.js?v=0.16.8"></script>
+<script src="js/version.js?v=0.16.8"></script>
+<script src="js/layout.js?v=0.16.8"></script>
+<script src="js/run-ui.js?v=0.16.8"></script>
+<script src="js/simulate.js?v=0.16.8"></script>
+<script src="js/update.js?v=0.16.8"></script>
 </body>
 </html>
