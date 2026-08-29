@@ -66,7 +66,7 @@ function enterStartNode(fresh) {
   RUI.guideStep = 0;
   carryResetTable();
   if (fresh) {
-    RUI.guide = buildStartGuide(run, RUI.meta);
+    RUI.guide = buildGuideBefore(run, RUI.meta);
     RUI.startStage = RUI.guide.length ? 'guide' : 'carry';
   } else {
     RUI.guide = null;
@@ -177,17 +177,17 @@ function renderAreaSelect() {
 
 /* ---- ① アンバーの案内 ---- */
 
-/** この開始マスで出す吹き出しを組み立てる（台本§3.1/§4.1・§3.2/§4.2・§4.3、
- * 追補§5-2のマスター紹介と特殊効果、§5-3の持ち出しヒント）。
- * 初回かどうかは cq_meta.visits（ラン開始時に加算済み）で判定する。 */
-function buildStartGuide(run, meta) {
+/** 初回訪問か（cq_meta.visits はラン開始時に加算済みなので、1なら今回が初回）。 */
+function firstVisitHere(run, meta) { return CQSave.visitCount(meta, run.areaId) <= 1; }
+
+/** ①持ち出しの前に出す案内（2026-08-28 本人指定）。
+ * エリア導入（台本§3.1/§4.1・§3.2/§4.2）→ 今日の状況（霧＝§4.3／戦場ルール＝追補§5-2）
+ * → 持ち出しの説明（§5-3・初回だけ）。デッキを組む判断に要る話をここに集めている。 */
+function buildGuideBefore(run, meta) {
   const L = CQLore.LORE;
   const area = L.areas[run.areaId];
   if (!area) return [];
-  const firstVisit = CQSave.visitCount(meta, run.areaId) <= 1;
-  let out = firstVisit ? area.first.slice() : CQLore.pickOne(area.repeat).slice();
-  /* 初回のみ、このエリアのマスターがどんな相手かを一言（追補§5-2） */
-  if (firstVisit && area.masterIntro) out = out.concat(area.masterIntro);
+  let out = firstVisitHere(run, meta) ? area.first.slice() : CQLore.pickOne(area.repeat).slice();
   /* 霧の日は追加で1つ（台本§4.3） */
   if (run.map.fog.active && !run.map.fog.cleared && area.fog) out = out.concat(area.fog);
   /* 戦場ルールが付いている日も追加で1つ。おじゃま虫の日は専用の文に差し替える（追補§5-2） */
@@ -198,9 +198,18 @@ function buildStartGuide(run, meta) {
   if (rules.length) {
     out = out.concat(rules.indexOf('pestCard') >= 0 ? L.common.pest : L.common.fieldRule);
   }
-  /* 持ち出しの説明は一度だけ（§5-3）。②のデッキ編集の直前に出したいので最後に足す */
+  /* 持ち出しの説明は一度だけ（§5-3）。この直後がデッキ編集なので最後に置く */
   if (!CQSave.hintSeen(meta, 'carryOut')) out = out.concat(L.hints.carryOut);
   return out;
+}
+
+/** ②出発の直前に出す案内（2026-08-28 本人指定）。
+ * マスター紹介（追補§5-2）→ 送り出し（台本§3.1-3／§4.1-3）。どちらも初回のみ。
+ * 2回目以降は空になり、そのまま出発する（台本§3.2/§4.2の短縮版は①で言い切っているため）。 */
+function buildGuideAfter(run, meta) {
+  const area = CQLore.LORE.areas[run.areaId];
+  if (!area || !firstVisitHere(run, meta)) return [];
+  return (area.masterIntro || []).concat(area.depart || []);
 }
 
 /** アンバーの吹き出し1つ（肖像＋本文＋タップ送り）。マップの上に重ねる前提の部品。
@@ -233,13 +242,24 @@ function renderStartGuide() {
     + mapBoardHTML(RUI.run, false, amberBubbleHTML(b, { nextAct: 'guide-next', skipAct: 'guide-skip' }));
 }
 
-/** 案内を終えて②持ち出しへ。ヒントは見せた時点で立てる（二度と出さない・台本§5）。 */
+/** 案内の1つ分を終える。①のあとは持ち出しへ、②のあとは出発する。
+ * 持ち出しのヒントは見せた時点で既読にする（二度と出さない・台本§5）。 */
 function finishStartGuide() {
+  RUI.guide = null; RUI.guideStep = 0;
+  if (RUI.startStage === 'guide2') return departToMap();
   CQSave.markHint(RUI.meta, 'carryOut');
   CQSave.saveMeta(RUN_STORAGE, RUI.meta);
   RUI.startStage = 'carry';
-  RUI.guide = null; RUI.guideStep = 0;
   runRender();
+}
+
+/** ドラフトまで終わったので、出発前の②を出す（無ければそのまま出発）。 */
+function enterGuideAfter() {
+  const script = buildGuideAfter(RUI.run, RUI.meta);
+  if (!script.length) return departToMap();
+  RUI.guide = script; RUI.guideStep = 0;
+  RUI.startStage = 'guide2';
+  return runRender();
 }
 
 function startHudHTML(run) {
@@ -536,7 +556,7 @@ const DRAFT_ROUND_NOTE = [
 function renderStartDraft() {
   const run = RUI.run;
   const dp = run.draftPending;
-  if (!dp) return departToMap();          /* 空白が無い等でドラフトが発生しないときは出発 */
+  if (!dp) return enterGuideAfter();      /* 空白が無い等でドラフトが発生しないときは出発前の案内へ */
   const opts = dp.options.map(function (id) { return draftCardBig(id, true); }).join('');
   runRoot().innerHTML = startHudHTML(run) + `
     <div class="draft-head">
@@ -564,12 +584,12 @@ function departToMap() {
 
 function renderStart() {
   const run = RUI.run;
-  if (RUI.startStage === 'guide') return renderStartGuide();
+  if (RUI.startStage === 'guide' || RUI.startStage === 'guide2') return renderStartGuide();
   if (RUI.startStage === 'carry') return renderCarryOut();
-  /* 'draft'：次の回を用意する。空白が無ければ null が返り、そのまま出発する */
+  /* 'draft'：次の回を用意する。空白が無ければ null が返り、出発前の案内②へ進む */
   if (!run.draftPending) {
     const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
-    if (!dp) return departToMap();
+    if (!dp) return enterGuideAfter();
   }
   return renderStartDraft();
 }

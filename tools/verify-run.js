@@ -203,7 +203,22 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   } else {
     ok('空白が無いランではドラフトが出ずにマップへ直行する（WP4）', true);
   }
-  await wait(() => page.$('.run-map'));
+
+  // --- 出発の直前の案内②（2026-08-28 本人指定：マスター紹介＋送り出し） ---
+  await wait(() => page.$('.amber-overlay') || page.$('.map-node[data-act="node"]'));
+  const hasGuide2 = !!(await page.$('.amber-overlay'));
+  ok('ドラフトのあと、出発の直前にもう一度アンバーが出る（初回訪問）', hasGuide2);
+  if (hasGuide2) {
+    const g2 = await page.$eval('.amber-lines', (e) => e.innerText);
+    ok('②の1つ目はマスターの紹介', g2.indexOf('マスター') >= 0, g2.replace(/\n/g, ' / '));
+    await shot('start-guide2');
+    /* 送り出しまで送る（最後の1つを送るとマップへ出発する） */
+    for (let i = 0; i < 6 && (await page.$('[data-act="guide-next"]')); i++) {
+      await page.click('[data-act="guide-next"]');
+      await page.waitForTimeout(200);
+    }
+  }
+  await wait(() => page.$('.map-node[data-act="node"]'));
   ok('出発ボタンを押さずにマップへ着く（WP4：暗転→明転）', !!(await page.$('.run-map')));
   ok('開始マスが出発済みになっている',
     await page.evaluate(() => RUI.run.map.nodes[RUI.run.map.start].cleared));

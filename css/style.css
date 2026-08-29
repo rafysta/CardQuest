@@ -782,13 +782,14 @@ td.nm{font-weight:800}
 }
 .amber-skip:hover{color:#fff;border-color:var(--accent)}
 .amber-row{display:flex;align-items:flex-start;gap:14px;max-width:900px}
-/* 肖像の下地の丸。肖像PNGは背景が透過なのでこの色が透けて見える。
- * 2026-08-28 本人指定：黒っぽすぎたので明るい色・不透明度50%程度にした。 */
+/* 2026-08-28 本人指定：下地の丸（背景・枠）はマップの上では浮いて見えるので**やめて**、
+ * 肖像だけを1.3倍（96→125px）で置く。肖像PNGは背景が透過なので、丸を外すと
+ * 切り抜きのまま出る。四角い切り口が出ないよう、縁をぼかすマスクで溶かしてある。 */
 .amber-face{
-  width:96px;height:96px;flex:none;border-radius:50%;object-fit:cover;object-position:center 12%;
-  border:2px solid rgba(200,215,240,.4);
-  box-shadow:0 8px 20px rgba(0,0,0,.5);
-  background:rgba(150,170,205,.5);
+  width:125px;height:125px;flex:none;object-fit:cover;object-position:center 12%;
+  filter:drop-shadow(0 6px 14px rgba(0,0,0,.65));
+  -webkit-mask-image:radial-gradient(closest-side, #000 62%, rgba(0,0,0,.6) 80%, transparent 100%);
+  mask-image:radial-gradient(closest-side, #000 62%, rgba(0,0,0,.6) 80%, transparent 100%);
 }
 /* 半透明の吹き出し（背景のマップが透けて見える程度に留める） */
 .amber-bubble{

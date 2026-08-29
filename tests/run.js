@@ -3345,8 +3345,8 @@ t('台本（lore.js）：規約どおりの形になっている', () => {
   const L = CQLore.LORE;
   const all = [].concat(
     L.opening, L.hints.carryOut, L.common.fieldRule, L.common.pest,
-    L.areas.grassland.first, L.areas.grassland.masterIntro,
-    L.areas.forest.first, L.areas.forest.masterIntro, L.areas.forest.fog
+    L.areas.grassland.first, L.areas.grassland.depart, L.areas.grassland.masterIntro,
+    L.areas.forest.first, L.areas.forest.depart, L.areas.forest.masterIntro, L.areas.forest.fog
   );
   L.areas.grassland.repeat.forEach((g) => g.forEach((b) => all.push(b)));
   L.areas.forest.repeat.forEach((g) => g.forEach((b) => all.push(b)));
@@ -3366,6 +3366,25 @@ t('台本（lore.js）：規約どおりの形になっている', () => {
   const downCount = all.filter((b) => b.face === 'down').length;
   eq(downCount > 0, true, 'down表情の吹き出しが存在する（過去に触れる場面）');
   eq(L.areas.grassland.fog, null, '草原は霧率0%なので霧の文を持たない');
+});
+
+t('台本：開始マスの案内は2段に分かれている（2026-08-28 本人指定）', () => {
+  const L = CQLore.LORE;
+  ['grassland', 'forest'].forEach((id) => {
+    const a = L.areas[id];
+    eq(Array.isArray(a.first) && a.first.length > 0, true, id + '：①のエリア導入がある');
+    eq(Array.isArray(a.depart) && a.depart.length > 0, true, id + '：②の送り出しがある');
+    eq(Array.isArray(a.masterIntro) && a.masterIntro.length > 0, true, id + '：②のマスター紹介がある');
+  });
+  /* 削除した台本§3.1-2「道は二つに分かれる」がどこにも残っていないこと */
+  const grass = [].concat(a2(L.areas.grassland.first), a2(L.areas.grassland.depart),
+    a2(L.areas.grassland.masterIntro));
+  eq(grass.some((b) => b.lines.join('').indexOf('道は二つに分かれる') >= 0), false,
+    '「道は二つに分かれる」は削除済み');
+  /* 送り出しは「行け」で終わる＝出発の直前に置く文であること */
+  eq(L.areas.grassland.depart[0].lines.join('').indexOf('行け') >= 0, true,
+    '草原の送り出しは「行け。日が暮れるまでには戻れ。」');
+  function a2(x) { return x || []; }
 });
 
 t('台本：プレースホルダの置換と候補群の抽選', () => {
