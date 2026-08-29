@@ -438,20 +438,22 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await dbgClick('最新版のチェック');
   await wait(() => page.$('.dbg-verdict'), 8000);
   ok('最新版のチェックが結果を返す', !!(await page.$('.dbg-verdict')));
-  /* 戦闘開始シーンの再生：実戦闘に入らずカットイン→ルーレットだけ流して元の画面へ戻る */
+  /* 2026-08-29：「目覚めの場面を見返す」——アンバーとの出会いの場面だけを最初から再生し、
+   * 終わったら元の画面へ戻る（openingSeen・ランの状態には触れない）。 */
   const viewBefore = await page.evaluate(() => RUI.view);
-  await dbgClick('戦闘開始シーンを再生');
-  await wait(() => page.$('.battle-intro'));
-  ok('「戦闘開始シーンを再生」でカットインだけ再生できる', !!(await page.$('.battle-intro')));
-  await page.click('.battle-intro');                       // スキップして先へ
-  await wait(() => page.$('.first-turn-roulette'), 4000);
-  ok('続けてルーレットも再生される', !!(await page.$('.first-turn-roulette')));
-  await page.click('.first-turn-roulette');
-  await wait(() => page.evaluate(() => !document.querySelector('.first-turn-roulette')), 4000);
-  ok('再生後は元の画面に戻る（バトルには入らない）',
+  const openingSeenBefore = await page.evaluate(() => RUI.meta.openingSeen);
+  await dbgClick('目覚めの場面を見返す');
+  await wait(() => page.$('.opening-scene'));
+  ok('「目覚めの場面を見返す」で最初の台詞から再生される', await page.evaluate(() =>
+    document.querySelector('.opening-bubble') && document.querySelector('.opening-bubble').textContent.includes('起きたか')));
+  await shot('debug-opening-replay');
+  await page.click('.opening-skip');                        // スキップして先へ
+  await wait(() => page.evaluate(() => !document.querySelector('.opening-scene')));
+  ok('見返した後は元の画面に戻る（ランの状態には入らない）',
     (await page.evaluate(() => RUI.view)) === viewBefore &&
     await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')),
     'before=' + viewBefore + ' after=' + (await page.evaluate(() => RUI.view)));
+  ok('openingSeen は書き換わらない', (await page.evaluate(() => RUI.meta.openingSeen)) === openingSeenBefore);
 
   /* --- 2026-08-29：デッキ編集とフリーバトルをデバッグメニューへ移した --- */
   await page.click('#dbg-btn');
@@ -494,6 +496,20 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('自分のデッキはデッキ編集で組んだ40枚', freeM.self === 40, String(freeM.self));
   ok('フリーバトルでは「新しい対戦」等の設定ボタンが出る（ラン中は隠れる）',
     !!(await page.$('#turnbox [data-act="new"]')));
+  /* 2026-08-29：決着後は「もう一度対戦する」に加え「バトルを終える」も出て、
+   * 押すとフリーバトルの設定画面（相手選び）に戻ること。 */
+  await page.evaluate(() => {
+    M.winner = 'self'; M.phase = 'over'; M.loot = [];
+    UI.mode = 'over'; UI.report = null; busy = false; renderAll();
+  });
+  await wait(() => page.$('[data-act="free-end"]'));
+  ok('フリーバトル決着後は「もう一度対戦する」と「バトルを終える」が並ぶ',
+    !!(await page.$('#acts [data-act="new"]')) && !!(await page.$('#acts [data-act="free-end"]')));
+  await shot('debug-free-battle-over');
+  await page.click('[data-act="free-end"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-free').classList.contains('on')));
+  ok('「バトルを終える」でフリーバトルのトップ画面に戻る',
+    await page.evaluate(() => document.getElementById('screen-free').classList.contains('on')));
   /* ストーリーへ戻れること。タブは終始「ラン」のまま動いていないこと */
   ok('★戦闘中でもタブは「ラン」のまま', await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
   await page.click('.tab[data-screen="screen-run"]');

@@ -8,8 +8,9 @@
  *   🔄 最新版のチェック … いま読み込まれている版が、公開中のもの・GitHubのものと同じかを見る。
  *   📐 ルーラー         … 画面に80px方眼の点線と番号を重ねる。「x:3, y:5 から縦3・横5」の
  *                        ような位置指定ができるようになる。もう一度押すと消える。
- *   🎬 戦闘開始シーン   … 戦闘導入カットイン→先攻ルーレットだけを再生して元の画面に戻る。
- *                        アニメーションの調整を、実際に戦闘へ入らずに何度も確認するためのもの。
+ *   🎬 目覚めの場面     … 冒頭、アンバーと初めて出会って話す場面だけを最初から見返して
+ *                        元の画面に戻る（2026-08-29・本人指定。プレイヤーが後で振り返りたい
+ *                        ときのためのメニュー。cq_meta.openingSeen やランの状態には触れない）。
  *
  * 製品には害が無い（押さなければ何も起きない）ので、当面は常設のままにしておく。
  * DOM前提のコードなのでNode（tests/・tools/）からは読み込まれない。
@@ -28,7 +29,7 @@ const CQDebug = (function () {
     { icon: '⚔', label: 'バトルをスキップ（勝利）', hint: 'いまの戦闘を勝ちで終わらせる', run: skipBattle },
     { icon: '🔄', label: '最新版のチェック', hint: '公開中・GitHubの版と見比べる', run: checkVersion },
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
-    { icon: '🎬', label: '戦闘開始シーンを再生', hint: 'カットイン→ルーレットだけ再生', run: playBattleIntroScene }
+    { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene }
   ];
 
   /* ---- 🗡 フリーバトル ／ 🃏 デッキ編集 -------------------------------------
@@ -197,19 +198,25 @@ const CQDebug = (function () {
         '「x:3, y:5 から 縦3・横5」のように指示できます。');
   }
 
-  /* ---- 🎬 戦闘開始シーンの再生 ---------------------------------------------- */
+  /* ---- 🎬 目覚めの場面を見返す ----------------------------------------------
+   * 2026-08-29：以前あった「戦闘開始シーンを再生」を削除し、代わりに置いた。
+   * プレイヤーが後でアンバーとの出会いを振り返りたいときのためのメニュー。 */
 
-  /** カットイン→ルーレットだけを続けて再生し、終わったら元の画面へ戻る。
-   * 実際の戦闘には入らない（CQRun.battleSetup も startRunBattle も呼ばない）ので、
-   * ランの状態は一切変わらない＝何度でも繰り返し確認できる。 */
-  function playBattleIntroScene() {
-    if (typeof previewBattleIntro !== 'function') return out('ラン画面が読み込まれていません。');
-    const r = previewBattleIntro(function () {
-      /* カットインが終わった直後にルーレットを見せる（本番と同じ順番）。
-       * 先攻／後攻は演出確認用に毎回ランダムでよい（本番の抽選には一切関係しない）。 */
-      if (typeof showFirstTurnRoulette === 'function') showFirstTurnRoulette(Math.random() < 0.5 ? 'self' : 'enemy');
+  /** 冒頭の目覚めの場面（アンバーと初めて出会って話す場面）だけを最初から再生し、
+   * 終わったら元いた画面へ戻る。cq_meta.openingSeen やラン（RUI.run）の状態には
+   * 一切触れないので、何度でも見返せる。画面はいったんラン画面（#screen-run）へ
+   * 切り替える必要があるので、戻り先の画面を覚えておいて終了後に復元する。 */
+  let openingReturnScreen = null;
+  function playOpeningScene() {
+    if (typeof previewOpening !== 'function') return out('ラン画面が読み込まれていません。');
+    const cur = document.querySelector('.screen.on');
+    openingReturnScreen = cur ? cur.id : 'screen-run';
+    const r = previewOpening(function () {
+      if (openingReturnScreen && typeof showScreen === 'function') showScreen(openingReturnScreen);
+      openingReturnScreen = null;
     });
     if (!r.ok) return out(r.reason);
+    if (typeof showScreen === 'function') showScreen('screen-run');
     close();
   }
 
@@ -224,5 +231,5 @@ const CQDebug = (function () {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
-  return { toggle, close, skipBattle, checkVersion, toggleRuler, playBattleIntroScene };
+  return { toggle, close, skipBattle, checkVersion, toggleRuler, playOpeningScene };
 })();

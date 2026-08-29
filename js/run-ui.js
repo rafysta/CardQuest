@@ -45,7 +45,11 @@ const RUI = {
   battleIntroNodeId: null, battleIntroLeaving: false,
   /* デバッグメニューの「戦闘開始シーンを再生」中だけ入る。入っていると、カットインが
    * 終わっても実戦闘へは進まず、元の画面（battleIntroBackTo）に戻ってコールバックを呼ぶ。 */
-  battleIntroPreview: null, battleIntroBackTo: null
+  battleIntroPreview: null, battleIntroBackTo: null,
+  /* デバッグメニューの「目覚めの場面を見返す」中だけ入る（2026-08-29）。入っていると、
+   * 台本を最後まで見る／スキップしたときに openingSeen を書き換えず、元の画面
+   * （openingBackTo）に戻ってコールバックを呼ぶ。previewBattleIntro と同じ形。 */
+  openingPreview: null, openingBackTo: null
 };
 
 function runRoot() { return document.getElementById('run-root'); }
@@ -151,14 +155,40 @@ function renderOpening() {
 }
 
 /** 目覚めの場面を終える（最後まで見た／スキップした、どちらもここに来る）。
- * openingSeen を立てて保存し、以後は起動しても出ない。 */
+ * openingSeen を立てて保存し、以後は起動しても出ない。
+ * ただしデバッグメニューからの見返し中（RUI.openingPreview）は、既に見た場面を
+ * もう一度見せているだけなので openingSeen には触れず、元いた画面へ戻ってコールバックを呼ぶ。 */
 function finishOpening() {
+  if (RUI.openingPreview) {
+    const cb = RUI.openingPreview;
+    RUI.openingPreview = null;
+    RUI.view = RUI.openingBackTo || 'areaSelect';
+    RUI.openingBackTo = null;
+    RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
+    runRender();
+    cb();
+    return;
+  }
   RUI.meta.openingSeen = true;
   CQSave.saveMeta(RUN_STORAGE, RUI.meta);
   RUI.view = 'areaSelect';
   RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
   runRender();
 }
+
+/** デバッグメニュー用：冒頭の目覚めの場面（アンバーと初めて出会って話す場面）だけを
+ * 最初から再生し、終わったら元の画面に戻って onDone() を呼ぶ。cq_meta.openingSeen や
+ * ラン（RUI.run）の状態には一切触れない＝「後で振り返りたい」ときに何度でも見返せる。
+ * js/debug.js から呼ぶ。 */
+function previewOpening(onDone) {
+  RUI.openingBackTo = RUI.view;
+  RUI.openingPreview = onDone || function () {};
+  RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
+  RUI.view = 'opening';
+  runRender();
+  return { ok: true };
+}
+if (typeof window !== 'undefined') window.previewOpening = previewOpening;
 
 /* ================= エリア選択 ================= */
 
@@ -1229,8 +1259,12 @@ function runRender() {
   /* M6.6 WP7：戦利品の振り分けが残っているうちは、勝敗が確定していても結果画面より先に
    * この画面を見せる（settle() もまだ済んでいない）。 */
   const lootWaiting = !!(RUI.run && RUI.run.lootPending && RUI.run.lootPending.length);
-  if (RUI.run && RUI.run.outcome && !lootWaiting) RUI.view = 'result';
-  else if (lootWaiting) RUI.view = 'loot';
+  /* デバッグメニューの「目覚めの場面を見返す」中は、結果画面がまだ残っていても
+   * それより優先して opening を出し続ける（さもないと毎回の再描画でここに戻されてしまう）。 */
+  if (!RUI.openingPreview) {
+    if (RUI.run && RUI.run.outcome && !lootWaiting) RUI.view = 'result';
+    else if (lootWaiting) RUI.view = 'loot';
+  }
   if (RUI.view === 'opening') renderOpening();
   else if (RUI.view === 'areaSelect') renderAreaSelect();
   else if (RUI.view === 'start') renderStart();

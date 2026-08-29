@@ -914,8 +914,12 @@ function renderHand() {
   const acts = document.getElementById('acts');
   let b = '';
   if (M.winner || M.fled) {
+    /* 2026-08-29：フリーバトルの決着後は「もう一度対戦する」に加えて「バトルを終える」も
+     * 出す（本人指定）。押すとフリーバトルのトップ（相手選び）画面に戻る。
+     * ラン中の戦闘（RUN_ACTIVE）には無関係——そちらは「ランへ戻る」がその役割を兼ねる。 */
     b = RUN_ACTIVE ? '<button class="act-btn" data-act="run-over">ランへ<br>戻る</button>'
-                   : '<button class="act-btn" data-act="new">もう一度<br>対戦する</button>';
+                   : '<button class="act-btn" data-act="new">もう一度<br>対戦する</button>' +
+                     '<button class="act-btn sub" data-act="free-end">バトルを<br>終える</button>';
   }
   else if (M.combat) {
     /* オープンフェイズを終えるボタンは、他のステップの「配置を終える」と同じ右下に置く。
@@ -1398,6 +1402,12 @@ function panelAct(act, data) {
       UI.pending = null; UI.mode = 'idle'; UI.lane = null; UI.layers = [];
       return renderAll();
     case 'new': return newMatch();
+    /* 2026-08-29：フリーバトルの決着後「バトルを終える」→ フリーバトルのトップへ戻る。
+     * RUN_ACTIVE の戦闘には出ないボタンなので、run-over のような後始末は不要。 */
+    case 'free-end':
+      renderFreeSetup();
+      showScreen('screen-free');
+      return;
     case 'run-over': {                                  /* ラン中の戦闘決着 → ランの画面へ戻る */
       const m = M, hook = runOverHook;
       RUN_ACTIVE = false; runOverHook = null;
