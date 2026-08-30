@@ -633,6 +633,26 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('セットした手札がそのまま手に入っている', bsM.hand.join(',') === '108', JSON.stringify(bsM.hand));
   ok('hooks が配線されている（これが無いと魔法が一切発動しない）', bsM.hooks);
   await shot('debug-board-battle');
+  /* ★ 強制開放の連鎖は「その場で」めくること（2026-08-30 本人指摘の再発防止）。
+   * v0.16.24 は .card.ch.chain-now に position:relative を書いてしまい、ＣＨが
+   * `position:absolute; bottom:calc(k * var(--vstep))` の積み位置から外れて
+   * **列の上端まで飛んでから裏返って**いた。めくっている最中の top と position を実測する。 */
+  const chTop = () => page.$eval('.card.ch[data-lane="3"][data-layer="1"]', (el) => ({
+    top: Math.round(el.getBoundingClientRect().top), pos: getComputedStyle(el).position
+  }));
+  const beforeFlip = await chTop();
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(200);
+  await page.click('.card.ch[data-lane="3"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  let duringFlip = null;
+  for (let n = 0; n < 30 && !duringFlip; n++) {          /* めくっている最中のフレームを捕まえる */
+    await page.waitForTimeout(60);
+    if (await page.$('.card.ch[data-lane="3"][data-layer="1"].chain-now')) duringFlip = await chTop();
+  }
+  ok('★連鎖でめくられるカードはその場で裏返る（上にずれない）',
+    !!duringFlip && duringFlip.top === beforeFlip.top && duringFlip.pos === 'absolute',
+    JSON.stringify({ before: beforeFlip, during: duringFlip }));
+  await page.waitForTimeout(3000);                        /* 連鎖の演出が終わるまで待つ */
   /* 戦闘中にもう一度開くと、いまの盤面が初期値として出る（試す→直す→また試す） */
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));

@@ -1,7 +1,7 @@
 /* CardQuest - バージョン情報と更新履歴 */
 'use strict';
 
-const APP_VERSION = '0.16.25';
+const APP_VERSION = '0.16.26';
 const APP_BUILD = '2026-08-30';
 
 /**
@@ -9,6 +9,13 @@ const APP_BUILD = '2026-08-30';
  * type: 'new' 新機能 / 'fix' 修正 / 'change' 変更
  */
 const CHANGELOG = [
+  {
+    version: '0.16.26',
+    date: '2026-08-30',
+    items: [
+      { type: 'fix', text: '🔮 <b>強制開放・強制転回でめくられるカードが、その場で裏返るようになりました</b>（本人指摘）。前の版では<b>カードが列の上端まで飛んでから裏返って</b>いました。「その場で裏返る」ことを狙って書いた指定（`position:relative`）が、逆にカードを積み位置から外してしまっていたのが原因です' }
+    ]
+  },
   {
     version: '0.16.25',
     date: '2026-08-30',

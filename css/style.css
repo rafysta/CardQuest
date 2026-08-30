@@ -513,19 +513,26 @@ img.curse-art{
  * エンジンが1ビートずつ止まるようになったので、ここは**その場でめくる**見た目だけを担う。
  * transform に translate を入れないこと——動かすと「一度離れて戻る」ように見える。
  * 間合いは js/layout.js の CHAIN_FLIP_MS / CHAIN_AIM_MS / CHAIN_DIE_MS と揃える。 */
-.card.ch.chain-now{animation:cq-chain-flip .38s ease-out;z-index:3;position:relative}
+/* ★ position / top / bottom / margin には絶対に触れないこと。
+ * ＣＨは `position:absolute; bottom:calc(k * var(--vstep))` で積まれている（chHTML のインライン指定）。
+ * ここに position:relative を足すと、カードが絶対配置から外れて**列の上端まで飛ぶ**
+ * ——v0.16.24 で z-index を効かせるつもりで書いてしまい、本人指摘のとおり
+ * 「カードが上にずれてから裏返る」状態になっていた（2026-08-30 修正）。
+ * z-index もインラインの `z-index:100-k` が勝つのでここに書いても効かない。 */
+.card.ch.chain-now{animation:cq-chain-flip .38s ease-out}
 @keyframes cq-chain-flip{
   0%{transform:rotateY(90deg);box-shadow:0 0 0 3px var(--accent),0 0 20px rgba(250,204,21,.9)}
   55%{transform:rotateY(0deg);box-shadow:0 0 0 3px var(--accent),0 0 16px rgba(250,204,21,.6)}
   100%{transform:none;box-shadow:0 0 0 2px rgba(250,204,21,.35)}
 }
-/* ＣＨの高さは表裏で変わる（裏＝帯だけ／表＝帯＋絵）。急に伸びると飛び跳ねて見えるので、
- * ゆっくり伸ばして「その場で開いた」ように見せる。 */
-.card.ch{transition:margin .28s ease-out,height .28s ease-out}
+/* （v0.16.24 にあった `.card.ch{transition:margin,height}` は外した。
+ *   ＣＨの高さは表裏で変わらない——`.card` が `height:var(--chh)` で固定で、
+ *   裏は帯だけに見えるが、それは下に積まれたカードに隠れているだけ。
+ *   つまりこの transition は最初から一度も効いていなかった。） */
 
 /* 連鎖中に「壊すと決まった」カード。まだ場に残っていて、赤い枠で狙いを見せる段階
  * ——自分で憑依解除するときに赤枠の中から選ぶ操作（.card.ch.pick）を真似ている。 */
-.card.ch.doomed{box-shadow:0 0 0 3px #f87171,0 0 16px #f87171aa;z-index:3;position:relative;
+.card.ch.doomed{box-shadow:0 0 0 3px #f87171,0 0 16px #f87171aa;   /* position は上の★のとおり触らない */
   animation:cq-pick-pulse .7s ease-in-out infinite}
 /* 実際に取り除かれる直前の破壊アニメーション。 */
 .card.ch.doomed.dying{animation:cq-card-die .45s ease-in forwards}
