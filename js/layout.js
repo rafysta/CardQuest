@@ -478,6 +478,297 @@ document.getElementById('free-root').addEventListener('click', (ev) => {
   renderFreeSetup();
 });
 
+/* ================= 盤面セットアップ（開発用・2026-08-30） =================
+ * 考察『盤面セットアップのデバッグモード』の実装。フリーバトルが「相手と先攻を選ぶ」
+ * までなのに対し、こちらは **レーン・ＣＨ（表裏と置いた側）・手札・ＬＰ・手番** まで
+ * 指定して戦闘を始める。カード1枚ずつ実機で確かめる工程（M6.7 WP5・WP6）のための道具。
+ *
+ * 盤面の中身は js/board-spec.js（CQBoardSpec）が持つただのデータで、ここはその編集画面。
+ *   ・[この盤面で始める]  … その盤面から戦闘へ
+ *   ・[プリセット]        … localStorage（cq_debug_board）に名前を付けて保存・呼び出し
+ *   ・[ＪＳＯＮ]          … 貼り付け／書き出し。**Claudeとの受け渡し口**
+ *     （「この盤面を試してください」とＪＳＯＮを渡せば本人がそのまま再現でき、
+ *       逆に本人が遭遇した盤面をそのままテストへ落とせる）
+ *
+ * 戦闘に入ったあと、もう一度このメニューを開くと**いまの盤面が初期値として出る**ので、
+ * 「試す→崩れたら少し直してまた試す」を繰り返せる（考察§3の案Cが狙っていたのはここ）。
+ * ストーリー側のセーブ（cq_meta・cq_run）には一切触らない＝フリーバトルと同じ扱い。 */
+
+const BOARD_PRESET_KEY = 'cq_debug_board';
+let BSET = null;                 /* 編集中の盤面（CQBoardSpec の形）。初回は下で作る */
+let bsetMsg = '';                /* 画面上部に出す一言（検証の結果など） */
+
+/** デバッグメニューから開く。戦闘中ならいまの盤面を初期値にする。 */
+function openBoardSetup() {
+  if (!BSET) BSET = CQBoardSpec.blank();
+  if (typeof M !== 'undefined' && M && M.board) {
+    BSET = CQBoardSpec.dump(M);
+    bsetMsg = 'いまの盤面を読み込みました。直してから「この盤面で始める」を押してください';
+  } else {
+    bsetMsg = '';
+  }
+  renderBoardSetup();
+  showScreen('screen-board');
+}
+
+/** カード選択用の <option> をまとめて作る。kinds は 'U','M','S','C','X' の並び。
+ * labels でグループ名を上書きできる（ＣＨ欄のモンスターに「リバース召還」と添えるため）。 */
+function bsOptions(kinds, selected, noneLabel, labels) {
+  const LABEL = Object.assign(
+    { U: 'モンスター', M: '魔法', S: '技能', C: 'カース（憑依）', X: 'その他' }, labels || {});
+  let html = noneLabel ? `<option value="">${esc(noneLabel)}</option>` : '';
+  kinds.forEach((k) => {
+    const list = CARDS.filter((c) => c.t === k).sort((a, b) => a.id - b.id);
+    if (!list.length) return;
+    html += `<optgroup label="${LABEL[k]}">` + list.map((c) =>
+      `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${c.id} ${esc(c.n)}</option>`).join('') + '</optgroup>';
+  });
+  return html;
+}
+
+function bsPresetNames() {
+  try { return Object.keys(JSON.parse(localStorage.getItem(BOARD_PRESET_KEY) || '{}')); }
+  catch (_) { return []; }
+}
+
+/** 盤面セットアップ画面を描く（#board-root）。 */
+function renderBoardSetup() {
+  const el = document.getElementById('board-root');
+  if (!el) return;
+  const s = BSET;
+  const laneBox = (i) => {
+    const d = s.lanes[String(i)] || null;
+    const cap = d ? (CQState.unitStats(CARD_BY_ID[d.unit]).ch || 0) : 0;
+    const rows = d ? d.ch.map((c, k) => `
+      <div class="bs-ch">
+        <span class="bs-cap">第${k + 1}層</span>
+        <select data-bs="ch-card" data-l="${i}" data-k="${k}">${
+          /* モンスターも置ける＝リバース召還（開かれるとその場に立つ）。よく使う魔法・技能を先に並べる */
+          bsOptions(['M', 'S', 'C', 'U'], c.id, null, { U: 'モンスター（開くとリバース召還）' })}</select>
+        <button class="free-pick ${c.up ? 'on' : ''}" data-bs="ch-up" data-l="${i}" data-k="${k}">${c.up ? '表' : '裏'}</button>
+        <button class="free-pick ${c.by === 'self' ? 'on' : ''}" data-bs="ch-by" data-l="${i}" data-k="${k}">${c.by === 'self' ? '自が置いた' : '敵が置いた'}</button>
+        <button class="free-pick del" data-bs="ch-del" data-l="${i}" data-k="${k}">✕</button>
+      </div>`).join('') : '';
+    return `
+      <div class="bs-lane ${i < 3 ? 'mine' : 'foe'}">
+        <div class="bs-lane-h">${i < 3 ? '自陣' : '敵陣'}${(i % 3) + 1}
+          ${d ? `<button class="free-pick ${d.stiff ? 'on' : ''}" data-bs="stiff" data-l="${i}">硬直</button>` : ''}
+        </div>
+        <select data-bs="unit" data-l="${i}">${bsOptions(['U'], d ? d.unit : 0, '（空き）')}</select>
+        ${rows}
+        ${d && d.ch.length < cap
+          ? `<button class="tiny" data-bs="ch-add" data-l="${i}">＋ＣＨを足す（${d.ch.length}／${cap}）</button>`
+          : (d ? `<span class="bs-cap">ＣＨ ${d.ch.length}／${cap}（満杯）</span>` : '')}
+      </div>`;
+  };
+  const handBox = (side) => `
+    <div class="bs-hand">
+      <div class="bs-lane-h">${side === 'self' ? 'あなた' : '相手'}の手札（${s.hand[side].length}／7）</div>
+      <div class="bs-chips">${s.hand[side].map((id, k) =>
+        `<button class="bs-chip" data-bs="hand-del" data-s="${side}" data-k="${k}">${id} ${esc(CARD_BY_ID[id].n)} ✕</button>`).join('')
+        || '<span class="bs-cap">（なし）</span>'}</div>
+      ${s.hand[side].length < 7 ? `
+        <div class="free-row">
+          <select data-bs="hand-pick" data-s="${side}">${bsOptions(['U', 'M', 'S', 'X'], 0)}</select>
+          <button class="tiny" data-bs="hand-add" data-s="${side}">手札に足す</button>
+        </div>` : ''}
+    </div>`;
+  const lpSel = (side) => `<select data-bs="lp" data-s="${side}">${
+    Array.from({ length: 20 }, (_, n) => n + 1).map((n) =>
+      `<option value="${n}" ${n === s.lp[side] ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+  const presets = bsPresetNames();
+
+  el.innerHTML = `
+    <div class="free-wrap">
+      <h2 class="free-h">盤面をセットして戦う<small>開発用。好きな盤面・手札から戦闘を始めます（ストーリーのセーブには触れません）</small></h2>
+      ${bsetMsg ? `<p class="bs-msg">${esc(bsetMsg)}</p>` : ''}
+      <div class="bs-lanes">${[0, 1, 2, 3, 4, 5].map(laneBox).join('')}</div>
+      <div class="free-grid">
+        <div class="free-box">
+          <h3>手札</h3>
+          ${handBox('self')}
+          ${handBox('enemy')}
+        </div>
+        <div class="free-box">
+          <h3>手番・ＬＰ</h3>
+          <div class="free-row"><span class="free-cap">先攻</span>
+            <button class="free-pick ${s.first === 'self' ? 'on' : ''}" data-bs="first" data-v="self">自分</button>
+            <button class="free-pick ${s.first === 'enemy' ? 'on' : ''}" data-bs="first" data-v="enemy">相手</button>
+          </div>
+          <div class="free-row"><span class="free-cap">いまの手番</span>
+            <button class="free-pick ${s.active === 'self' ? 'on' : ''}" data-bs="active" data-v="self">自分</button>
+            <button class="free-pick ${s.active === 'enemy' ? 'on' : ''}" data-bs="active" data-v="enemy">相手</button>
+          </div>
+          <div class="free-row"><span class="free-cap">開始ステップ</span>
+            <button class="free-pick ${s.phase === 'placement' ? 'on' : ''}" data-bs="phase" data-v="placement">配置から</button>
+            <button class="free-pick ${s.phase === 'main' ? 'on' : ''}" data-bs="phase" data-v="main">メインから</button>
+          </div>
+          <div class="free-row"><span class="free-cap">ＬＰ</span>自分 ${lpSel('self')}　相手 ${lpSel('enemy')}</div>
+          <div class="free-row"><span class="free-cap">勝利条件</span>
+            <button class="free-pick ${s.win === 'field' ? 'on' : ''}" data-bs="win" data-v="field">敵の場を空に（探索と同じ）</button>
+            <button class="free-pick ${s.win === 'lp' ? 'on' : ''}" data-bs="win" data-v="lp">ＬＰ勝負（相手も召還する）</button>
+          </div>
+          <div class="free-row"><span class="free-cap">戦場ルール</span>
+            ${FIELD_SETS.map((f, i) => `<button class="free-pick ${fieldSet === i ? 'on' : ''}" data-bs="field" data-v="${i}">${esc(f.label)}</button>`).join('')}
+          </div>
+        </div>
+        <div class="free-box">
+          <h3>プリセット</h3>
+          <div class="free-row">
+            <select id="bs-preset">${presets.length
+              ? presets.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
+              : '<option value="">（保存されていません）</option>'}</select>
+            <button class="tiny" data-bs="preset-load">呼び出す</button>
+            <button class="tiny" data-bs="preset-del">削除</button>
+          </div>
+          <div class="free-row">
+            <input id="bs-preset-name" type="text" placeholder="名前を付けて保存" maxlength="24">
+            <button class="tiny" data-bs="preset-save">保存</button>
+          </div>
+          <h3>ＪＳＯＮ（Claudeとの受け渡し）</h3>
+          <div class="free-row">
+            <button class="tiny" data-bs="json-dump">いまの盤面を書き出す</button>
+            <button class="tiny" data-bs="json-load">貼り付けたものを取り込む</button>
+            <button class="tiny" data-bs="clear">まっさらにする</button>
+          </div>
+          <textarea id="bs-json" spellcheck="false" placeholder="ここへ盤面のＪＳＯＮを貼り付けて「取り込む」"></textarea>
+        </div>
+      </div>
+      <div class="free-go">
+        <button class="btn ng" data-bs="back">フリーバトルへ</button>
+        <button class="btn ok" data-bs="start">この盤面で始める</button>
+      </div>
+    </div>`;
+}
+
+/** 記述どおりの対戦を組み立ててバトル画面へ入る。 */
+function startBoardBattle() {
+  const chk = CQBoardSpec.normalize(BSET, CARD_BY_ID);
+  if (chk.errors.length) { bsetMsg = '直してください：' + chk.errors.join(' ／ '); renderBoardSetup(); return; }
+  const units = Object.keys(chk.spec.lanes).filter((k) => +k >= 3);
+  if (chk.spec.win === 'field' && !units.length) {
+    bsetMsg = '勝利条件が「敵の場を空に」のときは、敵陣にモンスターを1体は置いてください（置かないと開始と同時に勝ちになります）';
+    renderBoardSetup(); return;
+  }
+  const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+  RUN_ACTIVE = false; runOverHook = null; foeAuto = true;
+  M = CQTurn.createMatch({
+    cards: CARD_BY_ID,
+    rng: CQRng.create(seed),
+    selfDeck: debugDeckList(),                 /* 山札はデッキ編集で組んだもの（口寄せ・予見の引き） */
+    enemyDeck: SAMPLE_DECK.slice(),
+    first: chk.spec.first,
+    opponentId: 101,
+    fieldRules: FIELD_SETS[fieldSet].rules,
+    mode: chk.spec.win === 'field' ? 'field' : undefined,
+    enemyBoard: chk.spec.win === 'field' ? [1] : undefined,   /* 中身は下で丸ごと差し替える */
+    hooks: {
+      onMagicOpen: CQMagic.onMagicOpen,        /* ← これを忘れると魔法が一切発動しない */
+      onUnitOpen: CQUnits.onUnitOpen
+    }
+  });
+  M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };
+  CQBoardSpec.apply(M, chk.spec);
+  UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
+  UI.pending = null; UI.report = null; UI.pick = null; UI.chainFx = null;
+  showScreen('screen-battle');
+  step();
+}
+
+document.getElementById('board-root').addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-bs]');
+  if (!b) return;
+  const s = BSET, v = b.dataset.v, L = String(b.dataset.l), k = +b.dataset.k, side = b.dataset.s;
+  const ln = s.lanes[L];
+  bsetMsg = '';
+  switch (b.dataset.bs) {
+    case 'ch-up': ln.ch[k].up = !ln.ch[k].up; break;
+    case 'ch-by': ln.ch[k].by = ln.ch[k].by === 'self' ? 'enemy' : 'self'; break;
+    case 'ch-del': ln.ch.splice(k, 1); break;
+    case 'ch-add': ln.ch.push({ id: 101, up: false, by: CQBoardSpec.ownerOf(+L) }); break;
+    case 'stiff': ln.stiff = !ln.stiff; break;
+    case 'hand-del': s.hand[side].splice(k, 1); break;
+    case 'hand-add': {
+      const sel = document.querySelector(`select[data-bs="hand-pick"][data-s="${side}"]`);
+      if (sel && sel.value) s.hand[side].push(+sel.value);
+      break;
+    }
+    case 'first': s.first = v; break;
+    case 'active': s.active = v; break;
+    case 'phase': s.phase = v; break;
+    case 'win': s.win = v; break;
+    case 'field': fieldSet = +v; break;
+    case 'clear': BSET = CQBoardSpec.blank(); break;
+    case 'json-dump': {
+      const ta = document.getElementById('bs-json');
+      if (ta) { ta.value = CQBoardSpec.stringify(BSET); ta.select(); }   /* 貼り付け欄は書き出しで上書きする */
+      flash('書き出しました。コピーしてClaudeへ渡せます');
+      return;                                    /* 描き直すと textarea の中身が消えるので、ここで終わる */
+    }
+    case 'json-load': {
+      const ta = document.getElementById('bs-json');
+      const r = CQBoardSpec.parse(ta ? ta.value : '', CARD_BY_ID);
+      if (r.errors.length) { bsetMsg = '取り込めません：' + r.errors.join(' ／ '); break; }
+      BSET = r.spec; bsetMsg = '取り込みました';
+      break;
+    }
+    case 'preset-save': {
+      const name = (document.getElementById('bs-preset-name') || {}).value;
+      if (!name || !name.trim()) { bsetMsg = '名前を入れてください'; break; }
+      let all = {};
+      try { all = JSON.parse(localStorage.getItem(BOARD_PRESET_KEY) || '{}'); } catch (_) { all = {}; }
+      all[name.trim()] = CQBoardSpec.normalize(BSET, CARD_BY_ID).spec;
+      try { localStorage.setItem(BOARD_PRESET_KEY, JSON.stringify(all)); bsetMsg = '「' + name.trim() + '」を保存しました'; }
+      catch (_) { bsetMsg = '保存できませんでした（保存領域がいっぱいかもしれません）'; }
+      break;
+    }
+    case 'preset-load': {
+      const name = (document.getElementById('bs-preset') || {}).value;
+      let all = {};
+      try { all = JSON.parse(localStorage.getItem(BOARD_PRESET_KEY) || '{}'); } catch (_) { all = {}; }
+      if (!name || !all[name]) { bsetMsg = '呼び出せる盤面がありません'; break; }
+      BSET = CQBoardSpec.normalize(all[name], CARD_BY_ID).spec;
+      bsetMsg = '「' + name + '」を呼び出しました';
+      break;
+    }
+    case 'preset-del': {
+      const name = (document.getElementById('bs-preset') || {}).value;
+      let all = {};
+      try { all = JSON.parse(localStorage.getItem(BOARD_PRESET_KEY) || '{}'); } catch (_) { all = {}; }
+      if (name && all[name]) { delete all[name]; try { localStorage.setItem(BOARD_PRESET_KEY, JSON.stringify(all)); } catch (_) {} bsetMsg = '「' + name + '」を消しました'; }
+      break;
+    }
+    case 'back': renderFreeSetup(); return showScreen('screen-free');
+    case 'start': return startBoardBattle();
+    default: return;
+  }
+  renderBoardSetup();
+});
+
+document.getElementById('board-root').addEventListener('change', (ev) => {
+  const el = ev.target.closest('select[data-bs]');
+  if (!el) return;
+  const s = BSET, L = String(el.dataset.l), k = +el.dataset.k;
+  switch (el.dataset.bs) {
+    case 'unit': {
+      const id = +el.value;
+      if (!id) { delete s.lanes[L]; break; }
+      if (s.lanes[L]) s.lanes[L].unit = id;
+      else s.lanes[L] = { unit: id, ch: [] };
+      /* ＣＨ数の少ないモンスターに替えたら、はみ出した階層はその場で落とす
+       * （開始時に弾かれるより、画面で見えたほうが早い） */
+      const cap = CQState.unitStats(CARD_BY_ID[id]).ch || 0;
+      if (s.lanes[L].ch.length > cap) s.lanes[L].ch.length = cap;
+      break;
+    }
+    case 'ch-card': s.lanes[L].ch[k].id = +el.value; break;
+    case 'lp': s.lp[el.dataset.s] = +el.value; break;
+    default: return;                                          /* hand-pick は「足す」を押すまで何もしない */
+  }
+  bsetMsg = '';
+  renderBoardSetup();
+});
+
 /** 操作を始める前にログの位置を覚えておく（そのあと起きたことを右パネルに出すため） */
 let logMark = null;
 function markLog() { if (logMark === null) logMark = M.log.length; }

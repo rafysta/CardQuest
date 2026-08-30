@@ -4430,6 +4430,148 @@ t('メタデータ：古いセーブにも titles / journal / day の入れ物�
   eq(old.day, 0, '通算日数');
 });
 
+
+/* ================= 盤面セットアップ（デバッグ用の盤面記述） =================
+ * js/board-spec.js。デバッグ画面（js/layout.js）とテストの両方から同じ形を使う。
+ * ここで確かめるのは「書いたとおりの盤面になること」と「おかしな記述を弾くこと」。 */
+section('盤面セットアップ（board-spec）');
+
+const CQBoardSpec = require(path.join(root, 'js/board-spec.js'));
+
+/** 記述を適用した対戦を作る（デバッグ画面 startBoardBattle と同じ手順）。 */
+function specMatch(spec, opts) {
+  const o = opts || {};
+  const m = CQTurn.createMatch({
+    cards: CARD_BY_ID, rng: CQRng.create(o.seed === undefined ? 7 : o.seed),
+    selfDeck: Array(40).fill(8), enemyDeck: Array(40).fill(8),
+    first: (spec && spec.first) || 'self', hooks: HOOKS
+  });
+  CQBoardSpec.apply(m, spec);
+  return m;
+}
+
+t('レーン・ＣＨ・表裏・置いた側が書いたとおりになる', () => {
+  const m = specMatch({
+    lanes: {
+      '0': { unit: 8, ch: [{ id: 108, up: false, by: 'self' }] },
+      '3': { unit: 70, ch: [{ id: 101, up: false, by: 'enemy' }, { id: 172, up: true, by: 'self' }] }
+    }
+  });
+  eq(m.board.lanes[0].unit, 8, '自陣1にユニット');
+  eq(m.board.lanes[0].count, 1, 'ln.count が channels の長さに合っている');
+  eq(m.board.lanes[1].unit, null, '書かなかったレーンは空き');
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.up, c.mine]),
+     [[101, false, false], [172, true, true]], '敵陣のＣＨ（表裏・置いた側）');
+  eq(m.board.lanes[3].count, 2, '敵陣の ln.count');
+});
+
+t('by を省くとそのレーンの持ち主が置いた扱いになる', () => {
+  const m = specMatch({ lanes: { '0': { unit: 8, ch: [{ id: 108 }] }, '3': { unit: 8, ch: [{ id: 108 }] } } });
+  eq(m.board.lanes[0].channels[0].mine, true, '自陣は自分置き');
+  eq(m.board.lanes[3].channels[0].mine, false, '敵陣は相手置き');
+});
+
+t('手札・ＬＰ・手番・ステップが書いたとおりになる', () => {
+  const m = specMatch({ active: 'enemy', phase: 'placement', lp: { self: 3, enemy: 12 },
+                        hand: { self: [108, 113], enemy: [101] }, lanes: { '3': { unit: 8, ch: [] } } });
+  eq(m.players.self.hand, [108, 113], '自分の手札');
+  eq(m.players.enemy.hand, [101], '相手の手札');
+  eq([m.board.hand.self, m.board.hand.enemy], [2, 1], '盤面側の手札枚数も合っている');
+  eq([m.players.self.lp, m.players.enemy.lp], [3, 12], 'ＬＰ');
+  eq(m.players.enemy.maxLp >= 12, true, '最大ＬＰは指定ＬＰを下回らない');
+  eq([m.active, m.phase], ['enemy', 'placement'], '手番とステップ');
+  eq(m.players.self.turnsTaken, 1, '初手の6枚ドローが起きないようにしてある');
+});
+
+t('置いた盤面のまま能力値が計算されている（recalc を通っている）', () => {
+  const m = specMatch({ lanes: { '0': { unit: 8, ch: [{ id: 151, up: true, by: 'self' }] } } });
+  const base = CARD_BY_ID[8];
+  eq(m.board.lanes[0].atk >= base.a, true, '攻撃力が算出済み（0のままではない）');
+  eq(m.board.lanes[0].cap > 0, true, 'ＣＨ上限が算出済み');
+});
+
+t('伏せたＣＨは revealed が付かない（透視・予見の対象から外れない）', () => {
+  const m = specMatch({ lanes: { '3': { unit: 8, ch: [{ id: 101, by: 'enemy' }] } } });
+  eq(!!m.board.lanes[3].channels[0].revealed, false, '見られていない札として置かれる');
+});
+
+t('セットした盤面から魔法が普通に発動する（hooks の配線を含めた通し確認）', () => {
+  /* 自陣に憑依解除(101)を伏せ、敵陣のＣＨを1枚だけにしておく。開ければそれが消える。 */
+  const m = specMatch({ lanes: {
+    '0': { unit: 8, ch: [{ id: 101, up: false, by: 'self' }] },
+    '3': { unit: 8, ch: [{ id: 153, up: false, by: 'enemy' }] }
+  } });
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].channels.length, 0, '相手のＣＨが破壊された＝魔法が発動している');
+});
+
+t('dump は apply したものをそのまま取り出せる（往復して変わらない）', () => {
+  const spec = { first: 'enemy', active: 'enemy', phase: 'main', win: 'lp',
+                 lp: { self: 4, enemy: 9 }, hand: { self: [108], enemy: [101, 113] },
+                 lanes: { '1': { unit: 8, ch: [{ id: 108, up: true, by: 'enemy' }] },
+                          '4': { unit: 70, ch: [] } } };
+  const m = specMatch(spec);
+  const back = CQBoardSpec.dump(m);
+  eq(back, CQBoardSpec.normalize(spec, CARD_BY_ID).spec, '書き出したものが元の記述と一致する');
+});
+
+t('書き出した文字列は読み直せる（Claudeとの受け渡し口）', () => {
+  const spec = CQBoardSpec.normalize({
+    hand: { self: [108] },
+    lanes: { '0': { unit: 8, ch: [{ id: 108, up: false, by: 'self' }] },
+             '3': { unit: 70, stiff: true, ch: [{ id: 101, up: false, by: 'enemy' }] } }
+  }, CARD_BY_ID).spec;
+  const r = CQBoardSpec.parse(CQBoardSpec.stringify(spec), CARD_BY_ID);
+  eq(r.errors, [], '読み直しでエラーが出ない');
+  eq(r.spec, spec, '往復しても中身が変わらない');
+});
+
+t('硬直も指定できる（アタックできない状態から始めたいとき）', () => {
+  const m = specMatch({ lanes: { '0': { unit: 8, ch: [], stiff: true }, '3': { unit: 8, ch: [] } } });
+  eq(m.board.lanes[0].stiff, true, '硬直あり');
+  eq(m.board.lanes[3].stiff, false, '指定しなければ動ける');
+});
+
+t('モンスターも階層に置ける（リバース召還の検証・2026-08-30 本人指定）', () => {
+  const r = CQBoardSpec.normalize({ lanes: { '0': { unit: 8, ch: [{ id: 1, by: 'self' }] } } }, CARD_BY_ID);
+  eq(r.errors, [], 'モンスターを伏せてもエラーにならない');
+  const m = specMatch({ lanes: { '0': { unit: 8, ch: [{ id: 1, up: false, by: 'self' }] },
+                                 '3': { unit: 8, ch: [] } } });
+  eq(m.board.lanes[0].channels[0].card, 1, '階層にモンスターが伏せてある');
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].unit, 1, '開くと自陣の空きレーンにリバース召還される');
+  eq(m.board.lanes[0].channels.length, 0, '元の階層からは消える');
+});
+
+t('おじゃま虫だけは階層に置けない（チャネリング不可のカード）', () => {
+  const r = CQBoardSpec.normalize({ lanes: { '0': { unit: 8, ch: [{ id: 200 }] } } }, CARD_BY_ID);
+  eq(r.errors.length, 1, '1件指摘される');
+  eq(r.spec.lanes['0'].ch.length, 0, '置かれない');
+});
+
+t('おかしな記述はエラーとして返す（適用する前に気づける）', () => {
+  const bad = CQBoardSpec.normalize({
+    first: 'me', phase: 'battle', lp: { self: 0 },
+    hand: { self: [999] },
+    lanes: { '9': { unit: 8 }, '0': { unit: 101 }, '1': { unit: 8, ch: [{ id: 200 }] } }
+  }, CARD_BY_ID);
+  eq(bad.errors.length, 7, '7件の指摘：' + JSON.stringify(bad.errors));
+  eq(bad.spec.first, 'self', '不正な値は既定に戻す');
+});
+
+t('ＣＨ上限を超えた記述は指摘され、超えた分は落とされる', () => {
+  const cap = CQState.unitStats(CARD_BY_ID[8]).ch;
+  const chs = []; for (let i = 0; i <= cap; i++) chs.push({ id: 108 });
+  const r = CQBoardSpec.normalize({ lanes: { '0': { unit: 8, ch: chs } } }, CARD_BY_ID);
+  eq(r.errors.length, 1, '1件指摘される');
+  eq(r.spec.lanes['0'].ch.length, cap, '上限までに切り詰められる');
+});
+
+t('ＪＳＯＮとして壊れていても落ちない', () => {
+  eq(CQBoardSpec.parse('{ こわれている', CARD_BY_ID).errors.length, 1, '読めない旨を返す');
+  eq(CQBoardSpec.parse('[1,2,3]', CARD_BY_ID).errors.length, 1, '配列は受け取らない');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

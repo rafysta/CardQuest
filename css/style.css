@@ -1435,6 +1435,52 @@ td.nm{font-weight:800}
 }
 .free-go{display:flex;gap:14px;justify-content:center;margin-top:22px}
 .free-go .btn{flex:0 0 auto;min-width:220px}
+
+/* ---- 盤面セットアップ（開発用・2026-08-30） ----
+ * フリーバトルの部品（.free-wrap / .free-box / .free-pick）をそのまま使い、
+ * 6レーンを2段3列に並べる欄と、ＣＨ1行・手札チップだけを足してある。 */
+#board-root{flex:1;min-height:0;overflow:auto;padding:20px 24px}
+.bs-msg{
+  font-size:13px;line-height:1.6;color:#241c00;background:var(--accent);
+  border-radius:8px;padding:8px 12px;margin:10px 0 0;
+}
+.bs-lanes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+.bs-lane{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+  display:flex;flex-direction:column;gap:7px;
+}
+.bs-lane.mine{border-left:3px solid #60a5fa}     /* 自陣 */
+.bs-lane.foe{border-left:3px solid #f87171}      /* 敵陣 */
+.bs-lane-h{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:800;color:var(--dim)}
+.bs-lane select,.bs-hand select,.bs-lanes select{
+  background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:6px 8px;font:inherit;font-size:12px;max-width:100%;
+}
+.bs-lane > select{width:100%}
+.bs-ch{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.bs-ch select{flex:1 1 140px;min-width:0}
+.bs-ch .free-pick{padding:5px 8px;font-size:12px}
+.bs-ch .free-pick.del{color:#f87171}
+.bs-cap{font-size:11px;color:var(--dim)}
+.bs-hand{margin-bottom:12px}
+.bs-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.bs-chip{
+  background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;
+}
+.bs-chip:hover{border-color:#f87171;color:#f87171}
+#bs-preset,#bs-preset-name{
+  background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:7px 9px;font:inherit;font-size:13px;flex:1 1 140px;min-width:0;
+}
+#bs-json{
+  width:100%;height:150px;margin-top:8px;resize:vertical;
+  background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:8px 10px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (max-width:900px){
+  .bs-lanes{grid-template-columns:repeat(2,1fr)}
+}
 /* デッキ編集の戻りボタン（.deck-tabs の右端に並べる）。
  * 2026-08-29：これを足したら行が詰まってタブの文字が2行に折れたので、
  * 行全体を折り返さない・各要素も折らない指定にし、集計の字を少し小さくして幅を作った。 */

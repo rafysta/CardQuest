@@ -26,6 +26,7 @@ const CQDebug = (function () {
   const ITEMS = [
     { icon: '🗡', label: 'フリーバトル', hint: '好きな相手・先攻後攻を選んで戦う', run: openFreeBattle },
     { icon: '🃏', label: 'デッキ編集', hint: '全169種から自由に組む（フリーバトル用）', run: openDeckEdit },
+    { icon: '🧪', label: '盤面をセットして戦う', hint: 'レーン・ＣＨ・手札を指定して戦闘を始める', run: openBoardSetupScreen },
     { icon: '⚔', label: 'バトルをスキップ（勝利）', hint: 'いまの戦闘を勝ちで終わらせる', run: skipBattle },
     { icon: '🔄', label: '最新版のチェック', hint: '公開中・GitHubの版と見比べる', run: checkVersion },
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
@@ -57,6 +58,16 @@ const CQDebug = (function () {
   function openDeckEdit() {
     close();
     showScreen('screen-deck');
+  }
+
+  /* 🧪 盤面をセットして戦う（2026-08-30）。フリーバトルと同じくランの戦闘を捨てるので、
+   * 同じ確認を挟む。中身は js/layout.js の openBoardSetup()。 */
+  function openBoardSetupScreen() {
+    close();
+    leaveRunBattleConfirmed(function () {
+      if (typeof RUN_ACTIVE !== 'undefined') { RUN_ACTIVE = false; runOverHook = null; }
+      openBoardSetup();
+    });
   }
 
   function close() { if (panel) { panel.remove(); panel = null; } }

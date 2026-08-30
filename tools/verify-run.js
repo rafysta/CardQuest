@@ -509,7 +509,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
   ok('🛠 でデバッグメニューが開く', !!(await page.$('.dbg-menu')));
-  ok('デバッグメニューに6つの道具が並ぶ（フリーバトル・デッキ編集を追加）', (await page.$$('.dbg-item')).length === 6,
+  ok('デバッグメニューに7つの道具が並ぶ（フリーバトル・デッキ編集・盤面セットアップを追加）', (await page.$$('.dbg-item')).length === 7,
     String((await page.$$('.dbg-item')).length) + '個');
   await shot('debug-menu');
   /* ルーラー：80px方眼と座標番号が #app に重なる。もう一度押すと消える */
@@ -545,7 +545,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   /* --- 2026-08-29：デッキ編集とフリーバトルをデバッグメニューへ移した --- */
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
-  ok('デバッグメニューに6つの道具が並ぶ', (await page.$$('.dbg-item')).length === 6,
+  ok('デバッグメニューに7つの道具が並ぶ', (await page.$$('.dbg-item')).length === 7,
     String((await page.$$('.dbg-item')).length) + '個');
   /* 🃏 デッキ編集：アンロックに関係なく全169種から組めること・組んだ内容が残ること */
   await dbgClick('デッキ編集');
@@ -597,6 +597,56 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await wait(() => page.evaluate(() => document.getElementById('screen-free').classList.contains('on')));
   ok('「バトルを終える」でフリーバトルのトップ画面に戻る',
     await page.evaluate(() => document.getElementById('screen-free').classList.contains('on')));
+  /* 🧪 盤面をセットして戦う（2026-08-30）：ＪＳＯＮで盤面を渡し、その通りに戦闘が始まること。
+   * カード1枚ずつの検証（M6.7 WP5・WP6）はこの画面が使えるかどうかに掛かっているので、
+   * 「取り込む → 始める → 盤面が記述どおり」までを通しで見る。 */
+  await page.click('#dbg-btn');
+  await wait(() => page.$('.dbg-menu'));
+  await dbgClick('盤面をセットして戦う');
+  await wait(() => page.evaluate(() => document.getElementById('screen-board').classList.contains('on')));
+  ok('盤面セットアップ画面が開く', !!(await page.$('#board-root .free-wrap')));
+  ok('6レーンぶんの欄が並ぶ', (await page.$$('.bs-lane')).length === 6,
+    String((await page.$$('.bs-lane')).length) + '個');
+  const BOARD_JSON = JSON.stringify({
+    first: 'self', active: 'self', phase: 'main', win: 'field',
+    lp: { self: 7, enemy: 10 }, hand: { self: [108], enemy: [] },
+    lanes: { '0': { unit: 8, ch: [{ id: 108, up: false, by: 'self' }] },
+             '3': { unit: 70, ch: [{ id: 101, up: false, by: 'enemy' }, { id: 172, up: false, by: 'enemy' }] } }
+  });
+  await page.$eval('#bs-json', (el, v) => { el.value = v; }, BOARD_JSON);
+  await page.click('[data-bs="json-load"]');
+  await page.waitForTimeout(150);
+  ok('★ＪＳＯＮで渡した盤面を取り込める（Claudeとの受け渡し口）',
+    await page.evaluate(() => Object.keys(BSET.lanes).length === 2 && BSET.hand.self.length === 1),
+    JSON.stringify(await page.evaluate(() => BSET.lanes)));
+  await shot('debug-board-setup');
+  await page.click('[data-bs="start"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+  const bsM = await page.evaluate(() => ({
+    hand: M.players.self.hand.slice(), lp: M.players.self.lp, hooks: !!(M.hooks && M.hooks.onMagicOpen),
+    l0: M.board.lanes[0].unit, l3: M.board.lanes[3].channels.map((c) => c.card + (c.mine ? 'S' : 'E')),
+    count3: M.board.lanes[3].count
+  }));
+  ok('★セットした盤面のまま戦闘が始まる',
+    bsM.l0 === 8 && bsM.count3 === 2 && bsM.l3.join(',') === '101E,172E' && bsM.lp === 7,
+    JSON.stringify(bsM));
+  ok('セットした手札がそのまま手に入っている', bsM.hand.join(',') === '108', JSON.stringify(bsM.hand));
+  ok('hooks が配線されている（これが無いと魔法が一切発動しない）', bsM.hooks);
+  await shot('debug-board-battle');
+  /* 戦闘中にもう一度開くと、いまの盤面が初期値として出る（試す→直す→また試す） */
+  await page.click('#dbg-btn');
+  await wait(() => page.$('.dbg-menu'));
+  await dbgClick('盤面をセットして戦う');
+  await wait(() => page.evaluate(() => document.getElementById('screen-board').classList.contains('on')));
+  ok('★戦闘中に開き直すと、いまの盤面が初期値として出る',
+    await page.evaluate(() => BSET.lanes['3'] && BSET.lanes['3'].unit === 70),
+    JSON.stringify(await page.evaluate(() => BSET.lanes)));
+  /* ストーリー側のセーブに触れていないこと（フリーバトルと同じ扱い） */
+  ok('盤面セットアップはストーリーのセーブを壊さない',
+    await page.evaluate(() => !!localStorage.getItem('cq_meta')));
+  await page.click('[data-bs="back"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-free').classList.contains('on')));
+
   /* ストーリーへ戻れること。タブは終始「ラン」のまま動いていないこと */
   ok('★戦闘中でもタブは「ラン」のまま', await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
   await page.click('.tab[data-screen="screen-run"]');
