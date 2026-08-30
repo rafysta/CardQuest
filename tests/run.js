@@ -4572,6 +4572,85 @@ t('ＪＳＯＮとして壊れていても落ちない', () => {
   eq(CQBoardSpec.parse('[1,2,3]', CARD_BY_ID).errors.length, 1, '配列は受け取らない');
 });
 
+
+/* ================= 破壊の予約（赤枠→粉々→消える） =================
+ * 2026-08-30 本人指定。憑依解除(101)は一瞬でカードを消していたので何が壊れたのか
+ * 分からなかった。ＵＩが演出できるよう、予約された対戦では doomed の印を付けて残す。
+ * ここで守りたい性質は2つ：①予約しなければ従来どおり即座に消える（ＡＩ・シミュレータ）
+ * ②予約は対戦オブジェクトごと＝**複製（ＡＩの先読み）には漏れない**。 */
+section('破壊の予約（beginAim / endAim / strikeDoomed）');
+
+/** 自陣0に憑依解除(101)を伏せ、敵陣3にＣＨを1枚だけ置いた盤面。開けばそれが狙われる。 */
+function aimBoard(seed) {
+  return specMatch({ lanes: {
+    '0': { unit: 8, ch: [{ id: 101, up: false, by: 'self' }] },
+    '3': { unit: 8, ch: [{ id: 153, up: false, by: 'enemy' }] }
+  } }, { seed: seed === undefined ? 11 : seed });
+}
+
+t('予約しなければ従来どおりその場で消える（ＡＩ・シミュレータの経路）', () => {
+  const m = aimBoard();
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].channels.length, 0, 'すぐ取り除かれる');
+  eq(m.board.lanes[3].count, 0, 'ln.count も合っている');
+});
+
+t('予約すると、消さずに doomed の印を付けて残す（赤枠で見せられる）', () => {
+  const m = aimBoard();
+  CQMagic.beginAim(m);
+  CQTurn.reverseAction(m, 0, [1]);
+  const aimed = CQMagic.endAim(m);
+  eq(aimed.length, 1, '1枚が予約された');
+  eq([aimed[0].lane, aimed[0].idx, aimed[0].card], [3, 0, 153], '狙った場所とカード');
+  eq(m.board.lanes[3].channels.length, 1, 'まだ場に残っている＝赤枠で見せられる');
+  eq(m.board.lanes[3].channels[0].doomed, true, 'doomed の印が付く');
+});
+
+t('strikeDoomed で実際に取り除かれる（ln.count も揃う）', () => {
+  const m = aimBoard();
+  CQMagic.beginAim(m);
+  CQTurn.reverseAction(m, 0, [1]);
+  CQMagic.endAim(m);
+  eq(CQMagic.strikeDoomed(m), 1, '1枚取り除いた');
+  eq(m.board.lanes[3].channels.length, 0, '場から消えた');
+  eq(m.board.lanes[3].count, 0, 'ln.count も合っている');
+  eq(CQMagic.strikeDoomed(m), 0, '二度目は何も起きない');
+});
+
+t('★予約は対戦ごと＝ほかの対戦（＝ＡＩの先読みの複製）には漏れない', () => {
+  const a = aimBoard(11), b = aimBoard(12);
+  CQMagic.beginAim(a);                         /* a だけ予約する */
+  CQTurn.reverseAction(b, 0, [1]);             /* b は予約されていない */
+  eq(b.board.lanes[3].channels.length, 0, '予約していない対戦は即座に消える');
+  CQTurn.reverseAction(a, 0, [1]);
+  eq(a.board.lanes[3].channels.length, 1, '予約した対戦だけが残す');
+  CQMagic.endAim(a);
+});
+
+t('endAim すると予約は解ける（次の操作に持ち越さない）', () => {
+  const m = aimBoard();
+  CQMagic.beginAim(m);
+  eq(CQMagic.endAim(m), [], '何も起きていなければ空');
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].channels.length, 0, '解けたあとは即座に消える');
+  eq(CQMagic.endAim(m), [], '予約していない対戦の endAim は空を返す');
+});
+
+t('強制リバース連鎖の予約は今までどおり動く（m.forcedAim が優先される）', () => {
+  const m = specMatch({ lanes: {
+    '0': { unit: 8, ch: [{ id: 108, up: false, by: 'self' }] },
+    '3': { unit: 70, ch: [{ id: 101, up: false, by: 'enemy' }, { id: 172, up: false, by: 'enemy' }] }
+  } });
+  CQTurn.reverseAction(m, 0, [1], { interactive: true, choice: { lane: 3 } });
+  CQMagic.forcedChainStep(m);                        /* flip：憑依解除が開く */
+  const e = CQMagic.forcedChainStep(m);              /* effect：狙いを付ける */
+  eq(e.phase, 'effect', '効果のビート');
+  eq(e.aimed.length, 1, '1枚を狙った');
+  eq(m.board.lanes[0].channels.length, 1, 'まだ元凶は場にある（赤枠の段階）');
+  CQMagic.forcedChainStep(m);                        /* strike：実際に取り除く */
+  eq(m.board.lanes[0].channels.length, 0, '取り除かれた');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

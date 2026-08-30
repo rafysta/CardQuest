@@ -800,10 +800,27 @@ let FXPREV = null;
 /** 人の操作の直前に呼ぶ（直後の step() が差分を演出する） */
 function markFx() { FXPREV = snapFx(); }
 
-/** ユニット破壊の演出：いま見えているカードを16片に割って飛散させる */
-function shatterEffect(el) {
+/** ＣＨカードの「いま見えている高さ」。ＣＨは下に積まれたカード（1つ下の階層、
+ * 無ければレーンのユニット）に隠れていて、実際は帯だけが見えている。
+ * カード全体を割ると、隠れていた部分が割れる瞬間に現れてしまうので、
+ * 見えているぶんだけを割る（2026-08-30）。 */
+function chVisibleHeight(el) {
+  const r = el.getBoundingClientRect();
+  const lane = el.dataset.lane, layer = +el.dataset.layer;
+  const below = document.querySelector(`#board .card.ch[data-lane="${lane}"][data-layer="${layer - 1}"]`)
+    || document.querySelector(`#board .card.unit[data-lane="${lane}"]`);
+  if (!below) return r.height;
+  const h = below.getBoundingClientRect().top - r.top;
+  return (h > 10 && h < r.height) ? h : r.height;
+}
+
+/** 破壊の演出：いま見えているカードを16片に割って飛散させる。
+ * opts.height … 割る範囲を上からこの高さぶんに限る（ＣＨは chVisibleHeight を渡す） */
+function shatterEffect(el, opts) {
   return new Promise((res) => {
-    const r = el.getBoundingClientRect();
+    const r0 = el.getBoundingClientRect();
+    const hh = (opts && opts.height) ? Math.min(opts.height, r0.height) : r0.height;
+    const r = { left: r0.left, top: r0.top, width: r0.width, height: hh };
     if (!(r.width > 0)) { res(); return; }
     const box = document.createElement('div');
     box.className = 'cq-shard-box';
@@ -818,7 +835,8 @@ function shatterEffect(el) {
       const c = el.cloneNode(true);                       /* 破片＝カードの複製を切り抜いたもの */
       c.style.position = 'absolute'; c.style.margin = '0';
       c.style.left = (-x * w) + 'px'; c.style.top = (-y * h) + 'px';
-      c.style.width = r.width + 'px'; c.style.height = r.height + 'px';
+      /* 複製はカード本来の大きさのまま（高さを切ると絵が潰れる）。切り抜きは .cq-shard 側の overflow */
+      c.style.width = r0.width + 'px'; c.style.height = r0.height + 'px';
       p.appendChild(c);
       p.style.setProperty('--sx', ((x - (N - 1) / 2) * (26 + Math.random() * 30)) + 'px');
       p.style.setProperty('--sy', (((y - (N - 1) / 2) * 16) + 60 + Math.random() * 70) + 'px');
@@ -899,10 +917,62 @@ async function animateFx(prev) {
 /** エンジンを1手動かして、その差分を演出する（相手の自動手番・自動オープン用） */
 async function fxAct(fn) {
   const prev = snapFx();
-  const ret = fn();
+  /* 憑依解除(101)のような破壊は「予約」で受け取り、赤枠→粉々の演出を挟んでから消す。
+   * 相手の手番・相手の戦闘オープンもここを通るので、**誰が撃っても同じ見え方**になる。 */
+  CQMagic.beginAim(M);
+  let ret, err = null;
+  try { ret = fn(); } catch (e) { err = e; }
+  const aimed = CQMagic.endAim(M);
+  if (err) { CQMagic.strikeDoomed(M); throw err; }
   const w = await animateFx(prev);
+  if (aimed.length) { await playAimedDestroy(aimed); return ret; }
   if (w) await sleep(Math.max(w, FX.step));   /* 1手ごとに少し間を置いて、動きが目で追えるようにする */
   return ret;
+}
+
+/* ---- 破壊の予約を演出して解決する（2026-08-30 本人指定） --------------------
+ * 「憑依解除が発動したら、狙われたカードを赤い枠で見せて、少し置いてから粉々に割る」。
+ * 対象を自分で選んだとき・対象が1つしかなくて自動で決まったとき・強制開放でめくられて
+ * 発動したとき・相手が撃ったとき——**すべて同じ見え方**にするための共通処理。
+ * エンジン側は js/engine/effects/magic.js の beginAim / endAim / strikeDoomed。 */
+const AIM_SHOW_MS = 620;       /* 赤枠で「これを狙った」を見せる長さ */
+
+/** レーンごと吹き飛んだとき（呪爆(133)など）に、そのレーンのユニットと
+ * 積まれていたカードをまとめて「赤枠 →（間）→ 粉々」で見せる（2026-08-30 本人指定）。
+ *
+ * ★呼ぶ側の約束：**まだ描き直していないこと。** エンジンの盤面からは既に消えているが、
+ * 画面には壊れる前のカードが残っている——その古いＤＯＭを掴んで割る。
+ * 描き直してしまうとカードは影も形も無くなり、何も見せられない
+ * （強制リバース連鎖の中で呪爆が跳ね返ったとき、実際にそうなっていた）。 */
+async function playLaneWipe(lanes) {
+  const els = [];
+  lanes.forEach((i) => {
+    const u = document.querySelector(`#board .card.unit[data-lane="${i}"]`);
+    if (u) els.push({ el: u, opts: null });
+    document.querySelectorAll(`#board .card.ch[data-lane="${i}"]`).forEach((el) => {
+      els.push({ el: el, opts: { height: chVisibleHeight(el) } });   /* ＣＨは見えている帯だけ割る */
+    });
+  });
+  if (!els.length) return false;
+  els.forEach((e) => e.el.classList.add('doomed'));                  /* 赤枠で「これが壊れる」 */
+  await sleep(AIM_SHOW_MS);
+  await Promise.all(els.map((e) => shatterEffect(e.el, e.opts)));
+  return true;
+}
+
+/** aimed＝[{lane, idx, card}]。赤枠 →（間）→ 粉々に割れる → 実際に取り除く。 */
+async function playAimedDestroy(aimed) {
+  if (!aimed || !aimed.length) return false;
+  renderAll();                                   /* doomed の印が赤枠になって出る */
+  await sleep(AIM_SHOW_MS);
+  await Promise.all(aimed.map((a) => {
+    const el = document.querySelector(
+      `#board .card.ch[data-lane="${a.lane}"][data-layer="${a.idx + 1}"]`);
+    return el ? shatterEffect(el, { height: chVisibleHeight(el) }) : Promise.resolve();
+  }));
+  CQMagic.strikeDoomed(M);
+  renderAll();
+  return true;
 }
 
 /** 人の入力が要るところまで進める。UIの操作は必ず最後にこれを呼ぶ。
@@ -1693,11 +1763,22 @@ function doAttack(atkLane, defLane) {
 function doFlip(laneIdx, layer, choice) {
   markLog(); markFx();
   M.lastForcedChain = null;
+  CQMagic.beginAim(M);                         /* 憑依解除の破壊は演出してから消す */
   const r = CQTurn.reverseAction(M, laneIdx, [layer],
     choice ? { cont: true, choice, interactive: true } : { cont: true, interactive: true });
+  const aimed = CQMagic.endAim(M);
   UI.report = null;
   if (UI.mode === 'info') UI.mode = 'idle';   /* 内容を見たあとに開いたら、結果の表示に戻す */
-  if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
+  if (!r.ok) { CQMagic.strikeDoomed(M); flash(r.reason || 'その操作はできません'); renderAll(); return; }
+  if (aimed.length) {
+    /* 演出中は盤面のクリックを弾く（連鎖と同じ扱い）。終わってから続きへ進む。 */
+    UI.mode = 'chain';
+    playAimedDestroy(aimed).then(() => { UI.mode = 'idle'; afterFlip(); });
+    return;
+  }
+  return afterFlip();
+
+  function afterFlip() {
   if (M.forcedChain) {
     /* 強制開放・強制転回：1枚ずつの演出が終わってから続きへ進む。
      * 演出中は busy が立っていないので、renderAll() のたびに盤面は触れてしまう。
@@ -1712,6 +1793,7 @@ function doFlip(laneIdx, layer, choice) {
   }
   if (enterDrawPickIfPending()) return;       /* 予見・口寄せ：引いた札から選ばせる */
   step();
+  }
 }
 
 /** 強制リバース連鎖（108/109）が起きていたら、めくられたＣＨを**下から順に1枚ずつ**
@@ -1739,7 +1821,6 @@ function enterDrawPickIfPending() {
 const CHAIN_FLIP_MS = 380;     /* めくるアニメーション自体の長さ（CSS .chain-now と揃える） */
 const CHAIN_READ_MS = 750;     /* めくった後、内容を読むための静止 */
 const CHAIN_AIM_MS = 700;      /* 「このカードを狙った」を赤枠で見せる長さ */
-const CHAIN_DIE_MS = 450;      /* 破壊アニメーションの長さ（CSS .dying と揃える） */
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1756,8 +1837,16 @@ async function playForcedChain() {
   flash(kindName + '：下から順に1枚ずつ開きます');
   let guard = 0;
   while (M.forcedChain && guard++ < 64) {
+    /* このビートでユニットごと吹き飛んだレーンを見つけるための控え。
+     * 呪爆(133)は「連鎖を仕掛けた側」のユニットを壊す＝**強制開放のカードも一緒に消える**。
+     * 今までここは何の演出も無く、カードが黙って消えていた（2026-08-30 本人指摘）。 */
+    const unitsBefore = M.board.lanes.map((ln) => ln.unit);
     const r = CQMagic.forcedChainStep(M);
     if (r.done) break;
+    const wiped = [];
+    M.board.lanes.forEach((ln, i) => { if (unitsBefore[i] != null && ln.unit !== unitsBefore[i]) wiped.push(i); });
+    /* ★描き直す前に演出する（古いＤＯＭにまだカードが残っているうちに割る） */
+    if (wiped.length) await playLaneWipe(wiped);
 
     if (r.phase === 'flip') {
       /* いまめくった1枚だけに印を付けて、その場でめくるアニメーションを見せる。 */
@@ -1771,12 +1860,16 @@ async function playForcedChain() {
     if (r.phase === 'effect') {
       if (r.aimed && r.aimed.length) {
         /* 狙われたカードは doomed の印が付いているだけでまだ場にある。
-         * 赤い枠で「これを狙った」を見せてから、破壊アニメーションを回す
-         * ——自分で憑依解除するときに赤枠の中から選ぶ操作を真似ている。 */
+         * 赤い枠で「これを狙った」を見せてから、粉々に割れる演出を回す。
+         * 実際に取り除くのは次のビート（strike）なので、ここでは割るところまで。
+         * ——手で撃ったときと同じ見え方にするため playAimedDestroy と同じ部品を使う。 */
         renderAll();
         await wait(CHAIN_AIM_MS);
-        document.querySelectorAll('.card.ch.doomed').forEach((el) => el.classList.add('dying'));
-        await wait(CHAIN_DIE_MS);
+        await Promise.all(r.aimed.map((a) => {
+          const el = document.querySelector(
+            `#board .card.ch[data-lane="${a.lane}"][data-layer="${a.idx + 1}"]`);
+          return el ? shatterEffect(el, { height: chVisibleHeight(el) }) : Promise.resolve();
+        }));
       } else {
         renderAll();
         await wait(260);
@@ -2120,24 +2213,24 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
     const layer = +el.dataset.layer;
     const laneIdx = CQCombat.openerLane(M);
     const ch = M.board.lanes[laneIdx].channels[layer - 1];
-    if (tryStartDestroyPick(laneIdx, layer, ch, (choice) => {
+    /* 戦闘中のオープンも doFlip と同じ流れ（憑依解除の破壊は赤枠→粉々を挟んでから消す）。 */
+    const doOpen = (choice) => {
       markLog(); markFx();
       M.lastForcedChain = null;
-      const r = CQCombat.open(M, layer, { choice, interactive: true });
-      if (!r.ok) flash(r.reason);
-      if (M.forcedChain) { UI.mode = 'chain'; playForcedChain().then(() => { UI.mode = 'idle'; if (!enterDrawPickIfPending()) step(); }); return; }
-      if (enterDrawPickIfPending()) return;
-      step();
-    })) return;
-    const openNow = () => {
-      markLog(); markFx();
-      M.lastForcedChain = null;
-      const r = CQCombat.open(M, layer, { interactive: true });
-      if (!r.ok) flash(r.reason);
-      if (M.forcedChain) { UI.mode = 'chain'; playForcedChain().then(() => { UI.mode = 'idle'; if (!enterDrawPickIfPending()) step(); }); return; }
-      if (enterDrawPickIfPending()) return;
-      step();
+      CQMagic.beginAim(M);
+      const r = CQCombat.open(M, layer, choice ? { choice, interactive: true } : { interactive: true });
+      const aimed = CQMagic.endAim(M);
+      if (!r.ok) { CQMagic.strikeDoomed(M); flash(r.reason); }
+      const next = () => {
+        if (M.forcedChain) { UI.mode = 'chain'; playForcedChain().then(() => { UI.mode = 'idle'; if (!enterDrawPickIfPending()) step(); }); return; }
+        if (enterDrawPickIfPending()) return;
+        step();
+      };
+      if (aimed.length) { UI.mode = 'chain'; playAimedDestroy(aimed).then(() => { UI.mode = 'idle'; next(); }); return; }
+      next();
     };
+    if (tryStartDestroyPick(laneIdx, layer, ch, doOpen)) return;
+    const openNow = () => doOpen(null);
     if (tryConfirmRitual(laneIdx, layer, ch, openNow)) return;   /* 生贄召還の確認（v0.15.3） */
     return openNow();
   }

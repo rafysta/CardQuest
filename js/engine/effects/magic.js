@@ -99,6 +99,38 @@
     ln.count = ln.channels.length;
     return removed;
   }
+
+  /* ---- 破壊の予約（「狙う」→「見せる」→「消す」）2026-08-30 本人指定 -----------
+   * 憑依解除(101)は今まで一瞬でカードを消していたので、何が壊れたのか分からなかった。
+   * 予約が入っている対戦では、消すかわりに `ch.doomed` の印を付けてここへ登録する。
+   * ＵＩが赤い枠で「これを狙った」を見せ、粉々に割れる演出を回してから
+   * `strikeDoomed()` で実際に取り除く。強制リバース連鎖（`m.forcedAim`）と同じ流れを、
+   * 手で開いたとき・自動で対象が決まったとき・相手が開いたときにも広げたもの。
+   *
+   * ★WeakMap にしてあるのは**ＡＩの先読みに漏らさないため**。ＡＩ（js/engine/search.js の
+   * cloneMatch）は m を複製して何十手も試すが、複製は別のオブジェクトなのでここには
+   * 載らない＝先読みの中では従来どおりその場で消える。m にフラグを置くと複製にも
+   * 付いていき、「予約したまま誰も strike しない盤面」を評価してしまう。 */
+  const AIM = new WeakMap();
+  /** この対戦の破壊を予約制にする（ＵＩが操作の直前に呼ぶ）。 */
+  function beginAim(m) { AIM.set(m, []); }
+  /** 予約を締めて中身を返す（ＵＩが操作の直後に呼ぶ）。[{lane, idx, card}] */
+  function endAim(m) { const a = AIM.get(m); AIM.delete(m); return a || []; }
+  /** いま有効な予約置き場。連鎖中（m.forcedAim）を優先する。無ければ null＝即座に消す。 */
+  function aimOf(m) { return m.forcedAim || AIM.get(m) || null; }
+  /** 予約された（doomed の印が付いた）ＣＨを実際に取り除く。取り除いた枚数を返す。 */
+  function strikeDoomed(m) {
+    let removed = 0;
+    m.board.lanes.forEach(function (ln) {
+      if (ln.unit == null) return;
+      const before = ln.channels.length;
+      ln.channels = ln.channels.filter(function (ch) { return !ch.doomed; });
+      ln.count = ln.channels.length;
+      removed += before - ln.channels.length;
+    });
+    if (removed) recalc(m);
+    return removed;
+  }
   function pushChannel(m, laneIndex, entry) {
     const ln = m.board.lanes[laneIndex];
     ln.channels.push(entry);
@@ -244,11 +276,14 @@
     if (!t) t = pick(m, pool);
     if (!t) { note(m, '憑依解除：対象が無い'); return; }
     const victim = m.board.lanes[t.lane].channels[t.idx];
-    /* 連鎖の演出中は「消す」かわりに印を付けて登録する。ＵＩが赤い枠で見せてから
-     * 次のビート（strike）で実際に取り除く＝**何を狙ったのかが見える**。 */
-    if (m.forcedAim) {
+    /* 予約が入っていれば「消す」かわりに印を付けて登録する。ＵＩが赤い枠で見せ、
+     * 粉々に割れる演出を回してから取り除く＝**何を狙ったのかが見える**。
+     * 連鎖中・手で開いたとき・自動で対象が決まったとき・相手が開いたときのすべてが
+     * ここを通る（2026-08-30 本人指定。ＡＩの先読みは AIM に載らないので即座に消える）。 */
+    const aim = aimOf(m);
+    if (aim) {
       victim.doomed = true;
-      m.forcedAim.push({ lane: t.lane, idx: t.idx, card: victim.card });
+      aim.push({ lane: t.lane, idx: t.idx, card: victim.card });
       note(m, '憑依解除：' + nameOf(m, victim.card) + ' を狙う');
       return;
     }
@@ -436,15 +471,7 @@
     }
 
     /* strike：印の付いたカードを実際に取り除く。 */
-    let removed = 0;
-    m.board.lanes.forEach(function (ln) {
-      if (ln.unit == null) return;
-      const before = ln.channels.length;
-      ln.channels = ln.channels.filter(function (ch) { return !ch.doomed; });
-      ln.count = ln.channels.length;
-      removed += before - ln.channels.length;
-    });
-    recalc(m);
+    const removed = strikeDoomed(m);
     if (turnApi().checkResult(m)) return endForcedChain(m, '決着した');
     fc.cursor += 1; fc.phase = 'flip';
     return { done: false, phase: 'strike', removed: removed };
@@ -1018,7 +1045,7 @@
   }
 
   const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED, resolvePending, autoResolve,
-    forcedChainStep };
+    forcedChainStep, beginAim, endAim, strikeDoomed };
   global.CQMagic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -512,7 +512,7 @@ img.curse-art{
  * 本人指摘：「めくるのが早すぎて確認できない」「カードが上に移動してから裏返るのはおかしい」。
  * エンジンが1ビートずつ止まるようになったので、ここは**その場でめくる**見た目だけを担う。
  * transform に translate を入れないこと——動かすと「一度離れて戻る」ように見える。
- * 間合いは js/layout.js の CHAIN_FLIP_MS / CHAIN_AIM_MS / CHAIN_DIE_MS と揃える。 */
+ * 間合いは js/layout.js の CHAIN_FLIP_MS / CHAIN_AIM_MS と揃える。 */
 /* ★ position / top / bottom / margin には絶対に触れないこと。
  * ＣＨは `position:absolute; bottom:calc(k * var(--vstep))` で積まれている（chHTML のインライン指定）。
  * ここに position:relative を足すと、カードが絶対配置から外れて**列の上端まで飛ぶ**
@@ -530,18 +530,15 @@ img.curse-art{
  *   裏は帯だけに見えるが、それは下に積まれたカードに隠れているだけ。
  *   つまりこの transition は最初から一度も効いていなかった。） */
 
-/* 連鎖中に「壊すと決まった」カード。まだ場に残っていて、赤い枠で狙いを見せる段階
- * ——自分で憑依解除するときに赤枠の中から選ぶ操作（.card.ch.pick）を真似ている。 */
-.card.ch.doomed{box-shadow:0 0 0 3px #f87171,0 0 16px #f87171aa;   /* position は上の★のとおり触らない */
+/* 「壊すと決まった」カード。まだ場に残っていて、赤い枠で狙いを見せる段階
+ * ——自分で憑依解除するときに赤枠の中から選ぶ操作（.card.ch.pick）を真似ている。
+ * この赤枠のあと、ユニット破壊と同じ shatterEffect() で粉々に割ってから取り除く
+ * （2026-08-30 本人指定。連鎖中も・手で撃ったときも・相手が撃ったときも同じ見え方）。
+ * v0.16.26 まであった `.dying`（縮んで消えるだけ）は、割れる演出に置き換えて廃止した。 */
+/* ＣＨにもレーンのユニットにも付く（呪爆でレーンごと吹き飛ぶときは両方が赤くなる）。
+ * position は上の★のとおり触らない——ＣＨは絶対配置で積まれている。 */
+.card.doomed{box-shadow:0 0 0 3px #f87171,0 0 16px #f87171aa;
   animation:cq-pick-pulse .7s ease-in-out infinite}
-/* 実際に取り除かれる直前の破壊アニメーション。 */
-.card.ch.doomed.dying{animation:cq-card-die .45s ease-in forwards}
-@keyframes cq-card-die{
-  0%{transform:none;opacity:1;box-shadow:0 0 0 3px #f87171,0 0 16px #f87171aa}
-  40%{transform:scale(1.06) rotate(-2deg);opacity:1;
-    box-shadow:0 0 0 4px #fca5a5,0 0 26px #f87171}
-  100%{transform:scale(.55) rotate(8deg);opacity:0;box-shadow:none}
-}
 
 /* ユニットの状態バッジ（行動済み・連続攻撃） */
 .st-tag{

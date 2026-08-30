@@ -652,7 +652,17 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('★連鎖でめくられるカードはその場で裏返る（上にずれない）',
     !!duringFlip && duringFlip.top === beforeFlip.top && duringFlip.pos === 'absolute',
     JSON.stringify({ before: beforeFlip, during: duringFlip }));
-  await page.waitForTimeout(3000);                        /* 連鎖の演出が終わるまで待つ */
+  /* ★憑依解除の破壊は「赤枠で狙いを見せる → 粉々に割れる」で見せること（2026-08-30 本人指定）。
+   * 連鎖の途中で発動した場合もここを通る。演出中のDOMを追いかけて両方を目撃する。 */
+  let sawDoomed = false, sawShards = false;
+  for (let n = 0; n < 60 && !(sawDoomed && sawShards); n++) {
+    await page.waitForTimeout(60);
+    if (await page.$('.card.ch.doomed')) sawDoomed = true;
+    if (await page.$('.cq-shard-box')) sawShards = true;
+  }
+  ok('★憑依解除の対象は赤い枠で見せてから破壊される', sawDoomed);
+  ok('★憑依解除の対象は粉々に割れる演出で消える', sawShards);
+  await page.waitForTimeout(2500);                        /* 連鎖の演出が終わるまで待つ */
   /* 戦闘中にもう一度開くと、いまの盤面が初期値として出る（試す→直す→また試す） */
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
@@ -661,6 +671,41 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('★戦闘中に開き直すと、いまの盤面が初期値として出る',
     await page.evaluate(() => BSET.lanes['3'] && BSET.lanes['3'].unit === 70),
     JSON.stringify(await page.evaluate(() => BSET.lanes)));
+
+  /* ★呪爆(133)が強制開放に跳ね返り、仕掛けた側のレーンごと吹き飛ぶ場面（2026-08-30 本人指摘）。
+   * 強制開放のカードもユニットと一緒に消えるが、以前はここだけ**何の演出も無く黙って消えて**いた。
+   * ユニットとＣＨの両方が赤枠で見えてから粉々になることを、演出中のDOMを追いかけて確かめる。 */
+  await page.$eval('#bs-json', (el, v) => { el.value = v; }, JSON.stringify({
+    first: 'self', active: 'self', phase: 'main', win: 'lp', hand: { self: [], enemy: [] },
+    lanes: { '0': { unit: 8, ch: [{ id: 108, up: false, by: 'self' }] },
+             '3': { unit: 8, ch: [{ id: 133, up: false, by: 'enemy' }, { id: 180, up: false, by: 'enemy' }] } }
+  }));
+  await page.click('[data-bs="json-load"]');
+  await page.waitForTimeout(150);
+  await page.click('[data-bs="start"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+  await page.waitForTimeout(1200);
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(200);
+  await page.click('.card.ch[data-lane="3"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  let wipeUnit = false, wipeCh = false, wipeShards = false;
+  for (let n = 0; n < 60 && !(wipeUnit && wipeCh && wipeShards); n++) {
+    await page.waitForTimeout(60);
+    if (await page.$('.card.unit.doomed')) wipeUnit = true;
+    if (await page.$('.card.ch.doomed')) wipeCh = true;
+    if (await page.$('.cq-shard-box')) wipeShards = true;
+  }
+  ok('★呪爆で吹き飛ぶユニットが赤い枠で見える', wipeUnit);
+  ok('★一緒に消える強制開放のカードも赤い枠で見える', wipeCh);
+  ok('★そのあと粉々に割れる演出で消える', wipeShards);
+  ok('呪爆は強制開放を仕掛けた側に跳ね返る（レーンごと消える）',
+    await page.evaluate(() => M.board.lanes[0].unit === null && M.board.lanes[0].channels.length === 0),
+    JSON.stringify(await page.evaluate(() => M.log.slice(-3))));
+  await page.waitForTimeout(1500);
+  await page.click('#dbg-btn');
+  await wait(() => page.$('.dbg-menu'));
+  await dbgClick('盤面をセットして戦う');
+  await wait(() => page.evaluate(() => document.getElementById('screen-board').classList.contains('on')));
   /* ストーリー側のセーブに触れていないこと（フリーバトルと同じ扱い） */
   ok('盤面セットアップはストーリーのセーブを壊さない',
     await page.evaluate(() => !!localStorage.getItem('cq_meta')));
