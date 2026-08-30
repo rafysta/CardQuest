@@ -44,6 +44,7 @@
   /** 循環参照を避けるため呼ぶ瞬間に解決する（turn.js の combatApi() と同じ方針） */
   function combatApi() { return isNode ? require('../combat.js') : global.CQCombat; }
   function turnApi() { return isNode ? require('../turn.js') : global.CQTurn; }
+  function unitsApi() { return isNode ? require('./units.js') : global.CQUnits; }
   function recalc(m) {
     const combat = m.combat ? { attacker: m.combat.attacker, defender: m.combat.defender } : null;
     Stats.recalc(m.board, { cards: m.cards, combat: combat });
@@ -123,9 +124,15 @@
     let removed = 0;
     m.board.lanes.forEach(function (ln) {
       if (ln.unit == null) return;
+      /* リバース中のレーンで「いま開いている階層より下」が消えると、残りが1つずつ下がる。
+       * その分だけ位置を戻さないと、下がってきたカードが「もう開いた」ことになってしまう
+       * （菊一文字(131)で下の階層を壊したときに効く。原作 EV0271 の V28x -= 1 と同じ補正）。 */
+      let below = 0;
+      ln.channels.forEach(function (ch, j) { if (ch.doomed && j < ln.reversePtr - 1) below += 1; });
       const before = ln.channels.length;
       ln.channels = ln.channels.filter(function (ch) { return !ch.doomed; });
       ln.count = ln.channels.length;
+      if (below) ln.reversePtr = Math.max(0, ln.reversePtr - below);
       removed += before - ln.channels.length;
     });
     if (removed) recalc(m);
@@ -293,8 +300,7 @@
   }
 
   function h102(m, ctx) {                                     // 侵食：自デッキから他ユニットのＣＨを埋める
-    const targets = allUnitLanes(m).filter(function (i) { return i !== ctx.laneIndex; });
-    const t = pick(m, targets);
+    const t = decide(m, ctx, 102);                            // FLOOD（空きのある他ユニット）
     if (t == null) { note(m, '侵食：対象が無い'); return; }
     let filled = 0;
     for (;;) {
@@ -384,6 +390,159 @@
       if (!ln.channels.length) return false;
       return needFaceUp ? ln.channels.some(function (ch) { return ch.up; }) : true;
     });
+  }
+
+  /* ================= 対象の候補（M6.7 WP5・2026-08-30） ==========================
+   * 候補の列挙を各ハンドラの中から切り出したもの。ＵＩは `targetsFor()` を貰って光らせ、
+   * 選ばせて `ctx.choice` で返すだけになる＝**カードが増えてもＵＩ側に書き足さなくて済む**。
+   * 候補の条件は原作解析『05_magic.md』§1-3「対象確認ルーチン」の表が正。
+   *
+   * 対象の型は4つ：
+   *   'lane'  … ユニット1体（レーン）   choice = { lane }
+   *   'ch'    … チャンネル1枚           choice = { lane, idx }（113だけ { picks:[…] }）
+   *   'layer' … 階層（レベル）1つ       choice = { layer }      ★131菊一文字
+   *   'hand'  … 相手の手札の1枚         choice = { handIndex }  ★114暗殺
+   *
+   * 共通の縛り（§1-4。原作のチュートリアルでも明示されている）：
+   *   ・**そのカード自身が乗っているレーンは選べない**
+   *   ・戦闘中は当事者の2レーンだけが母数（§1-3・03_combat.md §7）
+   */
+
+  /** そのレーンが対象になりうるか（自分のレーンを除く／戦闘中は当事者だけ）。 */
+  function inScope(m, ctx, lane) {
+    if (lane === ctx.laneIndex) return false;
+    if (m.combat) return lane === m.combat.attacker || lane === m.combat.defender;
+    return true;
+  }
+  function scopeLanes(m, ctx) {
+    return allUnitLanes(m).filter(function (i) { return inScope(m, ctx, i); });
+  }
+  /** CE0216 EJECT：ＣＨを1枚以上持つ他ユニット（101・105・108・109・116・124） */
+  function rEject(m, ctx) {
+    return scopeLanes(m, ctx).filter(function (i) { return m.board.lanes[i].channels.length >= 1; });
+  }
+  /** CE0231 FLOOD：ＣＨに空きのある他ユニット（102・115・125・127・130・138・148） */
+  function rFlood(m, ctx) {
+    recalc(m);
+    return scopeLanes(m, ctx).filter(function (i) { return m.board.lanes[i].count < m.board.lanes[i].cap; });
+  }
+  /** CE0252 BLITZ：最終防御力が範囲内の他ユニット（135・141） */
+  function rBlitz(m, ctx, lo, hi) {
+    recalc(m);
+    return scopeLanes(m, ctx).filter(function (i) {
+      const d = m.board.lanes[i].def; return d >= lo && d <= hi;
+    });
+  }
+  /** CE0356 DASH：裏向きのＣＨ（113・118） */
+  function rDash(m, ctx) {
+    return allChannels(m, function (ch, lane) { return !ch.up && inScope(m, ctx, lane); });
+  }
+  /** CE0357 ALLCLOZE：表向きのＣＨを持つ他ユニット（110・121） */
+  function rAllclose(m, ctx) {
+    return scopeLanes(m, ctx).filter(function (i) {
+      return m.board.lanes[i].channels.some(function (ch) { return ch.up; });
+    });
+  }
+
+  /** カードＩＤごとの対象候補。対象を選ばないカードは null を返す。
+   * 戻り値 { kind, need, targets }。ＵＩ・ＡＩ・テストが同じものを見る唯一の窓口。 */
+  function targetsFor(m, cardId, ctx) {
+    const c = ctx || {};
+    const lane = function (t) { return { kind: 'lane', need: 1, targets: t }; };
+    const chs = function (t, n) { return { kind: 'ch', need: n || 1, targets: t }; };
+    switch (cardId) {
+      /* --- WP1・WP3 で作った型（条件はそのまま engine 側へ移した） --- */
+      case 101:   /* 憑依解除：自分自身の階層以外の全ＣＨ（味方も対象になりうる） */
+        return chs(allChannels(m, function (ch, l, j) { return !(l === c.laneIndex && j === c.layer - 1); }));
+      case 108: case 109:
+        return lane(forcedTargets(m, c, false));
+      case 110:
+        return lane(forcedTargets(m, c, true));
+      case 113: {  /* 透視：相手が置いた、まだ中身の分かっていない裏向きＣＨを2枚 */
+        const mine = c.caster === 'self';
+        return chs(allChannels(m, function (ch) {
+          return !ch.up && ch.mine !== mine && !ch.revealed;
+        }), 2);
+      }
+      case 137: {  /* 潜行爆弾：相手陣の、ＣＨに空きがあるユニット */
+        const foe = other(c.caster);
+        recalc(m);
+        return lane(allUnitLanes(m).filter(function (i) {
+          if (i === c.laneIndex || S.sideOf(i) !== foe) return false;
+          return m.board.lanes[i].count < m.board.lanes[i].cap;
+        }));
+      }
+
+      /* --- WP5 で足したぶん（価格順） --- */
+      case 126:   /* 統合：ＣＨが1枚も付いていない他ユニットを丸ごと吸収する */
+        return lane(scopeLanes(m, c).filter(function (i) { return m.board.lanes[i].channels.length === 0; }));
+      case 116:   /* 解析：EJECT */
+        return lane(rEject(m, c));
+      case 125: case 102: case 138: case 148:   /* 移送・侵食・潜入・妄執：FLOOD */
+        return lane(rFlood(m, c));
+      case 124:   /* 凍結：EJECT のうち、まだ硬直していないもの */
+        return lane(rEject(m, c).filter(function (i) { return !m.board.lanes[i].stiff; }));
+      case 118:   /* 押収：DASH */
+        return chs(rDash(m, c));
+      case 121: { /* 招来：潜行しているユニットカード。**中身が分かっているものだけ**選べる
+                   *（自分が置いたか、透視・解析で既知になったもの）。原作もこの条件。 */
+        const mine = c.caster === 'self';
+        return chs(allChannels(m, function (ch, l) {
+          if (!inScope(m, c, l) || ch.up) return false;
+          const card = m.cards[ch.card];
+          if (!card || card.t !== 'U') return false;
+          return ch.mine === mine || ch.revealed;
+        }));
+      }
+      case 141:   /* 思念波：防御力551〜1000（550以下は雷撃の担当。原作の住み分け） */
+        return lane(rBlitz(m, c, 551, 1000).filter(function (i) { return S.sideOf(i) === other(c.caster); }));
+      case 135:   /* 雷撃：防御力550以下（BLITZ） */
+        return lane(rBlitz(m, c, 0, 550));
+      case 114: { /* 暗殺：相手の手札のユニットカードを1枚。
+                   *（原作では選んでいる間、相手の手札が全部見える＝偵察にもなる） */
+        const p = m.players[other(c.caster)];
+        const idxs = [];
+        p.hand.forEach(function (id, i) {
+          const card = m.cards[id];
+          if (card && (card.t === 'U' || card.t === 'C')) idxs.push(i);
+        });
+        return { kind: 'hand', need: 1, targets: idxs };
+      }
+      case 131: { /* 菊一文字：階層（レベル）を1つ選び、**敵味方6レーンすべて**のその階層を破壊する。
+                   * 候補＝そのレベルにＣＨが1枚でもある階層。ただし
+                   * **このカード自身と同じレベルは選べない**（原作 EV0271 の `V212 == V217` reject）。
+                   * ——自分を巻き込めないので、この魔法だけは自壊しない。 */
+        const layers = [];
+        for (let n = 1; n <= S.LAYERS; n++) {
+          if (n === c.layer) continue;
+          const hit = m.board.lanes.some(function (ln) {
+            return ln.unit != null && !!ln.channels[n - 1];
+          });
+          if (hit) layers.push(n);
+        }
+        return { kind: 'layer', need: 1, targets: layers };
+      }
+      default: return null;
+    }
+  }
+
+  /** targetsFor の候補から1つ決める。`ctx.choice` があればそれを検証して使い、
+   * 無ければ従来どおり乱数で選ぶ（ＡＩ・シミュレータは choice を渡さないので無改修）。
+   * 候補が空なら null。 */
+  function decide(m, ctx, cardId) {
+    const spec = targetsFor(m, cardId, ctx);
+    if (!spec || !spec.targets.length) return null;
+    const ch = ctx.choice;
+    if (ch) {
+      if (spec.kind === 'lane' && spec.targets.indexOf(ch.lane) >= 0) return ch.lane;
+      if (spec.kind === 'layer' && spec.targets.indexOf(ch.layer) >= 0) return ch.layer;
+      if (spec.kind === 'hand' && spec.targets.indexOf(ch.handIndex) >= 0) return ch.handIndex;
+      if (spec.kind === 'ch') {
+        const hit = spec.targets.find(function (t) { return t.lane === ch.lane && t.idx === ch.idx; });
+        if (hit) return hit;
+      }
+    }
+    return pick(m, spec.targets);
   }
 
   /** ctx.choice で指定されたレーンが合法ならそれを、無ければ乱数で1つ選ぶ
@@ -564,10 +723,11 @@
 
   function h114(m, ctx) {                                     // 暗殺：敵マスター手札内のユニットを破壊＋ＬＰ1点
     const enemy = other(ctx.caster), p = m.players[enemy];
-    const idxs = [];
-    p.hand.forEach(function (id, i) { const c = m.cards[id]; if (c && c.t === 'U') idxs.push(i); });
-    if (idxs.length) {
-      const removed = p.hand.splice(pick(m, idxs), 1)[0];
+    /* 相手の手札からユニット1枚を選んで壊す。選んでいる間、相手の手札は全部見える
+     * （原作もそうで、偵察としても使えるのがこのカードの持ち味。05_magic.md §114）。 */
+    const i = decide(m, ctx, 114);
+    if (i != null) {
+      const removed = p.hand.splice(i, 1)[0];
       note(m, '暗殺：' + jp(enemy) + 'の手札の ' + nameOf(m, removed) + ' を破壊');
     }
     damage(m, enemy, 1);
@@ -587,15 +747,14 @@
   function h127(m, ctx) { attachFromHand(m, ctx, 167, '死の棘'); }     // 腐食(167)
 
   function h116(m, ctx) {                                     // 解析：ユニット1体のＣＨ内容を全て確認（レベル4）
-    const t = pick(m, allUnitLanes(m));
-    if (t == null) return;
+    const t = decide(m, ctx, 116);                            // EJECT（ＣＨを持つ他ユニット）
+    if (t == null) { note(m, '解析：中身を見られるユニットが無い'); return; }
     m.board.lanes[t].channels.forEach(function (ch) { ch.revealed = true; });
     note(m, '解析：' + nameOf(m, m.board.lanes[t].unit) + ' のＣＨを全て確認');
   }
 
   function h118(m, ctx) {                                     // 押収：裏状態のＣＨ１つをこのレーンへ奪う
-    const pool = allChannels(m, function (ch, lane) { return !ch.up && lane !== ctx.laneIndex; });
-    const t = pick(m, pool);
+    const t = decide(m, ctx, 118);                            // DASH（裏向きのＣＨ）
     if (!t) { note(m, '押収：対象が無い'); return; }
     const stolen = dropChannelAt(m, t.lane, t.idx);
     pushChannel(m, ctx.laneIndex, { card: stolen.card, up: false, mine: ctx.caster === 'self', revealed: false });
@@ -615,15 +774,29 @@
   /* ================= 121〜130 ================= */
 
   function h121(m, ctx) {                                     // 招来：潜行しているユニット1つを自分の場に召還
-    const pool = allChannels(m, function (ch) { const c = m.cards[ch.card]; return !ch.up && c && c.t === 'U'; });
-    const t = pick(m, pool);
-    if (!t) { note(m, '招来：潜行しているユニットが無い'); return; }
+    const t = decide(m, ctx, 121);       // 潜行しているユニットカード（中身が分かっているものだけ）
+    if (!t) { note(m, '招来：召還できる潜行ユニットが無い'); return; }
     // M6 戦場ルール：ふさがれたレーン（laneLock）は召還先にできず、
     // 素のＣＨ数が上限を超えるユニット（noHighCH）はそもそも出せない
-    const dest = pick(m, Field.freeLanesOf(m, ctx.caster));
+    let dest = pick(m, Field.freeLanesOf(m, ctx.caster));
     if (dest == null) { note(m, '招来：召還先が無い'); return; }
     const hidden = m.board.lanes[t.lane].channels[t.idx];
     if (!Field.summonAllowed(m, hidden.card).ok) { note(m, '招来：戦場ルールで召還できない'); return; }
+    /* ★2026-08-30 本人指定：招来で引き出したユニットも「開：」能力を発動する。
+     * 「開：」は資料でも**潜行解除時**の能力と定義されていて（07_unit_abilities.md §4）、
+     * 招来はまさに潜行を解除する行為なので、リバース召還と同じ扱いにする。
+     * ——原作は招来だけ別経路（CE0225）でＣＨオープン処理を通らず、発動しなかった。
+     * 順番も通常のリバース召還に合わせる（§4-1「効果は必ずリバース召還より前に解決される」）。 */
+    const U = unitsApi();
+    if (U && typeof U.onUnitOpen === 'function') U.onUnitOpen(m, t.lane, t.idx + 1, hidden.card);
+    /* 能力の解決でその札自身が動いた・消えた（摩り替り25など）なら、召還は起きない */
+    const still = m.board.lanes[t.lane] && m.board.lanes[t.lane].channels[t.idx];
+    if (!still || still.card !== hidden.card) { note(m, '招来：潜行ユニットが動いたため召還できなかった'); return; }
+    if (m.board.lanes[dest] && m.board.lanes[dest].unit != null) {   /* 能力の巻き添えで召還先が埋まった */
+      const re = pick(m, Field.freeLanesOf(m, ctx.caster));
+      if (re == null) { note(m, '招来：召還先が無くなった'); return; }
+      dest = re;
+    }
     const taken = dropChannelAt(m, t.lane, t.idx);
     m.board.lanes[dest] = S.makeLane(taken.card, [], m.cards);   // 召還されたユニットは硬直しない
     recalc(m);
@@ -661,8 +834,7 @@
   }
 
   function h124(m, ctx) {                                     // 凍結：場にあるユニット1体を硬直させる（戦闘中×）
-    const pool = allUnitLanes(m).filter(function (i) { return !m.board.lanes[i].stiff; });
-    const t = pick(m, pool);
+    const t = decide(m, ctx, 124);                            // EJECT かつ未硬直
     if (t == null) { note(m, '凍結：対象が無い'); return; }
     m.board.lanes[t].stiff = true;
     note(m, '凍結：' + nameOf(m, m.board.lanes[t].unit) + ' を硬直させた');
@@ -674,8 +846,7 @@
     let srcIdx = -1;
     for (let i = ln.channels.length - 1; i >= 0; i--) { if (i !== ctx.layer - 1) { srcIdx = i; break; } }
     if (srcIdx < 0) { note(m, '移送：移動できるＣＨが無い'); return; }
-    const targets = allUnitLanes(m).filter(function (i) { return i !== ctx.laneIndex; });
-    const t = pick(m, targets);
+    const t = decide(m, ctx, 125);                            // FLOOD（空きのある他ユニット）
     if (t == null) { note(m, '移送：移動先が無い'); return; }
     const moved = dropChannelAt(m, ctx.laneIndex, srcIdx);
     pushChannel(m, t, moved);
@@ -684,10 +855,7 @@
   }
 
   function h126(m, ctx) {                                     // 統合：ＣＨ付加の無いユニット1体をＣＨとして吸収
-    const targets = allUnitLanes(m).filter(function (i) {
-      return i !== ctx.laneIndex && m.board.lanes[i].channels.length === 0;
-    });
-    const t = pick(m, targets);
+    const t = decide(m, ctx, 126);                            // ＣＨの付いていない他ユニット
     if (t == null) { note(m, '統合：吸収できるユニットが無い'); return; }
     const absorbed = m.board.lanes[t].unit;
     m.board.lanes[t] = S.emptyLane();
@@ -726,16 +894,32 @@
   /* ================= 131〜140 ================= */
 
   function h131(m, ctx) {                                     // 菊一文字：全ユニットの同レベルのＣＨを全て破壊（戦闘中×）
-    const n = ctx.layer;
+    /* ★M6.7 WP5：破壊する階層（レベル）を選べるようにした（原作もレベルを選ぶカード。
+     * 05_magic.md §131）。**自分と同じレベルは選べない**ので、このカードは自壊しない。
+     * 選ばなければ（ＡＩ・シミュレータ）候補から乱数で選ぶ。 */
+    const n = decide(m, ctx, 131);
+    if (n == null) { note(m, '菊一文字：壊せる階層が無い'); return; }
     let cnt = 0;
+    /* 憑依解除と同じ「予約 → 赤枠で見せる → 粉々に割る」を通す（2026-08-30 本人指定）。
+     * 予約されていなければ（ＡＩ・シミュレータ）その場で取り除く。 */
+    const aim = aimOf(m);
     for (let i = 0; i < 6; i++) {
       const ln = m.board.lanes[i];
       if (!ln || ln.unit == null || !ln.channels[n - 1]) continue;
-      ln.channels.splice(n - 1, 1); ln.count = ln.channels.length; cnt += 1;
+      if (aim) {
+        ln.channels[n - 1].doomed = true;
+        aim.push({ lane: i, idx: n - 1, card: ln.channels[n - 1].card });
+      } else {
+        ln.channels.splice(n - 1, 1); ln.count = ln.channels.length;
+      }
+      cnt += 1;
     }
-    recalc(m);
+    if (!aim) recalc(m);
     note(m, '菊一文字：全ユニットの' + n + '階層目、計' + cnt + '枚を破壊');
-    return { consumed: cnt > 0 };
+    /* 自分と同じレベルは選べない＝このカード自身は消えないので consumed は立てない。
+     * 自分より下の階層を壊すと自分の位置が1つ下がるが、その補正は
+     * js/engine/turn.js の reverseAction（カードの実体を追って reversePtr を決める）が行う。 */
+    return { consumed: false };
   }
 
   function h132(m, ctx) {                                     // 殲滅：全てのユニットを場から取り除く（レベル5／戦闘中×）
@@ -778,9 +962,7 @@
   }
 
   function h135(m, ctx) {                                     // 雷撃：防御力550以下のユニット1つを無条件に破壊
-    recalc(m);
-    const pool = allUnitLanes(m).filter(function (i) { return m.board.lanes[i].def <= 550; });
-    const t = pick(m, pool);
+    const t = decide(m, ctx, 135);                            // BLITZ（防御力550以下）
     if (t == null) { note(m, '雷撃：対象が無い'); return; }
     const name = nameOf(m, m.board.lanes[t].unit);
     combatApi().destroy(m, t, { normalAttack: false });
@@ -835,18 +1017,28 @@
     return { consumed: true };
   }
 
-  function h138(m, ctx) {                                     // 潜入：他ユニットにチャンネルとして潜行する（レベル3）
+  /** 潜入：**このカードが付いているユニットが**、他のユニットの中へ潜り込む（詠唱Ｌｖ3）。
+   *
+   * ★2026-08-30 本人指定で効果を変えた。原作（および v0.16.29 まで）は
+   * 「**このカード自身**が他ユニットへ移る」だけで、盤面はほとんど動かず使い道が無かった。
+   * **ユニットごと隠す**カードにすると、狙われているユニットを攻撃の届かないところへ
+   * 逃がし、あとで招来(121)やリバース召還で出し直す、という筋が通る。
+   *
+   * 潜ったユニットに積んであったＣＨは一緒に失われる（本人判断。潜るのはユニット1枚だけ）。
+   * **破壊ではない**ので destroy() は通さない＝ＬＰダメージ・憑依・戦利品は発生しない。 */
+  function h138(m, ctx) {
     const ln = m.board.lanes[ctx.laneIndex];
     const idx = ctx.layer - 1;
     if (!ln || !ln.channels[idx] || ln.channels[idx].card !== 138) return;
-    const targets = allUnitLanes(m).filter(function (i) { return i !== ctx.laneIndex; });
-    const t = pick(m, targets);
-    if (t == null) { note(m, '潜入：潜行先が無い'); return; }
-    const self = dropChannelAt(m, ctx.laneIndex, idx);
-    self.up = false; self.revealed = false;
-    pushChannel(m, t, self);
+    if (ln.unit == null) { note(m, '潜入：潜るユニットが居ない'); return; }
+    const t = decide(m, ctx, 138);                            // FLOOD（空きのある他ユニット）
+    if (t == null) { note(m, '潜入：潜り込む先が無い'); return; }
+    const hider = ln.unit, lost = ln.channels.length - 1;
+    m.board.lanes[ctx.laneIndex] = S.emptyLane();              /* レーンごと空になる（破壊ではない） */
+    pushChannel(m, t, { card: hider, up: false, mine: ctx.caster === 'self', revealed: false });
     recalc(m);
-    note(m, '潜入：' + nameOf(m, m.board.lanes[t].unit) + ' へ潜行した');
+    note(m, '潜入：' + nameOf(m, hider) + ' が ' + nameOf(m, m.board.lanes[t].unit) + ' へ潜行した'
+      + (lost > 0 ? '（積んでいたＣＨ' + lost + '枚は失われた）' : ''));
     return { consumed: true };
   }
 
@@ -901,12 +1093,7 @@
     // 一方②の「防御力551〜1000のユニットしか対象と認識しない」は原作のまま残す
     // ——これは「防御力550以下は雷撃(135)の担当」という住み分けとして読めて、
     // 2枚の使い分けが生まれるので面白さに寄与する（§0-1の方針で採否を判断した）。
-    const enemy = other(ctx.caster);
-    recalc(m);
-    const pool = sideLanes(m, enemy).filter(function (i) {
-      const d = m.board.lanes[i].def; return d >= 551 && d <= 1000;
-    });
-    const t = pick(m, pool);
+    const t = decide(m, ctx, 141);                            // BLITZ（相手陣・防御力551〜1000）
     if (t == null) { note(m, '思念波：（原作バグ再現）対象が見つからず不発'); return; }
     const name = nameOf(m, m.board.lanes[t].unit);
     combatApi().destroy(m, t, { normalAttack: false });
@@ -971,10 +1158,7 @@
     // レーン3（物理インデックス2）だけ救済が機能しない。ここでは destroy() に normalAttack を
     // 渡すことで、レーン3のときだけ救済ゲートを迂回して同じ結果を再現する
     const bugBypass = ctx.laneIndex === 2;
-    const targets = allUnitLanes(m).filter(function (i) {
-      return i !== ctx.laneIndex && m.board.lanes[i].cap > m.board.lanes[i].count;
-    });
-    const dest = pick(m, targets);
+    const dest = decide(m, ctx, 148);                         // FLOOD（空きのある他ユニット）
     combatApi().destroy(m, ctx.laneIndex, { normalAttack: bugBypass });
     note(m, '妄執：自爆した' + (bugBypass ? '（原作バグ再現：レーン3は救済が効かない）' : ''));
     if (dest != null && m.board.lanes[dest] && m.board.lanes[dest].unit != null) {
@@ -1045,7 +1229,7 @@
   }
 
   const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED, resolvePending, autoResolve,
-    forcedChainStep, beginAim, endAim, strikeDoomed };
+    forcedChainStep, beginAim, endAim, strikeDoomed, targetsFor };
   global.CQMagic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

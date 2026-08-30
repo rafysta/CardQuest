@@ -293,9 +293,9 @@ function peekCandidates() {
 
 /** 対象選択を始める。始めたら true を返す（呼び出し側はそこで一旦抜ける）。 */
 function startPick(spec) {
-  if (!spec.targets.length) return false;
-  if (spec.kind === 'lane' && spec.targets.length <= 1) return false;   /* 選ぶ余地が無い */
-  if (spec.kind === 'ch' && spec.targets.length <= (spec.need || 1)) return false;
+  /* 選ぶ余地が無い（候補が必要数以下）なら選ばせない＝エンジンが自動で決める。
+   * 4種の型（lane / ch / layer / hand）すべて同じ判定でよい（M6.7 WP5）。 */
+  if (spec.targets.length <= (spec.need || 1)) return false;
   UI.pick = { card: spec.card, kind: spec.kind, need: spec.need || 1,
     targets: spec.targets, chosen: [], resume: spec.resume };
   UI.mode = 'pick-target';
@@ -311,7 +311,21 @@ const PICK_MSG = {
   109: '強制転回：ＣＨを裏返すユニットを選んでください',
   110: '閉門：ＣＨを閉じるユニットを選んでください',
   113: '透視：中身を見る相手の伏せ札を2枚選んでください',
-  137: '潜行爆弾：爆弾を仕掛ける相手のユニットを選んでください'
+  137: '潜行爆弾：爆弾を仕掛ける相手のユニットを選んでください',
+  /* M6.7 WP5（価格順）。候補の条件は magic.js の targetsFor が持っている */
+  126: '統合：ＣＨとして吸収するユニットを選んでください',
+  116: '解析：ＣＨの中身を全部のぞくユニットを選んでください',
+  125: '移送：ＣＨの移動先になるユニットを選んでください',
+  114: '暗殺：相手の手札から壊すモンスターを選んでください',
+  138: '潜入：潜り込む先のユニットを選んでください',
+  102: '侵食：自分の山札のカードで埋めるユニットを選んでください',
+  124: '凍結：硬直させるユニットを選んでください',
+  121: '招来：自分の場へ呼び出す潜行ユニットを選んでください',
+  141: '思念波：破壊するユニットを選んでください（防御力551〜1000）',
+  118: '押収：奪い取る裏向きのＣＨを選んでください',
+  148: '妄執：自爆して憑依する先のユニットを選んでください',
+  135: '雷撃：破壊するユニットを選んでください（防御力550以下）',
+  131: '菊一文字：破壊する階層を選んでください（その階層のカードを1枚押す）'
 };
 
 /* 開発用デッキ（screen-deck で組むもの）。**アンロックには一切関係なく全169種から組める**
@@ -1145,9 +1159,13 @@ function chHTML(i, k) {
   const closable = canFlipHere && ch.up;
   /* 憑依解除(101)などの発動で「破壊する対象を選ぶ」最中なら、選べるＣＨを光らせる
      （2026-08-24 本人の指定：対話的な対象選択） */
-  const pickable = UI.mode === 'pick-target' && UI.pick && UI.pick.kind === 'ch'
-    && UI.pick.targets.some((t) => t.lane === i && t.idx === k - 1)
-    && !UI.pick.chosen.some((t) => t.lane === i && t.idx === k - 1);
+  const pickable = UI.mode === 'pick-target' && UI.pick
+    && ((UI.pick.kind === 'ch'
+          && UI.pick.targets.some((t) => t.lane === i && t.idx === k - 1)
+          && !UI.pick.chosen.some((t) => t.lane === i && t.idx === k - 1))
+        /* 菊一文字(131)は「階層（レベル）」を選ぶ。その階層のカードを全部光らせ、
+           どれを押してもその階層が選ばれる（M6.7 WP5の4つ目の型） */
+        || (UI.pick.kind === 'layer' && UI.pick.targets.indexOf(k) >= 0));
   /* 複数選択（113透視）で既に選んだぶんは、選択済みとして別の色にする */
   const pickedCls = UI.mode === 'pick-target' && UI.pick && UI.pick.kind === 'ch'
     && UI.pick.chosen.some((t) => t.lane === i && t.idx === k - 1) ? 'picked' : '';
@@ -1629,11 +1647,30 @@ function panelPickTarget() {
   const p = UI.pick;
   if (!p) return paint('', '', true);
   const rest = p.need - p.chosen.length;
+  const ask = PICK_MSG[p.card] || '対象を選んでください';
+  /* 相手の手札から選ぶ型（114暗殺）。盤面には出ていないので、ここに並べて押させる。
+   * ——原作でもこのカードは「選んでいる間、相手の手札が全部見える」＝偵察になる。 */
+  if (p.kind === 'hand') {
+    const hand = M.players[handSide() === 'self' ? 'enemy' : 'self'].hand;
+    const cards = hand.map((id, i) => {
+      const c = CARD_BY_ID[id];
+      const ok = p.targets.indexOf(i) >= 0;
+      return `<div class="dp-card ${c.t} ${ok ? '' : 'dim'}" ${ok ? `data-act="pick-hand" data-i="${i}"` : ''}>
+          <div class="dp-art">${artInner(c, 3)}</div>
+          <div class="dp-nm">${c.n}</div>
+          <div class="dp-ef">${ok ? '押すと破壊' : TYPE_NAME[c.t] + 'は選べません'}</div>
+        </div>`;
+    }).join('');
+    return paint(miniCardHTML(CARD_BY_ID[p.card])
+      + askHTML(ask, '相手の手札がすべて見えています。モンスターだけが選べます。', 'warn')
+      + `<div class="dp-row">${cards}</div>`, '', true);
+  }
   const how = p.kind === 'lane'
     ? '光っているユニットを押すと、そのユニットが対象になります。'
-    : '光っているＣＨカードを押して選びます。' + (p.need > 1 ? 'あと' + rest + '枚。' : '');
-  return paint(miniCardHTML(CARD_BY_ID[p.card])
-    + askHTML(PICK_MSG[p.card] || '対象を選んでください', how, 'warn'), '', true);
+    : p.kind === 'layer'
+      ? '光っているカードを押すと、<b>その階層が全レーンで</b>対象になります。'
+      : '光っているＣＨカードを押して選びます。' + (p.need > 1 ? 'あと' + rest + '枚。' : '');
+  return paint(miniCardHTML(CARD_BY_ID[p.card]) + askHTML(ask, how, 'warn'), '', true);
 }
 
 /* --- 戦闘：オープンフェイズ ---
@@ -1891,41 +1928,25 @@ async function playForcedChain() {
   return true;
 }
 
-/** 開こうとしている階層が憑依解除(101)で、かつ自分にはその中身が見えている（＝自分の
- * カードなので事前に判る）とき、破壊対象を選ばせるモードに入る。呼べる状況でなければ
- * false を返す（呼び出し元はそのまま通常どおり開く処理を続ける）。
- * （2026-08-24 本人の指定：起動すると破壊するカードを1つ選んで破壊する） */
+/** 開こうとしているカードが「対象を選ぶ」型なら、選ばせるモードに入る。
+ * 呼べる状況でなければ false を返す（呼び出し元はそのまま通常どおり開く処理を続ける）。
+ *
+ * ★M6.7 WP5：候補の列挙はすべてエンジン（CQMagic.targetsFor）に移した。
+ * ここは「候補を貰って光らせ、選ばせて choice を返す」だけ＝**カードが増えても
+ * この関数に書き足す必要が無い**。対応するカードを増やすときは magic.js の
+ * targetsFor に足し、下の PICK_MSG に案内文を1行足せばよい。
+ *
+ * 中身を知らないカードは選ばせない（伏せたまま開いたら、従来どおりエンジンが自動で選ぶ
+ * ——そのときも憑依解除なら赤枠→粉々の演出が入る）。 */
 function tryStartDestroyPick(laneIdx, layer, ch, resume) {
   if (!ch || !chKnown(ch)) return false;               /* 中身を知らないカードは選ばせない */
-  const id = ch.card;
-  if (id === 101) {
-    return startPick({ card: 101, kind: 'ch',
-      targets: destroyCandidates(laneIdx, layer - 1), resume: resume });
-  }
-  /* M6.7 WP1：強制開放・強制転回・閉門は「対象のユニット1体」を選ばせる。 */
-  if (id === 108 || id === 109 || id === 110) {
-    return startPick({ card: id, kind: 'lane',
-      targets: forcedLaneCandidates(laneIdx, id === 110), resume: resume });
-  }
-  /* M6.7 WP3：潜行爆弾は「爆弾を仕掛ける相手ユニット」を選ばせる。
-   * エンジン側 h137 と同じ条件（相手陣・自分の居るレーン以外・ＣＨに空きがある）。 */
-  if (id === 137) {
-    const foe = humanSide() === 'self' ? 'enemy' : 'self';
-    const targets = [];
-    M.board.lanes.forEach((ln, i) => {
-      if (ln.unit == null || i === laneIdx) return;
-      if (CQState.sideOf(i) !== foe) return;
-      if (ln.count >= ln.cap) return;
-      targets.push(i);
-    });
-    return startPick({ card: 137, kind: 'lane', targets: targets, resume: resume });
-  }
-  /* M6.7 WP1：透視は相手の伏せ札を2枚選ばせる（複数選択の初出）。 */
-  if (id === 113) {
-    return startPick({ card: 113, kind: 'ch', need: 2,
-      targets: peekCandidates(), resume: resume });
-  }
-  return false;
+  if (typeof CQMagic.targetsFor !== 'function') return false;
+  const spec = CQMagic.targetsFor(M, ch.card, {
+    laneIndex: laneIdx, layer: layer, caster: ch.mine ? 'self' : 'enemy'
+  });
+  if (!spec) return false;
+  return startPick({ card: ch.card, kind: spec.kind, need: spec.need,
+    targets: spec.targets, resume: resume });
 }
 
 /* ================= 生贄召還の確認（v0.15.3） =================
@@ -2021,6 +2042,15 @@ function panelAct(act, data) {
   switch (act) {
     /* M6.7 WP3：引いた札から選ぶ。予見はカードそのもの、口寄せは2つのボタン。
      * どれも情報パネルの中にあるので、盤面のクリック経路ではなくここへ来る。 */
+    /* M6.7 WP5：暗殺(114)は相手の手札から選ぶ。情報パネルの中なのでここへ来る。 */
+    case 'pick-hand': {
+      const p = UI.pick;
+      if (!p) return;
+      const resume = p.resume;
+      UI.mode = 'idle'; UI.pick = null;
+      if (resume) resume({ handIndex: +data.i });
+      return;
+    }
     case 'draw-pick': return resolveDrawPick({ pick: +data.i });
     case 'draw-keep': return resolveDrawPick({ keep: true });
     case 'draw-skip': return resolveDrawPick({ keep: false });
@@ -2192,6 +2222,14 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
       const i = el.dataset.lane !== undefined ? +el.dataset.lane : null;
       if (i != null && p.targets.indexOf(i) >= 0) return finish({ lane: i });
       flash('光っているユニットから対象を選んでください');
+      return;
+    }
+    if (p.kind === 'layer') {
+      /* 菊一文字(131)：押したカードの「階層」が対象。どのレーンのものでもよい。 */
+      if (el.classList.contains('pick') && el.dataset.layer !== undefined) {
+        return finish({ layer: +el.dataset.layer });
+      }
+      flash('光っているカードから階層を選んでください');
       return;
     }
     if (el.classList.contains('pick') && el.dataset.lane !== undefined && el.dataset.layer !== undefined) {

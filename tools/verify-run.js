@@ -706,6 +706,145 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await wait(() => page.$('.dbg-menu'));
   await dbgClick('盤面をセットして戦う');
   await wait(() => page.evaluate(() => document.getElementById('screen-board').classList.contains('on')));
+
+  /* --- M6.7 WP5：対象選択ＵＩの4つの型 ---------------------------------------
+   * 候補はすべてエンジン（CQMagic.targetsFor）が持つ。ここで見るのは
+   * 「その候補が画面に光り、押すと選んだとおりに効く」ことだけ。 */
+  const startBoard = async (spec) => {
+    await page.$eval('#bs-json', (el, v) => { el.value = v; }, JSON.stringify(spec));
+    await page.click('[data-bs="json-load"]');
+    await page.waitForTimeout(150);
+    await page.click('[data-bs="start"]');
+    await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+    await page.waitForTimeout(1100);
+  };
+  const reopenBoard = async () => {
+    await page.click('#dbg-btn');
+    await wait(() => page.$('.dbg-menu'));
+    await dbgClick('盤面をセットして戦う');
+    await wait(() => page.evaluate(() => document.getElementById('screen-board').classList.contains('on')));
+  };
+  const BASE = { first: 'self', active: 'self', phase: 'main', win: 'lp', hand: { self: [], enemy: [] } };
+
+  /* ① lane 型：124凍結。ＣＨを持つ他ユニットだけが候補（CE0216 EJECT） */
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 8, ch: [{ id: 124, up: false, by: 'self' }] },
+    '1': { unit: 8, ch: [] },
+    '3': { unit: 8, ch: [{ id: 151, up: false, by: 'enemy' }] },
+    '4': { unit: 8, ch: [{ id: 151, up: false, by: 'enemy' }] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(250);
+  ok('★対象を選ぶ魔法は候補のレーンだけが光る（124凍結・EJECT）',
+    (await page.$$eval('.lane.pick-lane', (els) => els.map((e) => e.dataset.lane).join(','))) === '3,4',
+    await page.$$eval('.lane.pick-lane', (els) => els.map((e) => e.dataset.lane).join(',')));
+  await shot('wp5-pick-lane');
+  await page.click('.lane[data-lane="4"] .card.unit', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(700);
+  ok('選んだレーンにだけ効果が出る',
+    await page.evaluate(() => M.board.lanes[4].stiff === true && M.board.lanes[3].stiff === false));
+
+  /* ② ch 型：118押収。裏向きのＣＨだけが候補（CE0356 DASH） */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 13, ch: [{ id: 118, up: false, by: 'self' }] },
+    '3': { unit: 13, ch: [{ id: 151, up: false, by: 'enemy' }, { id: 152, up: true, by: 'enemy' },
+                          { id: 153, up: false, by: 'enemy' }] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(250);
+  ok('★裏向きのＣＨだけが光る（118押収・DASH）',
+    (await page.$$eval('.card.ch.pick', (els) => els.map((e) => e.dataset.lane + ':' + e.dataset.layer).join(','))) === '3:1,3:3',
+    await page.$$eval('.card.ch.pick', (els) => els.map((e) => e.dataset.lane + ':' + e.dataset.layer).join(',')));
+  await page.click('.card.ch[data-lane="3"][data-layer="3"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(700);
+  ok('選んだＣＨが自分のレーンへ移る',
+    await page.evaluate(() => M.board.lanes[0].channels.some((c) => c.card === 153)
+      && !M.board.lanes[3].channels.some((c) => c.card === 153)));
+
+  /* ③ layer 型：131菊一文字。階層（レベル）を選ぶ。自分と同じ階層は選べない */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 13, ch: [{ id: 151, up: false, by: 'self' }, { id: 131, up: false, by: 'self' },
+                          { id: 152, up: false, by: 'self' }] },
+    '3': { unit: 13, ch: [{ id: 153, up: false, by: 'enemy' }, { id: 154, up: false, by: 'enemy' },
+                          { id: 155, up: false, by: 'enemy' }] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="2"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(250);
+  ok('★階層を選ぶ型：候補の階層が全レーンで光る（131菊一文字）',
+    await page.evaluate(() => UI.pick && UI.pick.kind === 'layer'
+      && JSON.stringify(UI.pick.targets) === '[1,3]'),
+    JSON.stringify(await page.evaluate(() => UI.pick && UI.pick.targets)));
+  await shot('wp5-pick-layer');
+  await page.click('.card.ch[data-lane="3"][data-layer="3"]', { position: { x: 8, y: 8 } });
+  /* ★2026-08-30 本人指定：菊一文字で壊れるカードも赤枠→粉々で見せること。 */
+  let kikuDoomed = false, kikuShards = false;
+  for (let n = 0; n < 40 && !(kikuDoomed && kikuShards); n++) {
+    await page.waitForTimeout(60);
+    if (await page.$('.card.ch.doomed')) kikuDoomed = true;
+    if (await page.$('.cq-shard-box')) kikuShards = true;
+  }
+  ok('★菊一文字で壊れるカードが赤い枠で見える', kikuDoomed);
+  ok('★そのあと粉々に割れる演出で消える', kikuShards);
+  await page.waitForTimeout(900);
+  ok('選んだ階層が敵味方まとめて消える（菊一文字は自壊しない）',
+    await page.evaluate(() => M.board.lanes[0].channels.length === 2
+      && M.board.lanes[3].channels.length === 2
+      && M.board.lanes[0].channels.some((c) => c.card === 131)),
+    JSON.stringify(await page.evaluate(() => M.board.lanes.map((l) => l.channels.map((c) => c.card)))));
+
+  /* ④ hand 型：114暗殺。相手の手札が全部見え、モンスターだけ選べる */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, {
+    hand: { self: [], enemy: [8, 101, 13, 151] },
+    lanes: { '0': { unit: 8, ch: [{ id: 114, up: false, by: 'self' }] }, '3': { unit: 8, ch: [] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(300);
+  ok('★手札から選ぶ型：相手の手札が全部見える（114暗殺）',
+    (await page.$$('#info-fix .dp-card')).length === 4,
+    String((await page.$$('#info-fix .dp-card')).length) + '枚');
+  ok('モンスター以外は選べないことが見て分かる',
+    (await page.$$('#info-fix .dp-card.dim')).length === 2,
+    String((await page.$$('#info-fix .dp-card.dim')).length) + '枚が沈んでいる');
+  await shot('wp5-pick-hand');
+  await page.click('#info-fix .dp-card[data-act="pick-hand"][data-i="2"]');
+  await page.waitForTimeout(700);
+  ok('選んだ手札のモンスターが壊れる',
+    await page.evaluate(() => M.players.enemy.hand.join(',') === '8,101,151'),
+    await page.evaluate(() => M.players.enemy.hand.join(',')));
+
+  /* --- 2026-08-30 本人の実機フィードバック ------------------------------------ */
+  /* ⑤ 招来(121)：引き出したユニットの「開：」能力が発動すること */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 42, ch: [{ id: 121, up: false, by: 'self' }] },
+    '2': { unit: 8, ch: [{ id: 1, up: false, by: 'self' }] },     /* 潜行しているミルファイター */
+    '3': { unit: 8, ch: [{ id: 151, up: true, by: 'enemy' }] } } }));   /* 閉じられる表向きＣＨ */
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(700);
+  ok('★招来で引き出したユニットの「開：」能力が発動する（2026-08-30 本人指定）',
+    await page.evaluate(() => M.board.lanes[1].unit === 1
+      && M.log.some((l) => l.indexOf('クローズ：') === 0)),
+    JSON.stringify(await page.evaluate(() => M.log.slice(-3))));
+
+  /* ⑥ 潜入(138)：このカードが付いているユニットごと、他ユニットの中へ潜る */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 8, ch: [{ id: 151, up: false, by: 'self' }, { id: 151, up: false, by: 'self' },
+                         { id: 138, up: false, by: 'self' }] },
+    '1': { unit: 13, ch: [] }, '3': { unit: 13, ch: [] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="3"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(250);
+  await page.click('.lane[data-lane="1"] .card.unit', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(900);
+  ok('★潜入はユニットごと他ユニットの中へ潜る（2026-08-30 本人指定）',
+    await page.evaluate(() => M.board.lanes[0].unit === null
+      && M.board.lanes[1].channels.length === 1
+      && M.board.lanes[1].channels[0].card === 8
+      && M.board.lanes[1].channels[0].up === false),
+    JSON.stringify(await page.evaluate(() => M.log.slice(-2))));
+  ok('潜行は破壊ではないのでＬＰは減らない',
+    await page.evaluate(() => M.players.self.lp === 10));
+  await shot('wp5-sennyu');
+  await reopenBoard();
   /* ストーリー側のセーブに触れていないこと（フリーバトルと同じ扱い） */
   ok('盤面セットアップはストーリーのセーブを壊さない',
     await page.evaluate(() => !!localStorage.getItem('cq_meta')));

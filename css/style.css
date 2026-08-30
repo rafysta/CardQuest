@@ -502,6 +502,11 @@ img.curse-art{
 .dp-card{flex:0 0 92px;background:#1a2338;border:2px solid var(--line);border-radius:10px;
   padding:6px;cursor:pointer;transition:border-color .12s,transform .12s}
 .dp-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+/* 暗殺(114)で相手の手札を並べるとき、選べないカード（魔法・技能）は沈める（M6.7 WP5）。
+ * :hover より後に置くこと——同じ強さなので、前に書くと押せるように見えてしまう。 */
+.dp-card.dim,.dp-card.dim:hover{
+  opacity:.42;filter:grayscale(.55);cursor:default;border-color:var(--line);transform:none;
+}
 .dp-art{aspect-ratio:1/1;border-radius:6px;overflow:hidden;background:#0f1626;
   display:flex;align-items:center;justify-content:center}
 .dp-art img{width:100%;height:100%;object-fit:cover;filter:brightness(1.15)}

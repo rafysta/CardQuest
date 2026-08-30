@@ -521,7 +521,16 @@
       }
       const after = m.board.lanes[laneIndex];
       if (!after || after.unit == null) break;         // 呪爆・妄執等でユニットごと消えた（そのレーンはもう無い）
-      after.reversePtr = n;
+      /* いま開いたカードの位置は、効果によってずれることがある
+       * ——菊一文字(131)で**自分より下の階層**が消えると、このカードは1つ下へ落ちる
+       * （原作 EV0271 の `V28x -= 1` に相当する補正）。カードの実体を探して位置を取り直す。
+       * consumed（カード自身が場から消えた）ときは従来どおり n のままでよい。 */
+      if (!consumed) {
+        const at = after.channels.indexOf(ch);
+        after.reversePtr = at >= 0 ? at + 1 : n;
+      } else {
+        after.reversePtr = n;
+      }
       if (checkResult(m)) break;
       if (m.timeWarp) break;                           // 時の渦：以降の階層は開かない（M6.7 WP3）
     }

@@ -1447,9 +1447,12 @@ t('119 鎮静：場にある全てのＣＨをクローズする（戦闘中×�
 
 section('M4 v0.13: 魔法121〜130');
 t('121 招来：潜行しているユニット1つを自分の場に召還する', () => {
+  /* M6.7 WP5：対象は**他レーン**の潜行ユニット（自分の乗っているレーンは選べない・§1-4）。
+   * 中身が分かっているもの（自分が置いた／既知）だけが候補。 */
   const m = mkBattleBoard();
-  m.board.lanes[0] = lane(8, [down(1), down(121)]);
-  CQTurn.reverseAction(m, 0, [2]);
+  m.board.lanes[0] = lane(8, [down(121)]);
+  m.board.lanes[3] = lane(8, [down(1, { mine: true })]);
+  CQTurn.reverseAction(m, 0, [1]);
   const summoned = m.board.lanes[1].unit === 1 || m.board.lanes[2].unit === 1;
   eq(summoned, true, '潜行ユニットが空きレーンに召還される');
 });
@@ -1487,10 +1490,12 @@ t('123 発症：配置されたレベルと同数のＬＰを失う', () => {
   CQTurn.reverseAction(m, 0, [3]);
   eq(m.players.self.lp, lpBefore - 3, '3階層目で3点のＬＰダメージ');
 });
-t('124 凍結：場にあるユニット1体を硬直させる（戦闘中×）', () => {
+t('124 凍結：ＣＨを持つ他ユニット1体を硬直させる（戦闘中×）', () => {
+  /* M6.7 WP5：対象確認は CE0216 EJECT（05_magic.md §1-3）＝
+   * **ＣＨを1枚以上持つ他ユニット**。ＣＨの無い裸のユニットは凍らせられない。 */
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(124)]);
-  m.board.lanes[1] = lane(8, []);
+  m.board.lanes[1] = lane(8, [down(151)]);
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.log.some((l) => l.indexOf('凍結：') === 0 && l.indexOf('対象が無い') < 0), true, '硬直させる効果が発動する');
 });
@@ -1587,10 +1592,13 @@ t('134 呪念：オープンさせたマスターのＬＰ5点破壊（レベル
   eq(m.players.self.lp, lpBefore - 5, 'オープンした側（自分）がＬＰ5点失う');
 });
 t('135 雷撃：防御力550以下のユニット1つを無条件に破壊する', () => {
+  /* M6.7 WP5：**自分の乗っているレーンは選べない**（§1-4・原作の教習でも明示）。 */
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(135)]);
+  m.board.lanes[3] = lane(8, []);
   CQTurn.reverseAction(m, 0, [1]);
-  eq(m.board.lanes[0].unit, null, '対象条件を満たすユニットが破壊される');
+  eq(m.board.lanes[3].unit, null, '対象条件を満たすユニットが破壊される');
+  eq(m.board.lanes[0].unit, 8, '自分の乗っているレーンは巻き込まれない');
 });
 t('137 潜行爆弾：相手のユニットに爆弾を仕掛ける（M6.7 判断14で本人案に変更）', () => {
   const m = mkBattleBoard();
@@ -1635,13 +1643,39 @@ t('137 潜行爆弾：強制開放で開かせて爆発させられる（108と�
   CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
   eq(m.board.lanes[3].unit, null, '強制開放で開かれた爆弾が爆発した');
 });
-t('138 潜入：レベル3で他ユニットにチャンネルとして潜行する', () => {
+t('138 潜入：このカードが付いているユニットごと、他ユニットの中へ潜り込む（詠唱Ｌｖ3）', () => {
+  /* ★2026-08-30 本人指定で効果を変更した。以前は「このカード自身」が移るだけで
+   * 盤面がほとんど動かなかった。いまは**ユニットごと隠す**（積んでいたＣＨは失われる）。 */
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(151), down(151), down(138)]);
-  m.board.lanes[1] = lane(8, []);
+  m.board.lanes[1] = lane(13, []);
   CQTurn.reverseAction(m, 0, [3]);
-  eq(m.board.lanes[0].channels.some((c) => c.card === 138), false, '元のレーンから消える');
-  eq(m.board.lanes[1].channels.some((c) => c.card === 138), true, '別のユニットへ潜行する');
+  eq(m.board.lanes[0].unit, null, '潜ったユニットのレーンは空になる');
+  eq(m.board.lanes[0].channels.length, 0, '積んでいたＣＨも一緒に消える');
+  eq(m.board.lanes[1].channels.map((c) => c.card), [8], 'ユニットが裏向きのＣＨとして潜り込む');
+  eq(m.board.lanes[1].channels[0].up, false, '裏向き＝潜行している');
+  eq(m.players.self.lp, 10, '破壊ではないのでＬＰは減らない');
+});
+
+t('138 潜入：潜ったユニットは招来(121)やリバース召還で出し直せる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(138)]);
+  m.board.lanes[1] = lane(13, []);
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[1].channels.map((c) => c.card), [8], '潜っている');
+  /* 別レーンから招来で引き出す */
+  m.board.lanes[2] = lane(13, [down(121)]);
+  CQTurn.reverseAction(m, 2, [1]);
+  eq(m.board.lanes[0].unit, 8, '空きレーンへ召還し直せる');
+});
+
+t('138 潜入：ＣＨに空きが無いユニットには潜り込めない（FLOOD）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(138)]);   /* 詠唱Ｌｖ3なので第3層に置く */
+  m.board.lanes[1] = lane(70, [down(151), down(151)]);   /* ポルターガイストはＣＨ2＝満杯 */
+  CQTurn.reverseAction(m, 0, [3]);
+  eq(m.board.lanes[0].unit, 8, '潜れないので、そのまま場に残る');
+  eq(m.log.some((l) => l.indexOf('潜入：潜り込む先が無い') === 0), true, '不発の記録が残る');
 });
 t('139 爆雷：敵マスターのＬＰを3点減らす（戦闘中×）', () => {
   const m = mkBattleBoard();
@@ -4649,6 +4683,222 @@ t('強制リバース連鎖の予約は今までどおり動く（m.forcedAim �
   eq(m.board.lanes[0].channels.length, 1, 'まだ元凶は場にある（赤枠の段階）');
   CQMagic.forcedChainStep(m);                        /* strike：実際に取り除く */
   eq(m.board.lanes[0].channels.length, 0, '取り除かれた');
+});
+
+
+/* ================= M6.7 WP5: 対象の候補（targetsFor） =================
+ * 候補の列挙をエンジンへ切り出した（ＵＩ・ＡＩ・テストが同じものを見る）。
+ * 条件の正は原作解析『05_magic.md』§1-3「対象確認ルーチン」の表。 */
+section('M6.7 WP5: 対象の候補（targetsFor）');
+
+/** 自陣0の第1階層にそのカードが置いてある前提の ctx。 */
+function tf(m, id, o) {
+  return CQMagic.targetsFor(m, id, Object.assign({ laneIndex: 0, layer: 1, caster: 'self' }, o || {}));
+}
+
+t('自分の乗っているレーンは選べない（§1-4・原作の教習でも明示）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(135)]);
+  m.board.lanes[3] = lane(8, []);
+  eq(tf(m, 135).targets, [3], '自陣0は候補に入らない');
+});
+
+t('EJECT：ＣＨを1枚以上持つ他ユニット（116解析・124凍結）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(116)]);
+  m.board.lanes[1] = lane(8, []);              /* ＣＨ無し＝対象外 */
+  m.board.lanes[3] = lane(8, [down(151)]);
+  eq(tf(m, 116).targets, [3], '解析');
+  eq(tf(m, 124).targets, [3], '凍結');
+  m.board.lanes[3].stiff = true;
+  eq(tf(m, 124).targets, [], '凍結は既に硬直しているユニットを選べない');
+});
+
+t('FLOOD：ＣＨに空きのある他ユニット（102侵食・125移送・138潜入・148妄執）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(102)]);
+  m.board.lanes[1] = lane(70, [down(151), down(151)]);   /* ポルターガイストはＣＨ2＝満杯 */
+  m.board.lanes[3] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  [102, 125, 138, 148].forEach((id) => {
+    eq(tf(m, id).targets, [3], String(id) + '：満杯のレーンは候補にならない');
+  });
+});
+
+t('BLITZ：防御力で候補が決まる（135雷撃・141思念波）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(135)]);
+  m.board.lanes[3] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  const def = m.board.lanes[3].def;
+  eq(tf(m, 135).targets.length, def <= 550 ? 1 : 0, '雷撃は550以下（実測 def=' + def + '）');
+  eq(tf(m, 141).targets.length, (def >= 551 && def <= 1000) ? 1 : 0, '思念波は551〜1000');
+});
+
+t('DASH：裏向きのＣＨ（118押収）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(118)]);
+  m.board.lanes[3] = lane(8, [down(151), up(152)]);
+  const r = tf(m, 118);
+  eq(r.kind, 'ch', 'ＣＨを選ぶ型');
+  eq(r.targets, [{ lane: 3, idx: 0 }], '表向きは対象外・自分のレーンも対象外');
+});
+
+t('126統合：ＣＨの付いていない他ユニットだけ', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(126)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  m.board.lanes[3] = lane(8, []);
+  eq(tf(m, 126).targets, [3], 'ＣＨが付いていると吸収できない');
+});
+
+t('121招来：中身の分かっている潜行ユニットだけ選べる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(121)]);
+  m.board.lanes[3] = lane(8, [down(1, { mine: false }), down(2, { mine: true })]);
+  eq(tf(m, 121).targets, [{ lane: 3, idx: 1 }], '相手が置いた未知の札は選べない');
+  m.board.lanes[3].channels[0].revealed = true;          /* 透視・解析で既知になった */
+  eq(tf(m, 121).targets.length, 2, '既知になれば選べる');
+});
+
+t('114暗殺：相手の手札のモンスターだけが候補（選択中は手札が全部見える）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(114)]);
+  m.players.enemy.hand = [101, 8, 151, 13];
+  const r = tf(m, 114);
+  eq(r.kind, 'hand', '手札から選ぶ型');
+  eq(r.targets, [1, 3], 'モンスターの位置だけ');
+});
+
+t('131菊一文字：階層（レベル）を選ぶ — 4つ目の型', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(131), down(151)]);
+  m.board.lanes[3] = lane(13, [down(151), down(151), down(151), down(151)]);
+  const r = tf(m, 131, { layer: 2 });
+  eq(r.kind, 'layer', '階層を選ぶ型');
+  eq(r.targets, [1, 3, 4], 'ＣＨが1枚でもある階層が候補（自分と同じ第2層は選べない）');
+});
+
+t('131菊一文字：自分と同じレベルは選べない＝自壊しない（原作 EV0271）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(131), down(152)]);
+  m.board.lanes[3] = lane(13, [down(153), down(154), down(155)]);
+  CQTurn.reverseAction(m, 0, [2], { choice: { layer: 2 } });   /* 自分と同じ階層は候補外 */
+  eq(m.board.lanes[0].channels.map((c) => c.card).indexOf(131) >= 0, true, '菊一文字は残っている');
+});
+
+t('131菊一文字：自分より下の階層を壊すと、リバースの位置が正しくずれる', () => {
+  /* 原作 EV0271 の `V28x -= 1`。ここを直さないと、下へ落ちたカードの上の階層が
+   * 「もう開いた」ことになって開けなくなる。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(131), down(152), down(153)]);
+  m.board.lanes[3] = lane(13, [down(154)]);
+  CQTurn.reverseAction(m, 0, [2], { cont: true, choice: { layer: 1 } });
+  eq(m.board.lanes[0].channels.map((c) => c.card), [131, 152, 153], '第1層が消えて全体が下がる');
+  eq(m.board.lanes[0].reversePtr, 1, '菊一文字はいま第1層なので、リバースの位置も1');
+  const nxt = CQTurn.reverseAction(m, 0, [2], { cont: true });
+  eq(nxt.ok, true, '続けて上の階層を開ける（位置がずれていれば開けない）');
+});
+
+t('★選んだ対象がそのまま使われる（ctx.choice）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(124)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq([m.board.lanes[1].stiff, m.board.lanes[3].stiff], [false, true], '選んだレーンだけが硬直する');
+});
+
+t('★選ばなければ従来どおり乱数で決まる（ＡＩ・シミュレータは無改修）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(124)]);
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].stiff, true, '候補が1つならそこへ');
+});
+
+t('★候補に無いものを指定しても無視される（不正な choice で盤面が壊れない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(124)]);
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 5 } });   /* レーン5は空き */
+  eq(m.board.lanes[3].stiff, true, '候補の中から選び直される');
+});
+
+t('131菊一文字：選んだ階層が全レーンで破壊される', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(131), down(152)]);
+  m.board.lanes[3] = lane(13, [down(153), down(154), down(155)]);
+  CQTurn.reverseAction(m, 0, [2], { choice: { layer: 3 } });
+  eq(m.board.lanes[0].channels.map((c) => c.card), [151, 131], '自陣の3階層目が消える');
+  eq(m.board.lanes[3].channels.map((c) => c.card), [153, 154], '敵陣の3階層目も消える');
+});
+
+t('戦闘中は当事者の2レーンだけが母数（§1-3）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(116)]);
+  m.board.lanes[1] = lane(8, [down(151)]);
+  m.board.lanes[3] = lane(8, [down(151)]);
+  eq(tf(m, 116).targets, [1, 3], '戦闘外なら両方');
+  m.combat = { attacker: 0, defender: 3 };
+  eq(tf(m, 116).targets, [3], '戦闘中は当事者だけ');
+});
+
+
+/* ================= 2026-08-30 本人の実機フィードバック =================
+ * 招来(121)で引き出したユニットの「開：」能力・菊一文字(131)の破壊演出。 */
+section('実機フィードバック（招来の開：能力／菊一文字の破壊予約）');
+
+t('★121招来：引き出したユニットの「開：」能力が発動する（本人指定）', () => {
+  /* ミルファイター(1) は「開：クローズ×１」。相手の表向きＣＨが1枚閉じるはず。
+   * 原作は招来だけ別経路でＣＨオープン処理を通らず、発動しなかった。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(42, [down(121)]);
+  m.board.lanes[2] = lane(8, [down(1, { mine: true })]);   /* 潜行しているミルファイター */
+  m.board.lanes[3] = lane(8, [up(151)]);                   /* 閉じられる表向きＣＨ */
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].unit, 1, 'ミルファイターが召還された');
+  eq(m.board.lanes[3].channels[0].up, false, '開：クローズ×１が発動して表のＣＨが閉じた');
+});
+
+t('121招来：硬直しているユニットに潜んでいても引き出せる（本人の想定どおり）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(42, [down(121)]);
+  m.board.lanes[2] = lane(8, [down(1, { mine: true })]);
+  m.board.lanes[2].stiff = true;                          /* 潜行先が行動済みでも関係ない */
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[1].unit, 1, '硬直に関係なく召還できる');
+  eq(m.board.lanes[2].channels.length, 0, '潜んでいた場所からは消える');
+});
+
+t('★131菊一文字：予約すると赤枠で見せてから消せる（憑依解除と同じ流れ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(131), down(152)]);
+  m.board.lanes[3] = lane(13, [down(153), down(154), down(155)]);
+  CQMagic.beginAim(m);
+  CQTurn.reverseAction(m, 0, [2], { choice: { layer: 3 } });
+  const aimed = CQMagic.endAim(m);
+  eq(aimed.length, 2, '2枚が予約された');
+  eq(m.board.lanes[0].channels.length, 3, 'まだ場に残っている＝赤枠で見せられる');
+  eq(m.board.lanes[0].channels[2].doomed, true, 'doomed の印が付く');
+  eq(CQMagic.strikeDoomed(m), 2, '2枚取り除いた');
+  eq(m.board.lanes[0].channels.map((c) => c.card), [151, 131], '第3層が消えた');
+  eq(m.board.lanes[3].channels.map((c) => c.card), [153, 154], '敵陣も同じ');
+});
+
+t('131菊一文字：予約したまま下の階層を壊しても、リバースの位置がずれない', () => {
+  /* 予約のときは strikeDoomed が位置を戻す（即座に消すときは reverseAction が戻す）。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(151), down(131), down(152), down(153)]);
+  m.board.lanes[3] = lane(13, [down(154)]);
+  CQMagic.beginAim(m);
+  CQTurn.reverseAction(m, 0, [2], { cont: true, choice: { layer: 1 } });
+  CQMagic.endAim(m);
+  eq(m.board.lanes[0].reversePtr, 2, '消す前は第2層のまま');
+  CQMagic.strikeDoomed(m);
+  eq(m.board.lanes[0].channels.map((c) => c.card), [131, 152, 153], '第1層が消えて全体が下がる');
+  eq(m.board.lanes[0].reversePtr, 1, '菊一文字はいま第1層なので位置も1へ戻る');
+  eq(CQTurn.reverseAction(m, 0, [2], { cont: true }).ok, true, '続けて上の階層を開ける');
 });
 
 /* ================= 結果 ================= */
