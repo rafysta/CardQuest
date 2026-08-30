@@ -1276,20 +1276,21 @@ t('103 渇望：敵の山札から自分（このレーン）のＣＨを埋め�
   m.board.lanes[0] = lane(8, [down(103)]);
   const enemyDeckBefore = m.players.enemy.deckCount;
   CQTurn.reverseAction(m, 0, [1]);
-  eq(m.board.lanes[0].channels.length, 4, '自分のＣＨが満杯になる');
+  /* 満杯まで埋めたあと、使い終わった103自身が消える（2026-08-31 の新原則）＝3枚残る */
+  eq(m.board.lanes[0].channels.length, 3, '満杯まで埋まり、103自身は消える');
   eq(m.players.enemy.deckCount, enemyDeckBefore - 3, '敵の山札を3枚消費（103自身が既に1枚使用済み）');
 });
 t('105 歪曲：ＣＨ位置を上下反転する', () => {
   const m = mkBattleBoard();
   m.board.lanes[1] = lane(8, [down(151), down(105)]);
   CQTurn.reverseAction(m, 1, [2]);
-  eq(m.board.lanes[1].channels.map(c => c.card), [105, 151], 'ＣＨの並びが反転');
+  eq(m.board.lanes[1].channels.map(c => c.card), [151], '並びが反転し、使い終わった105は消える');
 });
 t('105 歪曲：原作バグ再現（レーン1・ＣＨ6枚のとき最上段が消滅する）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(13, [down(151), down(151), down(151), down(151), down(151), down(105)]);
   CQTurn.reverseAction(m, 0, [6]);
-  eq(m.board.lanes[0].channels.length, 5, '6枚が反転後5枚に減る（原作バグ再現）');
+  eq(m.board.lanes[0].channels.length, 4, '6枚が反転後5枚に減り（原作バグ再現）、105自身も消える');
 });
 t('107 逃走：ＣＨ数4以下ならユニットを手札に戻す（戦闘中×）', () => {
   const m = mkBattleBoard();
@@ -1433,7 +1434,8 @@ t('118 押収：裏状態のＣＨ１つをこのレーンへ奪う', () => {
   m.board.lanes[0] = lane(8, [down(118)]);
   m.board.lanes[1] = lane(8, [down(151)]);
   CQTurn.reverseAction(m, 0, [1]);
-  eq(m.board.lanes[0].channels.length, 2, '奪ったＣＨがこのレーンに追加される');
+  /* 奪った1枚が乗り、使い終わった118自身は消える＝残るのは奪った1枚だけ */
+  eq(m.board.lanes[0].channels.map((c) => c.card), [151], '奪ったＣＨだけが残る');
   eq(m.board.lanes[1].channels.length, 0, '奪われた側は減る');
 });
 t('119 鎮静：場にある全てのＣＨをクローズする（戦闘中×）', () => {
@@ -1504,7 +1506,7 @@ t('125 移送：最も高いレベルにあるＣＨを他ユニットへ移動�
   m.board.lanes[0] = lane(13, [down(151), down(125)]);
   m.board.lanes[1] = lane(8, []);
   CQTurn.reverseAction(m, 0, [2]);
-  eq(m.board.lanes[0].channels.length, 1, '元のレーンから1枚減る');
+  eq(m.board.lanes[0].channels.length, 0, '1枚移り、使い終わった125自身も消える');
   eq(m.board.lanes[1].channels.map((c) => c.card), [151], '移動先に付加される');
 });
 t('126 統合：ＣＨ付加の無いユニット1体をＣＨとして吸収する', () => {
@@ -1553,7 +1555,7 @@ t('131 菊一文字：全ユニットの同レベルのＣＨを全て破壊す�
   m.board.lanes[0] = lane(8, [down(151), down(131)]);
   m.board.lanes[1] = lane(8, [down(151), down(151)]);
   CQTurn.reverseAction(m, 0, [2]);
-  eq(m.board.lanes[0].channels.length, 1, '自レーンの2階層目（131自身）も破壊される');
+  eq(m.board.lanes[0].channels.length, 0, '第1層が壊れ、使い終わった131自身も消える');
   eq(m.board.lanes[1].channels.length, 1, '他レーンの2階層目も破壊される');
 });
 t('132 殲滅：レベル5で場の全ユニットを除去する（原作バグ再現：ＬＰダメージ等は発生しない）', () => {
@@ -1864,7 +1866,7 @@ t('連唱(174)があると魔法が2回発動する', () => {
   const before = m.board.lanes[0].channels.length + m.board.lanes[1].channels.length;
   CQTurn.reverseAction(m, 0, [2]);
   const after = m.board.lanes[0].channels.length + m.board.lanes[1].channels.length;
-  eq(after, before - 2, '2回発動して2枚破壊される');
+  eq(after, before - 3, '2回発動して2枚破壊し、使い終わった101自身も消える');
 });
 t('魔道書(186)は魔法の発動レベルも下げる', () => {
   const m = mkBattleBoard();
@@ -4105,8 +4107,9 @@ t('連鎖の中断：連鎖中に開いた133呪爆が「仕掛けた側」を�
   CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
   eq(m.board.lanes[0].unit, null, '仕掛けた側のユニットが呪爆で破壊される（跳ね返り）');
   eq(m.lastForcedChain.steps.length, 1, '1枚目を開いた時点で止まる');
-  eq(m.board.lanes[3].channels[1].up, false, '2枚目は開かれない');
-  eq(m.board.lanes[3].channels[2].up, false, '3枚目も開かれない');
+  /* 開いた呪爆は連鎖の終わりに消える（2026-08-31）。残るのは開かれなかった151と152。 */
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.up]), [[151, false], [152, false]],
+    '2枚目・3枚目は裏のまま残り、開いた呪爆は消えている');
 });
 
 t('連鎖の中断：仕掛けたユニットが死ぬと、残りのＣＨは開かない', () => {
@@ -4116,7 +4119,10 @@ t('連鎖の中断：仕掛けたユニットが死ぬと、残りのＣＨは�
   m.board.lanes[3].channels.forEach((c) => { c.mine = false; });
   CQTurn.reverseAction(m, 0, [2], { choice: { lane: 3 } });
   eq(m.lastForcedChain.aborted != null, true, '中断として記録される');
-  eq(m.board.lanes[3].channels.filter((c) => c.up).length, 1, '開いたのは1枚だけ');
+  /* 開いたのは呪爆(133)の1枚だけ——ただし連鎖が開いた魔法は連鎖の終わりに消える
+   * （2026-08-31）ので、残っているのは「開かれなかった3枚（すべて裏）」になる。 */
+  eq(m.lastForcedChain.steps.length, 1, '開いたのは1枚だけ');
+  eq(m.board.lanes[3].channels.filter((c) => c.up).length, 0, '開いた呪爆は消え、残りは裏のまま');
 });
 
 t('連鎖：中断が無ければ最上段まで開き切る', () => {
@@ -4225,7 +4231,11 @@ t('連鎖：自分が仕掛けた側の憑依解除は元凶を狙わない（�
   m.board.lanes[3] = lane(70, [down(101, { mine: true }), down(172, { mine: true })]);  // 仕掛けた側の札
   m.board.lanes[4] = lane(8, [down(153, { mine: false })]);
   CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
-  eq(m.board.lanes[0].channels.some((c) => c.card === 108), true, '元凶は残る');
+  /* 連鎖の途中で元凶が壊されていない＝中断せず最後まで走ったことを見る。
+   * （連鎖の終わりには役目を終えた108自身も消えるようになったので、
+   *   「残っているか」ではなく「中断しなかったか」で確かめる。2026-08-31） */
+  eq(m.lastForcedChain.aborted == null, true, '自分の憑依解除は連鎖を止めない');
+  eq(m.log.some((l) => l.indexOf('連鎖の元凶を狙う') >= 0), false, '元凶を狙う挙動が出ていない');
 });
 
 t('連鎖：ＵＩ用の steps は「レーン・階層・カード・表裏」を処理順に持つ', () => {
@@ -4634,10 +4644,12 @@ t('予約すると、消さずに doomed の印を付けて残す（赤枠で見
   CQMagic.beginAim(m);
   CQTurn.reverseAction(m, 0, [1]);
   const aimed = CQMagic.endAim(m);
-  eq(aimed.length, 1, '1枚が予約された');
+  /* 対象の1枚に加え、使い終わった101自身も予約される（2026-08-31 の新原則）＝2枚 */
+  eq(aimed.length, 2, '対象＋自分自身の2枚が予約された');
   eq([aimed[0].lane, aimed[0].idx, aimed[0].card], [3, 0, 153], '狙った場所とカード');
   eq(m.board.lanes[3].channels.length, 1, 'まだ場に残っている＝赤枠で見せられる');
   eq(m.board.lanes[3].channels[0].doomed, true, 'doomed の印が付く');
+  eq(m.board.lanes[0].channels[0].doomed, true, '使い終わった101にも印が付く');
 });
 
 t('strikeDoomed で実際に取り除かれる（ln.count も揃う）', () => {
@@ -4645,9 +4657,10 @@ t('strikeDoomed で実際に取り除かれる（ln.count も揃う）', () => {
   CQMagic.beginAim(m);
   CQTurn.reverseAction(m, 0, [1]);
   CQMagic.endAim(m);
-  eq(CQMagic.strikeDoomed(m), 1, '1枚取り除いた');
+  eq(CQMagic.strikeDoomed(m), 2, '対象と使い終わった101の2枚を取り除いた');
   eq(m.board.lanes[3].channels.length, 0, '場から消えた');
   eq(m.board.lanes[3].count, 0, 'ln.count も合っている');
+  eq(m.board.lanes[0].channels.length, 0, '101自身も消えた');
   eq(CQMagic.strikeDoomed(m), 0, '二度目は何も起きない');
 });
 
@@ -4779,12 +4792,18 @@ t('131菊一文字：階層（レベル）を選ぶ — 4つ目の型', () => {
   eq(r.targets, [1, 3, 4], 'ＣＨが1枚でもある階層が候補（自分と同じ第2層は選べない）');
 });
 
-t('131菊一文字：自分と同じレベルは選べない＝自壊しない（原作 EV0271）', () => {
+t('131菊一文字：自分と同じレベルは選べない（原作 EV0271）。ただし使い終わると自壊する', () => {
+  /* 対象として自分の階層は選べない（第2層は候補外）が、2026-08-31 の新原則で
+   * 使い終わった魔法は消えるので、効果の後に131自身も消える。 */
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(13, [down(151), down(131), down(152)]);
   m.board.lanes[3] = lane(13, [down(153), down(154), down(155)]);
   CQTurn.reverseAction(m, 0, [2], { choice: { layer: 2 } });   /* 自分と同じ階層は候補外 */
-  eq(m.board.lanes[0].channels.map((c) => c.card).indexOf(131) >= 0, true, '菊一文字は残っている');
+  /* 不正な指定（自分の階層）は無視され、候補（第1層か第3層）から選び直される。
+   * どちらが選ばれても第2層のカード（敵陣の154）は無事で、131は使い終わって消える。 */
+  eq(m.board.lanes[3].channels.some((c) => c.card === 154), true, '自分と同じ第2層は壊されない');
+  eq(m.board.lanes[3].channels.length, 2, '壊れたのは1階層ぶんだけ');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 131), false, '使い終わった131は消える');
 });
 
 t('131菊一文字：自分より下の階層を壊すと、リバースの位置が正しくずれる', () => {
@@ -4794,10 +4813,12 @@ t('131菊一文字：自分より下の階層を壊すと、リバースの位�
   m.board.lanes[0] = lane(13, [down(151), down(131), down(152), down(153)]);
   m.board.lanes[3] = lane(13, [down(154)]);
   CQTurn.reverseAction(m, 0, [2], { cont: true, choice: { layer: 1 } });
-  eq(m.board.lanes[0].channels.map((c) => c.card), [131, 152, 153], '第1層が消えて全体が下がる');
-  eq(m.board.lanes[0].reversePtr, 1, '菊一文字はいま第1層なので、リバースの位置も1');
-  const nxt = CQTurn.reverseAction(m, 0, [2], { cont: true });
-  eq(nxt.ok, true, '続けて上の階層を開ける（位置がずれていれば開けない）');
+  /* 第1層が壊れ、使い終わった131自身も消える（2026-08-31 の新原則）。
+   * 通過済みのカードが残らないので、リバースの位置は0へ戻る。 */
+  eq(m.board.lanes[0].channels.map((c) => c.card), [152, 153], '第1層と131自身が消えて全体が下がる');
+  eq(m.board.lanes[0].reversePtr, 0, '通過済みが残っていないので位置は0');
+  const nxt = CQTurn.reverseAction(m, 0, [1], { cont: true });
+  eq(nxt.ok, true, '下りてきたカードを続けて開ける（位置がずれていれば開けない）');
 });
 
 t('★選んだ対象がそのまま使われる（ctx.choice）', () => {
@@ -4830,7 +4851,8 @@ t('131菊一文字：選んだ階層が全レーンで破壊される', () => {
   m.board.lanes[0] = lane(13, [down(151), down(131), down(152)]);
   m.board.lanes[3] = lane(13, [down(153), down(154), down(155)]);
   CQTurn.reverseAction(m, 0, [2], { choice: { layer: 3 } });
-  eq(m.board.lanes[0].channels.map((c) => c.card), [151, 131], '自陣の3階層目が消える');
+  /* 第3層に加え、使い終わった131自身も消える（2026-08-31 の新原則） */
+  eq(m.board.lanes[0].channels.map((c) => c.card), [151], '自陣は3階層目と131自身が消える');
   eq(m.board.lanes[3].channels.map((c) => c.card), [153, 154], '敵陣の3階層目も消える');
 });
 
@@ -4878,16 +4900,19 @@ t('★131菊一文字：予約すると赤枠で見せてから消せる（憑�
   CQMagic.beginAim(m);
   CQTurn.reverseAction(m, 0, [2], { choice: { layer: 3 } });
   const aimed = CQMagic.endAim(m);
-  eq(aimed.length, 2, '2枚が予約された');
+  /* 第3層の2枚＋使い終わった131自身＝3枚（2026-08-31 の新原則） */
+  eq(aimed.length, 3, '対象2枚と131自身が予約された');
   eq(m.board.lanes[0].channels.length, 3, 'まだ場に残っている＝赤枠で見せられる');
   eq(m.board.lanes[0].channels[2].doomed, true, 'doomed の印が付く');
-  eq(CQMagic.strikeDoomed(m), 2, '2枚取り除いた');
-  eq(m.board.lanes[0].channels.map((c) => c.card), [151, 131], '第3層が消えた');
+  eq(CQMagic.strikeDoomed(m), 3, '3枚取り除いた');
+  eq(m.board.lanes[0].channels.map((c) => c.card), [151], '第3層と131自身が消えた');
   eq(m.board.lanes[3].channels.map((c) => c.card), [153, 154], '敵陣も同じ');
 });
 
 t('131菊一文字：予約したまま下の階層を壊しても、リバースの位置がずれない', () => {
-  /* 予約のときは strikeDoomed が位置を戻す（即座に消すときは reverseAction が戻す）。 */
+  /* 予約のときは strikeDoomed が位置を戻す（即座に消すときは reverseAction が戻す）。
+   * 2026-08-31 の新原則で使い終わった131自身も消えるので、第1層＋131の2枚が消え、
+   * 位置は0（まだ何も開いていない扱い）まで戻る。 */
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(13, [down(151), down(131), down(152), down(153)]);
   m.board.lanes[3] = lane(13, [down(154)]);
@@ -4896,9 +4921,9 @@ t('131菊一文字：予約したまま下の階層を壊しても、リバー�
   CQMagic.endAim(m);
   eq(m.board.lanes[0].reversePtr, 2, '消す前は第2層のまま');
   CQMagic.strikeDoomed(m);
-  eq(m.board.lanes[0].channels.map((c) => c.card), [131, 152, 153], '第1層が消えて全体が下がる');
-  eq(m.board.lanes[0].reversePtr, 1, '菊一文字はいま第1層なので位置も1へ戻る');
-  eq(CQTurn.reverseAction(m, 0, [2], { cont: true }).ok, true, '続けて上の階層を開ける');
+  eq(m.board.lanes[0].channels.map((c) => c.card), [152, 153], '第1層と131自身が消えて全体が下がる');
+  eq(m.board.lanes[0].reversePtr, 0, '通過済みのカードが残っていないので位置は0へ戻る');
+  eq(CQTurn.reverseAction(m, 0, [1], { cont: true }).ok, true, '下りてきたカードを続けて開ける');
 });
 
 
@@ -5137,6 +5162,264 @@ t('深さの条件を満たせば、これまでどおり「開：」能力も�
   CQStats.recalc(m.board, OPT);
   eq(CQMagic.targetsFor(m, 121, { laneIndex: 0, layer: 3, caster: 'self' }).targets, [],
     '第3層ではＬｖ4のレッドレックスは呼べない');
+});
+
+
+/* ================= 強制開放でめくれたユニットは分離召還される =================
+ * 2026-08-31 本人指摘の修正。原作§1-8「開いた瞬間 EV0182 が走り」＝ＣＨオープン処理の
+ * 一式（「開：」能力・リバース召還を含む）。v0.16.33 までは魔法しか発動せず、
+ * めくられたユニットが表のままＣＨに残っていた。 */
+section('強制開放：めくれたユニットの分離召還');
+
+t('★敵に潜ませた自分のユニットが、強制開放で分離して自分の場へ戻る', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(13, [down(153, { mine: false }), down(8, { mine: true })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[1].unit, 8, '自分の場の空きレーンへ召還される');
+  eq(m.board.lanes[1].stiff, false, '硬直していない＝このターンに攻撃できる（本人の狙う戦略）');
+  eq(m.board.lanes[3].channels.map((c) => c.card), [153], '敵のＣＨからは剥がれる');
+});
+
+t('★戦略の通し：分離したユニットで、防御の剥がれた敵をこのターンに攻撃できる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(70, [down(153, { mine: false }), down(8, { mine: true })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[1].unit, 8, '分離召還');
+  const atk = CQCombat.declareAttack(m, 1, 3);
+  eq(atk.ok, true, 'そのまま攻撃を宣言できる');
+});
+
+t('相手が置いたユニットは相手の場へ戻る（置いた側の陣に召還される）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(13, [down(8, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[4].unit, 8, '敵陣の空きレーンへ');
+});
+
+t('融合(162)が付いたホストからは分離しない（既存規則がそのまま効く）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(13, [up(162, { mine: false }), down(8, { mine: true })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.some((c) => c.card === 8 && c.up), true, '表のままＣＨに留まる');
+  eq(m.board.lanes[1].unit, null, '召還されない');
+});
+
+t('抵抗(178)が上に付いていれば、めくれたユニットは破壊される（既存規則）', () => {
+  /* 抵抗＝このＣＨより上の階層でユニットカードが表になると破壊。ドラコニアン(42)で代用。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(42, [down(8, { mine: true })]);   /* ドラコニアン：付加ユニット破壊 */
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[1].unit, null, '召還されない');
+  eq(m.board.lanes[3].channels.length, 0, '破壊されて消える');
+});
+
+t('★分離で階層が詰まっても、連鎖のカーソルはずれない（上のカードもちゃんとめくれる）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(13, [down(8, { mine: true }), down(153, { mine: false }), down(154, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[1].unit, 8, '第1層のユニットが分離');
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.up]), [[153, true], [154, true]],
+    '下がってきた153も、その上の154も飛ばされずに開いている');
+});
+
+t('めくれたユニットの「開：」能力も出る（EV0182の一式が走る）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(13, [down(1, { mine: true })]);   /* ミルファイター：開：クローズ×１ */
+  m.board.lanes[2] = lane(8, [up(151)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[1].unit, 1, '分離召還される');
+  eq(m.board.lanes[2].channels[0].up, false, 'クローズ×１が発動している');
+});
+
+t('カース（91〜99）は今までどおり表のまま残る（何も起きない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(108)]);
+  m.board.lanes[3] = lane(13, [down(93, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.up]), [[93, true]], 'カースは表で残る');
+});
+
+
+/* ================= 強制開放：連鎖が開いた魔法は連鎖の終わりに消える =================
+ * 2026-08-31 本人指摘。原作§1-8⑤も連鎖終了時に EV0049 魔法消去を呼ぶ。
+ * 障壁(117)のような「表の間だけ効く」魔法が、ターン終わりまで居座らない。 */
+section('強制開放：連鎖が開いた魔法の消滅');
+
+t('★本人の盤面そのまま：障壁は連鎖中だけ効き、終わると消えて防御力が戻る', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(1, [down(108)]);
+  m.board.lanes[3] = lane(1, [down(180, { mine: false }), down(5, { mine: true }),
+                              down(117, { mine: false }), down(180, { mine: false }),
+                              down(101, { mine: false })]);
+  CQStats.recalc(m.board, OPT);
+  const defBefore = m.board.lanes[3].def;
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.some((c) => c.card === 117), false, '障壁は連鎖の終わりに消える');
+  /* 連鎖後に残るのは表の空白2枚だけ（5は分離・117と101は消滅）。
+   * 裏のＣＨ1枚＝防御+100 だった分も剥がれるので、素の500に戻る。 */
+  eq(m.board.lanes[3].def, 500, '＋３００が残っていない（素の防御力だけになる）');
+  eq(defBefore > 500, true, '（前提の確認）連鎖前は裏ＣＨぶんの上乗せがあった');
+  eq(m.board.lanes[1].unit, 5, '途中のベヒーモス(5)は分離召還されている');
+});
+
+t('★役目を終えた強制開放カード自身も消える（原作§1-8⑤のマーカー消去）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [down(153, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[0].channels.some((c) => c.card === 108), false, '108は連鎖の終わりに消える');
+});
+
+t('連鎖が開いた技能（151〜）は消えない（通常の魔法消去と同じ線引き）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [down(153, { mine: false }), down(152, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.up]), [[153, true], [152, true]],
+    '技能は表のまま残る');
+});
+
+t('連鎖と無関係に開いてあった魔法は巻き込まれない（消すのは連鎖が触った分だけ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[1] = lane(8, [up(117, { mine: true })]);      /* 事前に開いてある自分の障壁 */
+  m.board.lanes[3] = lane(8, [down(153, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[1].channels.some((c) => c.card === 117 && c.up), true,
+    '別レーンの障壁はターン終わりまで残る（従来どおり）');
+});
+
+t('停滞(151)のレーンでは連鎖が開いた魔法も消えない（通常の魔法消去と同じ例外）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [up(151, { mine: false }), down(117, { mine: false })]);
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.board.lanes[3].channels.some((c) => c.card === 117 && c.up), true, '停滞の下では残る');
+});
+
+t('中断された連鎖でも、そこまでに開いた魔法は消える', () => {
+  /* 憑依解除が元凶を壊して中断 → それまでに開いた117も後始末される */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(70, [down(101, { mine: false }), down(172, { mine: false })]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 } });
+  eq(m.lastForcedChain.aborted != null, true, '連鎖は中断されている');
+  eq(m.board.lanes[3].channels.some((c) => c.card === 101 && c.up), false,
+    '開いた憑依解除は消えている');
+  eq(m.board.lanes[3].channels.some((c) => c.card === 172), true, '開かれなかった反射は残る');
+});
+
+
+/* ================= 魔法は使い終わると破壊される（2026-08-31 本人指定） =================
+ * 原則：効果を発揮した後（不発でも）、魔法カードは消える。
+ * 例外：①持続型7種（104爆殺・106増幅・117障壁・120抑制・136遮蔽・143偽装・145鏡身）
+ *       ——「表で居ること」が効果そのものなので残り、従来どおりターン終わりに消える
+ *       ②停滞(151)のレーン ③連鎖中（連鎖の終わりにまとめて消える） */
+section('魔法は使い終わると破壊される');
+
+t('★一発型の魔法は、発動した後すぐ消える（139爆雷）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(139)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, 0, '効果を出してすぐ消える');
+});
+
+t('★不発でも消える：詠唱レベル不足（原作§116「カードは消滅する」と同じ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(116)]);                 /* 解析＝詠唱Ｌｖ4を第1層に */
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, 0, 'レベル不足で不発になり、カードも消える');
+  eq(m.board.lanes[3].channels[0].revealed, false, '効果は出ていない');
+});
+
+t('★不発でも消える：戦闘中に開いた戦闘不可の魔法', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(124)]);                 /* 凍結＝戦闘中× */
+  m.board.lanes[3] = lane(8, []);
+  m.combat = { attacker: 0, defender: 3, opener: 'attacker' };
+  m.board.lanes[0].channels[0].up = true;                  /* 戦闘オープンで表になった状態 */
+  CQMagic.onMagicOpen(m, 0, 1, 124, {});
+  eq(m.board.lanes[0].channels.length, 0, '不発のカードも消える');
+  eq(m.board.lanes[3].stiff, false, '効果は出ていない');
+});
+
+t('★持続型（117障壁）は残る——「表で居ること」が効果だから', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(117)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.map((c) => [c.card, c.up]), [[117, true]], '表のまま残る');
+  CQStats.recalc(m.board, OPT);
+  eq(m.board.lanes[0].def >= 450 + 300, true, '＋３００が効いている');
+  /* 従来どおりターン終わりの魔法消去で消える */
+  CQTurn.endTurn(m);
+  eq(m.board.lanes[0].channels.length, 0, 'ターン終わりには消える');
+});
+
+t('★停滞(151)のレーンでは、使い終わった魔法も場に留まる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151), down(139)]);
+  CQStats.recalc(m.board, OPT);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq(m.board.lanes[0].channels.some((c) => c.card === 139 && c.up), true, '停滞の下では残る');
+});
+
+t('★予見(122)は選択が済んでから消える（対話の途中では消えない）', () => {
+  const m = newMatch(321, { selfDeck: mkDeck(30, [8, 41, 70, 101, 153]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(122)]);
+  CQTurn.reverseAction(m, 0, [1], { interactive: true });
+  eq(m.pendingChoice.kind, 'foresee', '選択待ちになる');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 122), true, '選んでいる間はまだ場にある');
+  CQMagic.resolvePending(m, { pick: 0 });
+  eq(m.board.lanes[0].channels.length, 0, '選び終えると消える');
+});
+
+t('★口寄せ(146)も採用を決めてから消える', () => {
+  const m = newMatch(321, { selfDeck: mkDeck(30, [8, 41, 70, 101, 153]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(151), down(151), down(146)]);
+  CQTurn.reverseAction(m, 0, [3], { interactive: true });
+  eq(m.pendingChoice.kind, 'summon', '選択待ちになる');
+  CQMagic.resolvePending(m, { keep: false });
+  eq(m.board.lanes[0].channels.some((c) => c.card === 146), true, '引き直しの間はまだ場にある');
+  CQMagic.resolvePending(m, { keep: true });
+  eq(m.board.lanes[0].channels.some((c) => c.card === 146), false, '採用を決めると消える');
+});
+
+t('★連鎖のマーカー（108）は開いた瞬間には消えない（消すと連鎖が止められなくなる）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(108)]);
+  m.board.lanes[3] = lane(8, [down(151), down(152)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3 }, interactive: true });
+  eq(m.board.lanes[0].channels.some((c) => c.card === 108), true, '連鎖の間はマーカーとして残る');
+  while (m.forcedChain) CQMagic.forcedChainStep(m);
+  /* interactive の連鎖では、終了時の破壊は印（doomed）で止まり、ＵＩが演出の後に
+   * strikeDoomed で消す（playForcedChain がやっていることと同じ）。 */
+  eq(m.board.lanes[0].channels[0].doomed, true, '連鎖の終わりに破壊の印が付く');
+  CQMagic.strikeDoomed(m);
+  eq(m.board.lanes[0].channels.length, 0, '演出の後に消える');
+});
+
+t('★ＵＩ経路（予約）でも同じ：使い終わった魔法に赤枠の印が付いてから消える', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(139)]);
+  CQMagic.beginAim(m);
+  CQTurn.reverseAction(m, 0, [1]);
+  const aimed = CQMagic.endAim(m);
+  eq(aimed.some((a) => a.card === 139), true, '使い終わった139が予約される');
+  eq(m.board.lanes[0].channels.some((c) => c.card === 139), true, 'まだ場にある＝赤枠で見せられる');
+  CQMagic.strikeDoomed(m);
+  eq(m.board.lanes[0].channels.length, 0, '演出の後に消える');
 });
 
 /* ================= 結果 ================= */

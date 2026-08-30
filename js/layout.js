@@ -1908,14 +1908,14 @@ async function playForcedChain() {
   if (!M.forcedChain) return false;
   const kindName = CARD_BY_ID[M.forcedChain.kind].n;
   flash(kindName + '：下から順に1枚ずつ開きます');
-  let guard = 0;
+  let guard = 0, lastDone = null;
   while (M.forcedChain && guard++ < 64) {
     /* このビートでユニットごと吹き飛んだレーンを見つけるための控え。
      * 呪爆(133)は「連鎖を仕掛けた側」のユニットを壊す＝**強制開放のカードも一緒に消える**。
      * 今までここは何の演出も無く、カードが黙って消えていた（2026-08-30 本人指摘）。 */
     const unitsBefore = M.board.lanes.map((ln) => ln.unit);
     const r = CQMagic.forcedChainStep(M);
-    if (r.done) break;
+    if (r.done) { lastDone = r; break; }
     const wiped = [];
     M.board.lanes.forEach((ln, i) => { if (unitsBefore[i] != null && ln.unit !== unitsBefore[i]) wiped.push(i); });
     /* ★描き直す前に演出する（古いＤＯＭにまだカードが残っているうちに割る） */
@@ -1943,6 +1943,14 @@ async function playForcedChain() {
             `#board .card.ch[data-lane="${a.lane}"][data-layer="${a.idx + 1}"]`);
           return el ? shatterEffect(el, { height: chVisibleHeight(el) }) : Promise.resolve();
         }));
+      } else if (r.summoned && r.summoned.lane != null) {
+        /* めくられたユニットが分離してリバース召還された（2026-08-31 本人指摘の修正）。
+         * 出てきたユニットに召還と同じ入場アニメーションを付け、読める間を置く。 */
+        renderAll();
+        const el = document.querySelector(`#board .card.unit[data-lane="${r.summoned.lane}"]`);
+        if (el) el.classList.add('an-in');
+        flash('リバース召還：' + (CARD_BY_ID[r.summoned.card] ? CARD_BY_ID[r.summoned.card].n : ''));
+        await wait(700);
       } else {
         renderAll();
         await wait(260);
@@ -1955,6 +1963,19 @@ async function playForcedChain() {
     await wait(200);
   }
   UI.chainNow = null;
+  /* ★連鎖の終わり：この連鎖が表にした魔法と、役目を終えた強制開放カード自身が消える
+   * （2026-08-31 本人指摘。原作§1-8⑤の魔法消去）。エンジンは doomed の印を付けて
+   * 待っているので、赤枠→粉々を見せてから strikeDoomed で実際に取り除く。 */
+  if (lastDone && lastDone.expired && lastDone.expired.length) {
+    renderAll();                                   /* 赤枠が出る */
+    await wait(AIM_SHOW_MS);
+    await Promise.all(lastDone.expired.map((a) => {
+      const el = document.querySelector(
+        `#board .card.ch[data-lane="${a.lane}"][data-layer="${a.idx + 1}"]`);
+      return el ? shatterEffect(el, { height: chVisibleHeight(el) }) : Promise.resolve();
+    }));
+    CQMagic.strikeDoomed(M);
+  }
   const fc = M.lastForcedChain;
   if (fc) {
     flash(kindName + '：' + fc.steps.length + '枚'
@@ -2081,10 +2102,15 @@ function doPending() {
  * （pending が残る）。その場合は画面を描き直して、同じ画面で選び続ける。 */
 function resolveDrawPick(action) {
   markLog(); markFx();
+  /* 選択が済むと、使い終わった予見・口寄せのカードが破壊される（2026-08-31 の新原則）。
+   * 他の破壊と同じく赤枠→粉々で見せてから消す。 */
+  CQMagic.beginAim(M);
   const r = CQMagic.resolvePending(M, action);
-  if (!r || !r.ok) { flash((r && r.reason) || 'その操作はできません'); return renderAll(); }
-  if (M.pendingChoice) return renderAll();          /* まだ選択が続く（口寄せの引き直し） */
+  const aimed = CQMagic.endAim(M);
+  if (!r || !r.ok) { CQMagic.strikeDoomed(M); flash((r && r.reason) || 'その操作はできません'); return renderAll(); }
+  if (M.pendingChoice) { CQMagic.strikeDoomed(M); return renderAll(); }   /* まだ選択が続く（口寄せの引き直し） */
   UI.mode = 'idle';
+  if (aimed.length) { UI.mode = 'chain'; playAimedDestroy(aimed).then(() => { UI.mode = 'idle'; step(); }); return; }
   step();
 }
 

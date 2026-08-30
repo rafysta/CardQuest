@@ -114,6 +114,10 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     localStorage.removeItem('cq_run');
   }, STARTER);
   await page.reload();
+  /* Service Worker が初回登録の直後に controllerchange → 自前の location.reload() を
+   * 走らせることがあり（js/update.js）、その最中に要素を探すと
+   * 「Execution context was destroyed」等で落ちる。タブが見えるまで粘って待つ。 */
+  await wait(() => page.$('.tab[data-screen="screen-run"]').catch(() => null));
   await page.waitForTimeout(500);
 
   // --- 1) ラン画面が最初から開く。エリア選択 ---
@@ -679,6 +683,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     if (await page.$('.cq-shard-box')) sawShards = true;
   }
   ok('★憑依解除の対象は赤い枠で見せてから破壊される', sawDoomed);
+
   ok('★憑依解除の対象は粉々に割れる演出で消える', sawShards);
   await page.waitForTimeout(2500);                        /* 連鎖の演出が終わるまで待つ */
   /* 戦闘中にもう一度開くと、いまの盤面が初期値として出る（試す→直す→また試す） */
@@ -803,10 +808,12 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('★菊一文字で壊れるカードが赤い枠で見える', kikuDoomed);
   ok('★そのあと粉々に割れる演出で消える', kikuShards);
   await page.waitForTimeout(900);
-  ok('選んだ階層が敵味方まとめて消える（菊一文字は自壊しない）',
-    await page.evaluate(() => M.board.lanes[0].channels.length === 2
+  /* ★2026-08-31 原則変更：魔法は使い終わると破壊されるので、菊一文字自身も消える。 */
+  ok('選んだ階層が敵味方まとめて消える（菊一文字も使い終わって消える）',
+    await page.evaluate(() => M.board.lanes[0].channels.length === 1
+      && M.board.lanes[0].channels[0].card === 151
       && M.board.lanes[3].channels.length === 2
-      && M.board.lanes[0].channels.some((c) => c.card === 131)),
+      && !M.board.lanes.some((l) => l.channels.some((c) => c.card === 131))),
     JSON.stringify(await page.evaluate(() => M.board.lanes.map((l) => l.channels.map((c) => c.card)))));
 
   /* ④ hand 型：114暗殺。相手の手札が全部見え、モンスターだけ選べる */
@@ -873,6 +880,77 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await shot('shourai-depth');
   await page.click('.card.ch[data-lane="4"][data-layer="1"]', { position: { x: 8, y: 8 } });
   await page.waitForTimeout(700);
+
+  /* ★強制開放でめくれた**ユニット**は分離召還される（2026-08-31 本人指摘の修正。
+   * 原作§1-8：開いた瞬間ＣＨオープン処理の一式が走る）。潜ませた自分のユニットが
+   * 自分の場へ戻り、硬直していない＝そのターンに攻撃へ回せること。 */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 13, ch: [{ id: 108, up: false, by: 'self' }] },
+    '3': { unit: 70, ch: [{ id: 153, up: false, by: 'enemy' }, { id: 8, up: false, by: 'self' }] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(200);
+  await page.click('.card.ch[data-lane="3"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  for (let n = 0; n < 80; n++) {                     /* 連鎖の演出が終わるまで */
+    await page.waitForTimeout(120);
+    if (await page.evaluate(() => UI.mode === 'idle')) break;
+  }
+  ok('★強制開放でめくれた自分のユニットが、分離して自分の場へ戻る',
+    await page.evaluate(() => M.board.lanes[1].unit === 8
+      && !M.board.lanes[3].channels.some((c) => c.card === 8)),
+    JSON.stringify(await page.evaluate(() => M.log.slice(-3))));
+  ok('★戻ったユニットは硬直していない（そのターンに攻撃できる）',
+    await page.evaluate(() => M.board.lanes[1].stiff === false
+      && CQCombat.declareAttack(M, 1, 3).ok === true));
+  await shot('force-open-separate');
+  await page.waitForTimeout(800);
+
+  /* ★連鎖が表にした魔法は、連鎖の終わりに消える（2026-08-31 本人指摘。原作§1-8⑤）。
+   * 障壁(117)の＋３００が居座らないこと、役目を終えた108自身も消えることを見る。 */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 1, ch: [{ id: 108, up: false, by: 'self' }] },
+    '3': { unit: 1, ch: [{ id: 117, up: false, by: 'enemy' }, { id: 153, up: false, by: 'enemy' }] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(200);
+  await page.click('.card.ch[data-lane="3"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  for (let n = 0; n < 90; n++) {
+    await page.waitForTimeout(120);
+    if (await page.evaluate(() => UI.mode === 'idle' && !M.forcedChain)) break;
+  }
+  ok('★連鎖が開いた魔法（障壁）は連鎖の終わりに消えている（＋３００の数値検証は tests/run.js 側）',
+    await page.evaluate(() => !M.board.lanes[3].channels.some((c) => c.card === 117)),
+    JSON.stringify(await page.evaluate(() => ({ def: M.board.lanes[3].def,
+      ch: M.board.lanes[3].channels.map((c) => c.card) }))));
+  ok('★役目を終えた強制開放カード自身も消える',
+    await page.evaluate(() => !M.board.lanes[0].channels.some((c) => c.card === 108)));
+
+  /* ★魔法は使い終わると破壊される（2026-08-31 本人指定）。一発型（139爆雷）は
+   * 発動後すぐ赤枠→粉々で消え、持続型（117障壁）は表のまま残ること。 */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 8, ch: [{ id: 139, up: false, by: 'self' }, { id: 117, up: false, by: 'self' }] },
+    '3': { unit: 8, ch: [] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  let spentDoomed = false, spentShards = false;
+  for (let n = 0; n < 40 && !(spentDoomed && spentShards); n++) {
+    await page.waitForTimeout(80);
+    if (await page.$('.card.ch.doomed')) spentDoomed = true;
+    if (await page.$('.cq-shard-box')) spentShards = true;
+  }
+  await page.waitForTimeout(900);
+  ok('★使い終わった魔法（139爆雷）は赤枠→粉々で消える',
+    spentDoomed && spentShards
+      && await page.evaluate(() => !M.board.lanes[0].channels.some((c) => c.card === 139)),
+    JSON.stringify({ d: spentDoomed, s: spentShards }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(1000);
+  ok('★持続型の魔法（117障壁）は表のまま残る（「表で居ること」が効果だから）',
+    await page.evaluate(() => M.board.lanes[0].channels.some((c) => c.card === 117 && c.up)
+      && M.board.lanes[0].def >= 750),
+    JSON.stringify(await page.evaluate(() => ({ ch: M.board.lanes[0].channels.map((c) => c.card),
+      def: M.board.lanes[0].def }))));
+  await shot('spent-magic');
 
   /* ⑥ 潜入(138)：このカードが付いているユニットごと、他ユニットの中へ潜る */
   await reopenBoard();

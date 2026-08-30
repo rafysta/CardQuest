@@ -506,6 +506,10 @@
       if (!cur || cur.unit == null || n < 1 || n > cur.channels.length) break;   // ユニットが消えていたら打ち切り
       const ch = cur.channels[n - 1];
       if (!ch) break;
+      /* このカードの「下に居たカードの実体」を控える。効果で何枚消えても、
+       * 残っているこの実体の数＝通過済みの位置、として reversePtr を正確に出せる
+       * （階層番号は カード消滅でずれるが、実体は嘘をつかない。2026-08-31）。 */
+      const belowSet = cur.channels.slice(0, n - 1);
       ch.up = !ch.up;
       let consumed = false;
       if (ch.up) {
@@ -521,15 +525,21 @@
       }
       const after = m.board.lanes[laneIndex];
       if (!after || after.unit == null) break;         // 呪爆・妄執等でユニットごと消えた（そのレーンはもう無い）
-      /* いま開いたカードの位置は、効果によってずれることがある
-       * ——菊一文字(131)で**自分より下の階層**が消えると、このカードは1つ下へ落ちる
-       * （原作 EV0271 の `V28x -= 1` に相当する補正）。カードの実体を探して位置を取り直す。
-       * consumed（カード自身が場から消えた）ときは従来どおり n のままでよい。 */
-      if (!consumed) {
-        const at = after.channels.indexOf(ch);
-        after.reversePtr = at >= 0 ? at + 1 : n;
+      /* リバース位置の取り直し（2026-08-31 に実体基準へ全面変更）。
+       * 効果でカードが消える場面が増えた——菊一文字(131)が下の階層を壊す、
+       * 使い終わった魔法が自壊する（本人指定）、118押収が自分ごと移る——ので、
+       * 階層番号ではなく**カードの実体**から位置を出す：
+       *   ・いま開いたカードが残っている → その現在位置＋1
+       *   ・消えた → 下に居たカードのうち残っている枚数（＝通過済みの位置）
+       * ＵＩ経路では消える予定のカード（doomed）がまだ場にあるが、その分は
+       * strikeDoomed が同じ理屈（j < reversePtr）で後から差し引く＝ＡＩと同じ位置に落ち着く。 */
+      const at = after.channels.indexOf(ch);
+      if (at >= 0) {
+        after.reversePtr = at + 1;
       } else {
-        after.reversePtr = n;
+        let passed = 0;
+        belowSet.forEach(function (c) { if (after.channels.indexOf(c) >= 0) passed += 1; });
+        after.reversePtr = passed;
       }
       if (checkResult(m)) break;
       if (m.timeWarp) break;                           // 時の渦：以降の階層は開かない（M6.7 WP3）

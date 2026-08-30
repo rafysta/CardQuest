@@ -128,7 +128,10 @@
        * その分だけ位置を戻さないと、下がってきたカードが「もう開いた」ことになってしまう
        * （菊一文字(131)で下の階層を壊したときに効く。原作 EV0271 の V28x -= 1 と同じ補正）。 */
       let below = 0;
-      ln.channels.forEach(function (ch, j) { if (ch.doomed && j < ln.reversePtr - 1) below += 1; });
+      /* j < reversePtr：カーソルの下（j < ptr-1）だけでなく、**いま開いたカード自身**
+       * （j == ptr-1。使い終わった魔法の破壊）が消えるときも1つ戻す——戻さないと、
+       * 上から下りてきた次のカードが「もう開いた」ことになって開けない（2026-08-31）。 */
+      ln.channels.forEach(function (ch, j) { if (ch.doomed && j < ln.reversePtr) below += 1; });
       const before = ln.channels.length;
       ln.channels = ln.channels.filter(function (ch) { return !ch.doomed; });
       ln.count = ln.channels.length;
@@ -211,7 +214,9 @@
         p.deck[id] = (p.deck[id] || 0) + 1; p.deckCount += 1;
       });
       note(m, '予見：' + nameOf(m, got) + ' を手に入れた（残りは山札へ戻した）');
+      const spent = pc.spent;
       m.pendingChoice = null;
+      if (spent) expireSpent(m, spent.lane, spent.ch);   /* 使い終わった予見を破壊（2026-08-31） */
       return { ok: true, got: got };
     }
     if (pc.kind === 'summon') {
@@ -220,7 +225,9 @@
         p.hand.push(pc.options[0]);
         capHand(m, pc.caster);
         note(m, '口寄せ：' + nameOf(m, pc.options[0]) + ' を手に入れた');
+        const spent = pc.spent;
         m.pendingChoice = null;
+        if (spent) expireSpent(m, spent.lane, spent.ch);   /* 使い終わった口寄せを破壊（2026-08-31） */
         return { ok: true, got: pc.options[0] };
       }
       /* 捨てた札は山札に戻さない（原作どおり＝掘るコストが重い）。もう1枚引く。 */
@@ -228,7 +235,9 @@
       const id = drawDirect(m, pc.caster);
       if (id == null) {
         note(m, '口寄せ：山札が尽きた');
+        const spent = pc.spent;
         m.pendingChoice = null;
+        if (spent) expireSpent(m, spent.lane, spent.ch);
         return { ok: true, got: null };
       }
       pc.options = [id]; pc.tries = (pc.tries || 1) + 1;
@@ -252,6 +261,48 @@
    * stats.js の accMagicFlag が毎回の recalc() で処理する継続効果なので、
    * オープン時点でここでは何もしない */
   function noopFlag() { /* 継続効果。stats.js 側で処理済み */ }
+
+  /** 「表で居ること」自体が効果の持続型魔法（stats.js が表の間ずっと読む7種）。
+   * この7種**だけ**は発動後も場に残り、従来どおりターン終わり・戦闘終わりの
+   * 魔法消去（combat.js expireMagic）で消える。 */
+  const FLAG_MAGIC = { 104: 1, 106: 1, 117: 1, 120: 1, 136: 1, 143: 1, 145: 1 };
+
+  /** ★使い終わった魔法カードを破壊する（2026-08-31 本人指定）。
+   * 「魔法は効果を発揮した後（不発でも）、原則として破壊される」——今まではターン終わり
+   * まで表のまま居残っていた。例外は FLAG_MAGIC の7種と、停滞(151)のレーン。
+   *
+   * カードは効果の巻き添え（歪曲105の並べ替え・自分ごとレーン消滅など）で動くことが
+   * あるので、階層番号ではなく**カードの実体**を探して消す。見つからなければ
+   * 既に消えている（118押収の自己移動など）＝何もしない。
+   *
+   * 破壊の見せ方は憑依解除と同じ「予約」を使う：ＵＩが beginAim で包んでいる操作なら
+   * doomed の印を付けて赤枠→粉々を見せてから消え、ＡＩ・シミュレータは即座に消える。
+   * 戻り値＝この階層が無くなったか（reverseAction・戦闘のカーソル送りが consumed として読む）。 */
+  function expireSpent(m, laneIndex, ch0) {
+    if (!ch0) return false;
+    let lane = laneIndex, idx = m.board.lanes[laneIndex]
+      ? m.board.lanes[laneIndex].channels.indexOf(ch0) : -1;
+    if (idx < 0) {                                       /* 効果で別レーンへ動いた可能性（保険） */
+      for (let i = 0; i < 6 && idx < 0; i++) {
+        const j = m.board.lanes[i].channels.indexOf(ch0);
+        if (j >= 0) { lane = i; idx = j; }
+      }
+    }
+    if (idx < 0) return false;                           /* もう場に無い */
+    const ln = m.board.lanes[lane];
+    if (ln.unit == null || !ch0.up) return false;
+    recalc(m);
+    if (ln.acc && ln.acc.stasis >= 1) return false;      /* 停滞：場に留まる（このカードの仕事） */
+    const aim = aimOf(m);
+    if (aim) {                                           /* ＵＩ：赤枠→粉々を見せてから消す */
+      ch0.doomed = true;
+      aim.push({ lane: lane, idx: idx, card: ch0.card });
+      return false;                                      /* まだ場にある＝カーソルは動かさない */
+    }
+    dropChannelAt(m, lane, idx);
+    recalc(m);
+    return lane === laneIndex;                           /* 自分の階層が消えたときだけ consumed */
+  }
 
   /* ================= 101〜110 ================= */
 
@@ -586,7 +637,8 @@
     m.forcedChain = {
       kind: kind, caster: ctx.caster,
       marker: { lane: ctx.laneIndex, idx: ctx.layer - 1, card: kind },
-      target: target, cursor: 0, phase: 'flip', steps: [], aborted: null
+      target: target, cursor: 0, phase: 'flip', steps: [], aborted: null,
+      interactive: !!ctx.interactive   /* 終了時の魔法消去を、ＵＩが演出してから消すかどうか */
     };
     /* 連鎖中に開いた 133呪爆・134呪念 は「仕掛けた側」を狙う（原作§1-8 の V970 分岐）
      * ＝**強制開放は撃った本人に跳ね返る**。h133/h134 がこれを見る。 */
@@ -617,6 +669,9 @@
       if (fc.kind === 108 && ch.up) { fc.cursor += 1; return forcedChainStep(m); }  /* 開放は裏だけ */
       ch.up = !ch.up;
       if (ch.up) ch.revealed = true;
+      /* この連鎖で表になった魔法は、連鎖の終わりに消える（原作§1-8⑤ EV0049。
+       * 2026-08-31 本人指摘）。どれを消すかを覚えるための印。endForcedChain が読む。 */
+      if (ch.up && ch.card >= 101 && ch.card <= 150) ch.chainOpened = true;
       recalc(m);
       fc.steps.push({ lane: fc.target, idx: fc.cursor, card: ch.card, up: ch.up });
       fc.phase = 'effect';
@@ -626,8 +681,21 @@
     if (fc.phase === 'effect') {
       const ln = m.board.lanes[fc.target];
       const ch = ln && ln.channels[fc.cursor];
-      let aimed = [];
-      if (ch && ch.up) {
+      let aimed = [], summoned = null, consumed = false;
+      if (ch && ch.up && ch.card >= 1 && ch.card <= 100) {
+        /* ★ユニットカード（1〜100）は**リバース召還される**（2026-08-31 本人指摘の修正）。
+         * 原作§1-8「開いた瞬間 EV0182 が走り」＝ＣＨオープン処理の一式（「開：」能力と
+         * リバース召還を含む）が動く。v0.16.33 までは onMagicOpen しか呼んでおらず、
+         * めくられたユニットが表のままＣＨに残っていた——これだと
+         * 「敵に潜ませたユニットを強制開放で分離し、硬直していない状態で即攻撃する」
+         * という原作で成立する戦略が成り立たない。分離召還の行き先は**置いた側**の陣
+         * （ch.mine）なので、自分が潜ませたユニットは自分の場へ戻ってくる。
+         * 融合(162)・フュージョナル(20)が付いていれば分離しない（reverseSummon 側の既存規則）。
+         * 召還レベル・生贄・抵抗・空きレーン無しの破壊も、通常のオープンと同じ扱い。 */
+        const r = combatApi().onOpen(m, fc.target, fc.cursor + 1, ch, { forced: true }) || {};
+        consumed = !!r.consumed;
+        if (r.result === 'summon' || r.result === 'ritual') summoned = { card: ch.card, lane: r.lane };
+      } else if (ch && ch.up) {
         /* m.forcedAim を用意しておくと、破壊系の効果は「消す」かわりに doomed の印を付けて
          * ここへ登録する（h101 を参照）。ＵＩがその印を赤い枠で見せてから strike で消す。 */
         m.forcedAim = [];
@@ -638,8 +706,13 @@
       if (turnApi().checkResult(m)) return endForcedChain(m, '決着した');
       if (m.forcedAbort) return endForcedChain(m, m.forcedAbort + 'で止められた');
       if (aimed.length) { fc.phase = 'strike'; }
-      else { fc.cursor += 1; fc.phase = 'flip'; }
-      return { done: false, phase: 'effect', aimed: aimed };
+      else {
+        /* consumed＝この階層が消えた（召還・破壊）。上のカードが1つ下がってくるので、
+         * カーソルは進めない。進めると1枚飛ばしてしまう。 */
+        if (!consumed) fc.cursor += 1;
+        fc.phase = 'flip';
+      }
+      return { done: false, phase: 'effect', aimed: aimed, summoned: summoned };
     }
 
     /* strike：印の付いたカードを実際に取り除く。 */
@@ -663,11 +736,47 @@
     });
     recalc(m);
     if (!fc) return { done: true };
+
+    /* ★連鎖の終わりに、**この連鎖が表にした魔法**と**役目を終えた強制開放カード自身**を
+     * 破壊する（2026-08-31 本人指摘。原作§1-8⑤も連鎖終了時に EV0049 魔法消去を呼ぶ）。
+     * 障壁(117)のような「表の間だけ効く」魔法が、ターン終わりまで居座らないようにする。
+     * ——原作の EV0049 は**場全体**の表向き魔法を消すが、連鎖と無関係に自分が開いておいた
+     * 魔法まで巻き込むのは驚きが大きいので、この連鎖が触ったカードだけに絞ってある。
+     * 停滞(151)のレーンは消えない（通常の魔法消去と同じ例外）。 */
+    const expired = [];
+    const markExpiry = function (lane, idx) {
+      const ln = m.board.lanes[lane];
+      if (!ln || ln.unit == null) return;
+      if (ln.acc && ln.acc.stasis >= 1) return;            /* 停滞：このレーンの魔法は消えない */
+      const ch = ln.channels[idx];
+      if (!ch || !ch.up || ch.card < 101 || ch.card > 150) return;
+      ch.doomed = true;
+      expired.push({ lane: lane, idx: idx, card: ch.card });
+    };
+    const tgt = m.board.lanes[fc.target];
+    if (tgt && tgt.unit != null) {
+      tgt.channels.forEach(function (ch, j) { if (ch.chainOpened) markExpiry(fc.target, j); });
+    }
+    {  /* マーカー（強制開放・強制転回のカード自身）。中断で既に壊れていれば何もしない */
+      const ml = m.board.lanes[fc.marker.lane];
+      const mc = ml && ml.channels[fc.marker.idx];
+      if (mc && mc.card === fc.marker.card) markExpiry(fc.marker.lane, fc.marker.idx);
+    }
+    /* 印の後始末（生き残った側に残さない。次の連鎖と混ざるのを防ぐ） */
+    m.board.lanes.forEach(function (ln) {
+      ln.channels.forEach(function (ch) { if (ch.chainOpened) delete ch.chainOpened; });
+    });
+    /* ＵＩが動かしている連鎖は、赤枠→粉々を見せてから strikeDoomed で消す。
+     * ＡＩ・シミュレータ・テストはその場で消す。 */
+    if (expired.length && !fc.interactive) strikeDoomed(m);
+    if (expired.length) note(m, '役目を終えた魔法' + expired.length + '枚が砕け散った');
+
     if (aborted) note(m, nameOf(m, fc.kind) + '：' + aborted + 'ため連鎖が止まった（' + fc.steps.length + '枚で中断）');
     else note(m, nameOf(m, fc.kind) + '：' + fc.steps.length + '枚を処理した');
     /* テストとＵＩが結果を見るための記録（従来と同じ形）。 */
-    m.lastForcedChain = { kind: fc.kind, target: fc.target, steps: fc.steps, aborted: aborted };
-    return { done: true, aborted: aborted };
+    m.lastForcedChain = { kind: fc.kind, target: fc.target, steps: fc.steps, aborted: aborted,
+      expired: expired };
+    return { done: true, aborted: aborted, expired: expired };
   }
 
   function h108(m, ctx) { forcedChain(m, ctx, 108); }         // 強制開放（戦闘中×強制中×）
@@ -1200,10 +1309,18 @@
    * 逃走・菊一文字・殲滅・呪爆）ことを呼び出し元（オープンフェイズのカーソル制御）へ知らせる */
   function onMagicOpen(m, laneIndex, layer, cardId, opts) {
     const o = opts || {};
-    if (o.nullified) { note(m, '無効：' + nameOf(m, cardId) + ' は発動しなかった'); return { consumed: false }; }
+    const ln00 = m.board.lanes[laneIndex];
+    const chSelf = ln00 && ln00.channels[layer - 1];      /* このカードの実体（発動後の後始末用） */
+    /* 不発でも使い終わり＝破壊される（2026-08-31 本人指定。原作も詠唱レベル不足で
+     * 「カードは消滅する」§116）。連鎖中（o.forced）は連鎖の終わりにまとめて消えるので触らない。 */
+    const fizzle = function (msg) {
+      note(m, msg);
+      const gone = !o.forced && expireSpent(m, laneIndex, chSelf);
+      return { consumed: gone };
+    };
+    if (o.nullified) return fizzle('無効：' + nameOf(m, cardId) + ' は発動しなかった');
     if (m.combat && NO_COMBAT[cardId]) {
-      note(m, nameOf(m, cardId) + '：戦闘中は発動しない');
-      return { consumed: false };
+      return fizzle(nameOf(m, cardId) + '：戦闘中は発動しない');
     }
     /* 強制リバース連鎖の最中に開かれた（o.forced）カードのうち、
      * 108/109/140/144 は不発（原作 CE0355 強制発動時無効）。連鎖の多重起動を防ぐ。 */
@@ -1212,8 +1329,7 @@
       return { consumed: false };
     }
     if (!levelOk(m, laneIndex, layer, cardId)) {
-      note(m, nameOf(m, cardId) + '：詠唱レベルが足りず発動しない');
-      return { consumed: false };
+      return fizzle(nameOf(m, cardId) + '：詠唱レベルが足りず発動しない');
     }
     const handler = HANDLERS[cardId];
     if (!handler) return { consumed: false };
@@ -1237,6 +1353,17 @@
       if (r.consumed) consumed = true;
       if (Turn.checkResult(m)) break;
       if (consumed) break;
+    }
+    /* ★使い終わった魔法は破壊される（2026-08-31 本人指定）。
+     *   ・持続型（FLAG_MAGIC の7種）は残る——「表で居ること」が効果そのものだから
+     *   ・連鎖中（o.forced）は残る——連鎖の終わりにまとめて消える（前項の仕組み）
+     *   ・選択待ち（122予見・146口寄せの対話中）は残る——resolvePending が済んでから消す */
+    if (!o.forced && !FLAG_MAGIC[cardId] && !consumed && !m.forcedChain) {
+      /* !m.forcedChain：108/109 は自分自身が**連鎖のマーカー**になる。ここで消すと
+       * 「元凶を壊せば連鎖が止まる」が成立しなくなるので、連鎖の終わり（endForcedChain）
+       * にマーカーとして消える。連鎖が即時に完走した場合も同じ経路で既に消えている。 */
+      if (m.pendingChoice) m.pendingChoice.spent = { lane: laneIndex, ch: chSelf };
+      else if (expireSpent(m, laneIndex, chSelf)) consumed = true;
     }
     return { consumed: consumed };
   }
