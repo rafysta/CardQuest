@@ -325,7 +325,26 @@ const PICK_MSG = {
   118: '押収：奪い取る裏向きのＣＨを選んでください',
   148: '妄執：自爆して憑依する先のユニットを選んでください',
   135: '雷撃：破壊するユニットを選んでください（防御力550以下）',
-  131: '菊一文字：破壊する階層を選んでください（その階層のカードを1枚押す）'
+  131: '菊一文字：破壊する階層を選んでください（その階層のカードを1枚押す）',
+  /* M6.7 WP6 ユニット固有能力。カードＩＤは1〜73なので魔法とぶつからない */
+  1: 'クローズ×１：裏に戻すカードを選んでください',
+  27: 'クローズ×１：裏に戻すカードを選んでください',
+  44: 'クローズ×１：裏に戻すカードを選んでください',
+  40: 'ＣＨ×１確認：中身を見るカードを選んでください',
+  48: 'ＣＨ×１確認：中身を見るカードを選んでください',
+  49: 'ＣＨ×１確認：中身を見るカードを選んでください',
+  24: 'ＣＨ×１破壊：壊すカードを選んでください',
+  9: 'ＬＰ消費ＣＨ１破壊：壊すカードを選んでください',
+  16: 'Ａ６００火弾：撃つ相手を選んでください（防御力600以下）',
+  10: 'Ａ５５０雷撃：撃つ相手を選んでください（防御力550以下）',
+  32: 'Ａ５５０雷撃：撃つ相手を選んでください（防御力550以下）',
+  36: 'Ａ５５０烈風：撃つ相手を選んでください（防御力550以下）',
+  3: '石化付加：石化を付ける相手を選んでください',
+  6: '疫障付加：疫障を付ける相手を選んでください',
+  45: '腐食付加：腐食を付ける相手を選んでください',
+  34: '潜入能力：潜り込む先のユニットを選んでください',
+  70: '妄執：自爆して憑依する先のユニットを選んでください',
+  29: '敵手札×１奪取：相手の手札から奪う1枚を選んでください'
 };
 
 /* 開発用デッキ（screen-deck で組むもの）。**アンロックには一切関係なく全169種から組める**
@@ -1655,15 +1674,18 @@ function panelPickTarget() {
     const cards = hand.map((id, i) => {
       const c = CARD_BY_ID[id];
       const ok = p.targets.indexOf(i) >= 0;
+      const act = p.card === 114 ? '押すと破壊' : '押すと奪う';
       return `<div class="dp-card ${c.t} ${ok ? '' : 'dim'}" ${ok ? `data-act="pick-hand" data-i="${i}"` : ''}>
           <div class="dp-art">${artInner(c, 3)}</div>
           <div class="dp-nm">${c.n}</div>
-          <div class="dp-ef">${ok ? '押すと破壊' : TYPE_NAME[c.t] + 'は選べません'}</div>
+          <div class="dp-ef">${ok ? act : TYPE_NAME[c.t] + 'は選べません'}</div>
         </div>`;
     }).join('');
+    const note = p.card === 114
+      ? '相手の手札がすべて見えています。モンスターだけが選べます。'
+      : '相手の手札がすべて見えています。どのカードでも奪えます。';
     return paint(miniCardHTML(CARD_BY_ID[p.card])
-      + askHTML(ask, '相手の手札がすべて見えています。モンスターだけが選べます。', 'warn')
-      + `<div class="dp-row">${cards}</div>`, '', true);
+      + askHTML(ask, note, 'warn') + `<div class="dp-row">${cards}</div>`, '', true);
   }
   const how = p.kind === 'lane'
     ? '光っているユニットを押すと、そのユニットが対象になります。'
@@ -1941,11 +1963,26 @@ async function playForcedChain() {
 function tryStartDestroyPick(laneIdx, layer, ch, resume) {
   if (!ch || !chKnown(ch)) return false;               /* 中身を知らないカードは選ばせない */
   if (typeof CQMagic.targetsFor !== 'function') return false;
-  const spec = CQMagic.targetsFor(M, ch.card, {
-    laneIndex: laneIdx, layer: layer, caster: ch.mine ? 'self' : 'enemy'
-  });
+  const ctx = { laneIndex: laneIdx, layer: layer, caster: ch.mine ? 'self' : 'enemy' };
+  /* 魔法（magic.js）とユニット固有能力（units.js・M6.7 WP6）は同じ形の候補を返す。
+   * ユニットカードを開くと「開：」能力が先に解決されるので、そちらも同じ口で選ばせる。 */
+  const spec = CQMagic.targetsFor(M, ch.card, ctx)
+    || (typeof CQUnits.targetsFor === 'function' ? CQUnits.targetsFor(M, ch.card, ctx) : null);
   if (!spec) return false;
   return startPick({ card: ch.card, kind: spec.kind, need: spec.need,
+    targets: spec.targets, resume: resume });
+}
+
+/** 特殊行動（Ｃ型ユニット固有能力）で対象を選ばせる。選ばせたら true（M6.7 WP6）。 */
+function tryStartSpecialPick(laneIdx, resume) {
+  const ln = M.board.lanes[laneIdx];
+  if (!ln || ln.unit == null) return false;
+  if (typeof CQUnits.targetsFor !== 'function') return false;
+  const spec = CQUnits.targetsFor(M, ln.unit, {
+    laneIndex: laneIdx, caster: CQState.controlSide(ln, laneIdx)
+  });
+  if (!spec) return false;
+  return startPick({ card: ln.unit, kind: spec.kind, need: spec.need,
     targets: spec.targets, resume: resume });
 }
 
@@ -2019,7 +2056,7 @@ function doPending() {
   else if (p.kind === 'discard') r = CQTurn.discardCard(M, p.handIdx);
   else if (p.kind === 'pest-discard') r = CQTurn.discardPest(M, p.handIdx);
   else if (p.kind === 'deck-attack') r = CQCombat.deckAttack(M, p.lane);
-  else if (p.kind === 'special-action') r = CQTurn.specialAction(M, p.lane);
+  else if (p.kind === 'special-action') r = CQTurn.specialAction(M, p.lane, { choice: p.choice });
   UI.mode = 'idle'; UI.lane = null; UI.layers = []; UI.report = null;
   if (!r.ok) { flash(r.reason || 'その操作はできません'); renderAll(); return; }
   step();
@@ -2116,9 +2153,16 @@ function panelAct(act, data) {
     case 'deck-attack':
       UI.pending = { kind: 'deck-attack', lane: UI.lane };
       return doPending();
-    case 'special-action':                              /* Ｃ型ユニット固有能力（M4 v0.14） */
-      UI.pending = { kind: 'special-action', lane: UI.lane };
+    case 'special-action': {                            /* Ｃ型ユニット固有能力（M4 v0.14） */
+      const lane = UI.lane;
+      /* M6.7 WP6：対象を選ぶ能力なら先に選ばせる（選ぶ余地が無ければそのまま実行） */
+      if (tryStartSpecialPick(lane, (choice) => {
+        UI.pending = { kind: 'special-action', lane: lane, choice: choice };
+        doPending();
+      })) return;
+      UI.pending = { kind: 'special-action', lane: lane };
       return doPending();
+    }
     case 'close-ch':                                  /* 表の技能を閉じる（情報パネルのボタン） */
       return doFlip(+data.lane, +data.layer);
     case 'open-end':

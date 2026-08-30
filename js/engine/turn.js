@@ -586,14 +586,14 @@
   }
 
   /** 特殊行動を実行する。対象が居なくても行動は消費される（仕様書§10.1）。 */
-  function specialAction(m, laneIndex) {
+  function specialAction(m, laneIndex, opts) {
     const chk = canSpecialAction(m, laneIndex);
     if (!chk.ok) return chk;
     finalizeReverse(m, null);                          // 別の行動を始めた＝継続中のリバースを確定
     recalc(m);
     const lane = m.board.lanes[laneIndex];
     const side = S.controlSide(lane, laneIndex);
-    unitsApi().doSpecialAction(m, laneIndex, side);
+    unitsApi().doSpecialAction(m, laneIndex, side, opts);   /* M6.7 WP6：対象の指定を通す */
     const after = m.board.lanes[laneIndex];
     if (after && after.unit != null) after.stiff = true;   // 対象が無くても行動を消費（硬直）する
     activePlayer(m).actedThisTurn = true;

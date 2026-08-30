@@ -4901,6 +4901,143 @@ t('131菊一文字：予約したまま下の階層を壊しても、リバー�
   eq(CQTurn.reverseAction(m, 0, [2], { cont: true }).ok, true, '続けて上の階層を開ける');
 });
 
+
+/* ================= M6.7 WP6: ユニット固有能力の対象選択 =================
+ * 魔法（WP5）と同じ形の targetsFor をユニット側にも用意した。
+ * 条件の正は原作解析『07_unit_abilities.md』§4（開：型）・§5（特：型）。 */
+section('M6.7 WP6: ユニット固有能力の対象選択');
+
+function uf(m, id, o) {
+  return CQUnits.targetsFor(m, id, Object.assign({ laneIndex: 0, layer: 1, caster: 'self' }, o || {}));
+}
+
+t('★クローズ×１は表向きのＣＨなら何でも裏に戻せる（原作 CE0275）', () => {
+  /* v0.16.30 までは通常のクローズ規則（技能カードのみ）を流用していて対象が狭すぎた。
+   * 原作は「そこにカードがあり、表向き」しか見ていない＝魔法もカースも潜行ユニットも戻せる。 */
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(1)]);
+  m.board.lanes[3] = lane(8, [up(151), up(105), down(152)]);
+  const r = uf(m, 1);
+  eq(r.kind, 'ch', 'ＣＨを選ぶ型');
+  eq(r.targets, [{ lane: 3, idx: 0 }, { lane: 3, idx: 1 }], '表向きなら技能でも魔法でも候補');
+});
+
+t('★自分の乗っているレーンは対象にできない（§4-1・本人指摘）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(151), down(1)]);        /* 自分のレーンにも表向きのＣＨがある */
+  m.board.lanes[3] = lane(8, [up(152)]);
+  eq(uf(m, 1, { layer: 2 }).targets, [{ lane: 3, idx: 0 }], '自陣0の表向きＣＨは候補に入らない');
+});
+
+t('★選んだカードがクローズされる（ctx.choice）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(1)]);
+  m.board.lanes[3] = lane(8, [up(151), up(152)]);
+  CQTurn.reverseAction(m, 0, [1], { choice: { lane: 3, idx: 1 } });
+  eq(m.board.lanes[3].channels.map((c) => c.up), [true, false], '選んだ第2層だけが裏に戻る');
+});
+
+t('16レッドレックス：防御力600以下の相手ユニットが候補', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(16)]);
+  m.board.lanes[1] = lane(8, []);                        /* 味方は対象外 */
+  m.board.lanes[3] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  const r = uf(m, 16);
+  eq(r.kind, 'lane', 'レーンを選ぶ型');
+  eq(r.targets, [3], '相手陣だけが候補');
+});
+
+t('24シニスターセラフ：自分のレーン以外の全ＣＨが候補', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(151), down(24)]);
+  m.board.lanes[3] = lane(8, [down(152)]);
+  eq(uf(m, 24, { layer: 2 }).targets, [{ lane: 3, idx: 0 }], '自分の下のＣＨも対象外');
+});
+
+t('40スピアバード：まだ中身の分かっていない裏向きＣＨが候補', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(40)]);
+  m.board.lanes[3] = lane(8, [down(151), down(152)]);
+  m.board.lanes[3].channels[0].revealed = true;          /* もう知っている札は見る意味が無い */
+  eq(uf(m, 40).targets, [{ lane: 3, idx: 1 }], '既知の札は候補から外れる');
+});
+
+t('29ステルスゴブリン：相手の手札から1枚を選んで奪う（選択中は手札が丸見え）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(29)]);
+  m.players.enemy.hand = [101, 8, 151];
+  const r = uf(m, 29);
+  eq(r.kind, 'hand', '手札から選ぶ型');
+  eq(r.targets, [0, 1, 2], '種類の制限は無い（07_unit_abilities.md §ID29）');
+  CQTurn.reverseAction(m, 0, [1], { choice: { handIndex: 2 } });
+  eq(m.players.enemy.hand, [101, 8], '選んだ1枚が相手の手札から消える');
+  eq(m.players.self.hand.indexOf(151) >= 0, true, '自分の手札に入る');
+});
+
+t('★特殊行動（Ｃ型）でも対象を選べる — 10ヨルムンガンドのＡ５５０雷撃', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(10, []);
+  m.board.lanes[3] = lane(8, []);
+  m.board.lanes[4] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  const r = CQUnits.targetsFor(m, 10, { laneIndex: 0, caster: 'self' });
+  eq(r.targets, [3, 4], '防御力550以下の相手ユニットが候補');
+  CQTurn.specialAction(m, 0, { choice: { lane: 4 } });
+  eq([m.board.lanes[3].unit, m.board.lanes[4].unit], [8, null], '選んだほうだけが壊れる');
+});
+
+t('特殊行動：選ばなければ従来どおり乱数（ＡＩ・シミュレータは無改修）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(10, []);
+  m.board.lanes[3] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[3].unit, null, '候補が1体ならそこへ');
+});
+
+t('9ディゾルバー：ＬＰ1点を払ってＣＨ1枚を壊す（判断7で1点確定）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(9, []);
+  m.board.lanes[3] = lane(8, [down(151), down(152)]);
+  const lp = m.players.self.lp;
+  CQTurn.specialAction(m, 0, { choice: { lane: 3, idx: 1 } });
+  eq(m.players.self.lp, lp - 1, 'ＬＰ -1');
+  eq(m.board.lanes[3].channels.map((c) => c.card), [151], '選んだ第2層が消える');
+});
+
+t('34サイコダイバー：潜り込む先を選べる（ＣＨに空きのあるユニット）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(34, []);
+  m.board.lanes[1] = lane(70, [down(151), down(151)]);   /* 満杯＝候補外 */
+  m.board.lanes[3] = lane(13, []);
+  CQStats.recalc(m.board, OPT);
+  eq(CQUnits.targetsFor(m, 34, { laneIndex: 0, caster: 'self' }).targets, [3], '空きのあるユニットだけ');
+  CQTurn.specialAction(m, 0, { choice: { lane: 3 } });
+  eq(m.board.lanes[0].unit, null, '潜ったので元のレーンは空になる');
+  eq(m.board.lanes[3].channels.map((c) => c.card), [34], '選んだユニットの中へ潜り込む');
+});
+
+t('対象を選ばない能力は候補を返さない（ＵＩが選択に入らない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(23)]);
+  eq(uf(m, 23), null, '23アンフィビアス（手札２枚入手）');
+  eq(uf(m, 31), null, '31ドライアード（ＬＰ＋１回復）');
+  eq(uf(m, 30), null, '30イビルアイ（呪爆能力）');
+  eq(uf(m, 25), null, '25スケープゴート（摩り替り）');
+  eq(uf(m, 35), null, '35ティンバータンク（自己ＣＨシャッフル）');
+});
+
+t('戦闘中は当事者の2レーンだけが母数（§4-1）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(1)]);
+  m.board.lanes[1] = lane(8, [up(151)]);
+  m.board.lanes[3] = lane(8, [up(151)]);
+  eq(uf(m, 1).targets.length, 2, '戦闘外なら両方');
+  m.combat = { attacker: 0, defender: 3 };
+  eq(uf(m, 1).targets, [{ lane: 3, idx: 0 }], '戦闘中は当事者だけ');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

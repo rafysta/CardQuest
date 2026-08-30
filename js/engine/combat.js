@@ -250,7 +250,8 @@
       // （カードバトル仕様書§10.2）。js/engine/effects/units.js の B_HANDLERS に無いＩＤ
       // （通常ユニット・カース）は onUnitOpen() が即 {consumed:false} を返すだけで実質ノーオペ
       if (m.hooks && typeof m.hooks.onUnitOpen === 'function') {
-        const r = m.hooks.onUnitOpen(m, laneIndex, layer, id) || {};
+        const r = m.hooks.onUnitOpen(m, laneIndex, layer, id,
+          { choice: opts && opts.choice }) || {};   /* M6.7 WP6：対象の指定を通す */
         /* M6.7 WP3：consumed（階層が無くなった）と handled（効果は済んだ）を分けた。
          * 摩り替り(25)は階層を残したまま効果だけ済ませるので handled のみ立つ。
          * ここで返さないと、開いたユニットカードがそのままリバース召還されてしまう。 */

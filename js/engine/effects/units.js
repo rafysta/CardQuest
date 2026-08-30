@@ -88,23 +88,116 @@
 
   /* ================= 共通ヘルパー（複数カードで同じ処理） ================= */
 
-  /** クローズ×１：場のどこかの「クローズできる状態」のＣＨを1つ選んで閉じる。
-   * 通常のクローズ規則（技能カードのみ・腐食は封印必須・固定/石化のレーンは不可）を流用する */
-  function closableCandidates(m) {
-    const res = [];
-    m.board.lanes.forEach(function (ln, i) {
-      if (ln.unit == null) return;
-      if (ln.acc && ln.acc.lock >= 1) return;                     // 固定・石化はクローズ不可
-      ln.channels.forEach(function (ch, j) {
-        if (!ch.up || ch.card < 151) return;                      // クローズできるのは技能カードだけ
-        if (ch.card === 167 && !(ln.acc && ln.acc.seal >= 1)) return;  // 腐食は封印が無いと不可
-        res.push({ lane: i, idx: j });
-      });
-    });
-    return res;
+  /* ================= 対象の候補（M6.7 WP6・2026-08-30） ==========================
+   * 魔法（magic.js の targetsFor）と同じ形をユニット固有能力にも用意したもの。
+   * ＵＩは候補を貰って光らせ、選ばせて `choice` で返すだけ＝魔法とまったく同じ配線で動く。
+   * 条件の正は原作解析『07_unit_abilities.md』§4（開：型）・§5（特：型）。
+   *
+   * 共通の縛り（§4-1）：
+   *   ・**その能力を出しているユニット自身のレーンは選べない**（原作 V211 != V213）
+   *   ・戦闘中は当事者2レーンだけが母数（原作 V211 == V406） */
+
+  function inScope(m, ctx, lane) {
+    if (lane === ctx.laneIndex) return false;
+    if (m.combat) return lane === m.combat.attacker || lane === m.combat.defender;
+    return true;
   }
-  function closeOne(m, label) {
-    const t = pick(m, closableCandidates(m));
+  function scopeLanes(m, ctx) {
+    return allUnitLanes(m).filter(function (i) { return inScope(m, ctx, i); });
+  }
+
+  /** クローズ×１の候補＝**表向きのＣＨすべて**（自分のレーン以外）。
+   * ★通常のクローズ操作（技能カードのみ・腐食は封印必須・固定/石化は不可）とは条件が違う。
+   * 原作 `CE0275 クローズ×１` は「そこにカードがあり、表向き」しか見ておらず、
+   * **魔法でもカースでも潜行ユニットでも裏に戻せる**（07_unit_abilities.md §ID1）。
+   * v0.16.30 までは通常のクローズ規則を流用していたので、対象が不当に狭かった。 */
+  function closableCandidates(m, ctx) {
+    return allChannels(m, function (ch, lane) { return ch.up && inScope(m, ctx, lane); });
+  }
+  /** ＣＨ×１確認の候補＝まだ中身の分かっていない裏向きＣＨ */
+  function peekCandidates(m, ctx) {
+    return allChannels(m, function (ch, lane) {
+      return !ch.up && !ch.revealed && inScope(m, ctx, lane);
+    });
+  }
+  /** 防御力が上限以下の敵ユニット（16レッドレックス＝600／10・32・36＝550） */
+  function defAtMost(m, ctx, max) {
+    recalc(m);
+    const enemy = other(ctx.caster);
+    return scopeLanes(m, ctx).filter(function (i) {
+      return S.sideOf(i) === enemy && m.board.lanes[i].def <= max;
+    });
+  }
+  /** ＣＨに空きのある敵ユニット（石化・疫障・腐食の付加先） */
+  function foeWithRoom(m, ctx) {
+    recalc(m);
+    const enemy = other(ctx.caster);
+    return scopeLanes(m, ctx).filter(function (i) {
+      return S.sideOf(i) === enemy && m.board.lanes[i].cap > m.board.lanes[i].count;
+    });
+  }
+  /** ＣＨに空きのあるユニット（陣営を問わない。潜入能力・妄執の行き先） */
+  function anyWithRoom(m, ctx) {
+    recalc(m);
+    return scopeLanes(m, ctx).filter(function (i) {
+      return m.board.lanes[i].cap > m.board.lanes[i].count;
+    });
+  }
+
+  /** ユニット固有能力の対象候補。対象を選ばない能力は null。
+   * 戻り値の形は magic.js の targetsFor と同じ { kind, need, targets }。 */
+  function targetsFor(m, unitId, ctx) {
+    const c = ctx || {};
+    const lane = function (t) { return { kind: 'lane', need: 1, targets: t }; };
+    const chs = function (t) { return { kind: 'ch', need: 1, targets: t }; };
+    switch (unitId) {
+      case 1: case 27:              /* 開：クローズ×１（ミルファイター・メガゾエア） */
+      case 44:                      /* 特：クローズ×１（ブレインサッカー） */
+        return chs(closableCandidates(m, c));
+      case 40:                      /* 開：ＣＨ×１確認（スピアバード） */
+      case 48: case 49:             /* 特：ＣＨ×１確認（スカウター・シャドウハンズ） */
+        return chs(peekCandidates(m, c));
+      case 24:                      /* 開：ＣＨ×１破壊（シニスターセラフ） */
+      case 9:                       /* 特：ＬＰ消費ＣＨ１破壊（ディゾルバー） */
+        return chs(allChannels(m, function (ch, l) { return inScope(m, c, l); }));
+      case 16:                      /* 開：Ａ６００火弾（レッドレックス） */
+        return lane(defAtMost(m, c, 600));
+      case 10: case 32: case 36:    /* 特：Ａ５５０雷撃／烈風 */
+        return lane(defAtMost(m, c, 550));
+      case 3: case 6: case 45:      /* 特：石化／疫障／腐食 付加 */
+        return lane(foeWithRoom(m, c));
+      case 34: case 70:             /* 特：潜入能力／妄執（行き先は陣営を問わない） */
+        return lane(anyWithRoom(m, c));
+      case 29: {                    /* 開：敵手札×１奪取（ステルスゴブリン）。
+                                     * 原作も相手の手札を1枚ずつ見ながら選ぶ＝丸見えになる
+                                     * （07_unit_abilities.md §ID29）。種類の制限は無い。 */
+        const p = m.players[other(c.caster)];
+        return { kind: 'hand', need: 1, targets: p.hand.map(function (_, i) { return i; }) };
+      }
+      default: return null;
+    }
+  }
+
+  /** 候補から1つ決める。ctx.choice があれば検証して使い、無ければ乱数（ＡＩ・シミュレータ）。 */
+  function decide(m, ctx, unitId) {
+    const spec = targetsFor(m, unitId, ctx);
+    if (!spec || !spec.targets.length) return null;
+    const ch = ctx.choice;
+    if (ch) {
+      if (spec.kind === 'lane' && spec.targets.indexOf(ch.lane) >= 0) return ch.lane;
+      if (spec.kind === 'hand' && spec.targets.indexOf(ch.handIndex) >= 0) return ch.handIndex;
+      if (spec.kind === 'ch') {
+        const hit = spec.targets.find(function (t) { return t.lane === ch.lane && t.idx === ch.idx; });
+        if (hit) return hit;
+      }
+    }
+    return pick(m, spec.targets);
+  }
+
+  /* ---- 効果の本体（候補は上の targetsFor が持つ） ---- */
+
+  function closeOne(m, ctx, label) {
+    const t = decide(m, ctx, ctx.cardId);
     if (!t) { note(m, label + '：クローズできる対象が無い'); return; }
     const ch = m.board.lanes[t.lane].channels[t.idx];
     ch.up = false;
@@ -112,48 +205,38 @@
     note(m, label + '：' + nameOf(m, ch.card) + ' をクローズ');
   }
 
-  /** ＣＨ×１確認：場のどこかの裏向き未確認ＣＨを1つ見る */
-  function peekOne(m, label) {
-    const pool = allChannels(m, function (ch) { return !ch.up && !ch.revealed; });
-    const t = pick(m, pool);
+  function peekOne(m, ctx, label) {
+    const t = decide(m, ctx, ctx.cardId);
     if (!t) { note(m, label + '：対象が無い'); return; }
     m.board.lanes[t.lane].channels[t.idx].revealed = true;
-    note(m, label + '：裏向きのＣＨを1枚確認した');
+    note(m, label + '：' + nameOf(m, m.board.lanes[t.lane].channels[t.idx].card) + ' を確認した');
   }
 
   /** Ａ550の特殊攻撃：防御力550以下の敵ユニット1体を無条件で破壊する（135雷撃と同型） */
-  function lightning550(m, side, label) {
-    recalc(m);
-    const enemy = other(side);
-    const pool = sideLanes(m, enemy).filter(function (i) { return m.board.lanes[i].def <= 550; });
-    const t = pick(m, pool);
+  function lightning550(m, ctx, label) {
+    const t = decide(m, ctx, ctx.cardId);
     if (t == null) { note(m, label + '：対象が無い'); return; }
     const name = nameOf(m, m.board.lanes[t].unit);
     combatApi().destroy(m, t, { normalAttack: false });
     note(m, label + '：' + name + ' を破壊');
   }
 
-  /** 「石化」「疫障」「腐食」を敵ユニット1体に付加する（105/45系の特殊行動で共通） */
-  function attachCurseSkill(m, side, skillId, label) {
-    const enemy = other(side);
-    const targets = sideLanes(m, enemy).filter(function (i) { return m.board.lanes[i].cap > m.board.lanes[i].count; });
-    const t = pick(m, targets);
+  /** 「石化」「疫障」「腐食」を敵ユニット1体に付加する（3/6/45系の特殊行動で共通） */
+  function attachCurseSkill(m, ctx, skillId, label) {
+    const t = decide(m, ctx, ctx.cardId);
     if (t == null) { note(m, label + '：付加できる対象が無い'); return; }
-    pushChannel(m, t, { card: skillId, up: true, mine: side === 'self', revealed: true });
+    pushChannel(m, t, { card: skillId, up: true, mine: ctx.caster === 'self', revealed: true });
     recalc(m);
     note(m, label + '：' + nameOf(m, m.board.lanes[t].unit) + ' に付加した');
   }
 
   /* ================= B.「開：」型（10体） ================= */
 
-  function h1(m, ctx) { closeOne(m, 'クローズ'); }                 // ミルファイター：クローズ×１
-  function h27(m, ctx) { closeOne(m, 'クローズ'); }                // メガゾエア：クローズ×１
+  function h1(m, ctx) { closeOne(m, ctx, 'クローズ'); }             // ミルファイター：クローズ×１
+  function h27(m, ctx) { closeOne(m, ctx, 'クローズ'); }            // メガゾエア：クローズ×１
 
   function h16(m, ctx) {                                        // レッドレックス：Ａ６００火弾
-    recalc(m);
-    const enemy = other(ctx.caster);
-    const pool = sideLanes(m, enemy).filter(function (i) { return m.board.lanes[i].def <= 600; });
-    const t = pick(m, pool);
+    const t = decide(m, ctx, 16);
     if (t == null) { note(m, 'Ａ６００火弾：対象が無い'); return; }
     const name = nameOf(m, m.board.lanes[t].unit);
     combatApi().destroy(m, t, { normalAttack: false });
@@ -169,11 +252,8 @@
   }
 
   function h24(m, ctx) {                                        // シニスターセラフ：ＣＨ×１破壊
-    // 発動中の自分自身（まだこの階層のＣＨとして残っている）は対象から除く（101憑依解除と同じ理由）
-    const pool = allChannels(m, function (ch, lane, idx) {
-      return !(lane === ctx.laneIndex && idx === ctx.layer - 1);
-    });
-    const t = pick(m, pool);
+    /* 自分の乗っているレーンは丸ごと対象外（§4-1）＝発動中の自分自身も自然に外れる */
+    const t = decide(m, ctx, 24);
     if (!t) { note(m, 'ＣＨ破壊：対象が無い'); return; }
     const removed = dropChannelAt(m, t.lane, t.idx);
     recalc(m);
@@ -225,12 +305,15 @@
   }
 
   function h29(m, ctx) {                                        // ステルスゴブリン：敵手札×１奪取
+    /* 原作も相手の手札を1枚ずつ見ながら選ぶ（＝選択中は手札が丸見えになる）。
+     * 07_unit_abilities.md §ID29。種類の制限は無く、どのカードでも奪える。 */
     const enemy = other(ctx.caster), p = m.players[enemy];
-    if (!p.hand.length) { note(m, '敵手札奪取：相手の手札が無い'); return; }
-    const id = p.hand.splice(m.rng.int(0, p.hand.length - 1), 1)[0];
+    const i = decide(m, ctx, 29);
+    if (i == null) { note(m, '敵手札奪取：相手の手札が無い'); return; }
+    const id = p.hand.splice(i, 1)[0];
     m.players[ctx.caster].hand.push(id);
     capHand(m, ctx.caster);
-    note(m, '敵手札奪取：' + jp(enemy) + 'の手札から1枚奪った');
+    note(m, '敵手札奪取：' + jp(enemy) + 'の手札から ' + nameOf(m, id) + ' を奪った');
   }
 
   function h30(m, ctx) {                                        // イビルアイ：呪爆能力
@@ -248,34 +331,36 @@
     note(m, 'ＬＰ回復：' + jp(ctx.caster) + ' のＬＰ +1');
   }
 
-  function h40(m, ctx) { peekOne(m, 'ＣＨ確認'); }                // スピアバード：ＣＨ×１確認
+  function h40(m, ctx) { peekOne(m, ctx, 'ＣＨ確認'); }            // スピアバード：ＣＨ×１確認
 
   /* ================= C.「特：」型（14体） ================= */
 
-  function s3(m, laneIndex, side) { attachCurseSkill(m, side, 168, '石化付加'); }        // ダーククラウド
-  function s6(m, laneIndex, side) { attachCurseSkill(m, side, 155, '疫障付加'); }        // ヴェノムスピナー
-  function s45(m, laneIndex, side) { attachCurseSkill(m, side, 167, '腐食付加'); }       // デザートニードル
+  /* Ｃ型は turn.js の specialAction() から `(m, laneIndex, side, ctx)` で呼ばれる。
+   * ctx は { laneIndex, cardId, caster, choice }（Ｂ型と同じ形）。 */
+  function s3(m, l, side, ctx) { attachCurseSkill(m, ctx, 168, '石化付加'); }        // ダーククラウド
+  function s6(m, l, side, ctx) { attachCurseSkill(m, ctx, 155, '疫障付加'); }        // ヴェノムスピナー
+  function s45(m, l, side, ctx) { attachCurseSkill(m, ctx, 167, '腐食付加'); }       // デザートニードル
 
-  function s9(m, laneIndex, side) {                             // ディゾルバー：ＬＰ消費ＣＨ１破壊
-    // 消費量がカードテキストに明記されていないため1点とする（簡略実装。要確認事項）
+  function s9(m, laneIndex, side, ctx) {                        // ディゾルバー：ＬＰ消費ＣＨ１破壊
+    // 消費量はカードテキストに明記が無く、判断7で**1点で確定**（本人回答・2026-08-29）
     damage(m, side, 1);
     note(m, 'ＬＰ消費：' + jp(side) + ' のＬＰ -1');
-    const t = pick(m, allChannels(m));
+    const t = decide(m, ctx, 9);
     if (!t) { note(m, 'ＣＨ破壊：対象が無い'); return; }
     const removed = dropChannelAt(m, t.lane, t.idx);
     recalc(m);
     note(m, 'ＣＨ破壊：' + nameOf(m, removed.card) + ' を破壊');
   }
 
-  function s10(m, laneIndex, side) { lightning550(m, side, 'Ａ５５０雷撃'); }             // ヨルムンガンド
-  function s32(m, laneIndex, side) { lightning550(m, side, 'Ａ５５０雷撃'); }             // キャノンタートル
-  function s36(m, laneIndex, side) { lightning550(m, side, 'Ａ５５０烈風'); }             // ヘルフライアー
+  function s10(m, l, side, ctx) { lightning550(m, ctx, 'Ａ５５０雷撃'); }             // ヨルムンガンド
+  function s32(m, l, side, ctx) { lightning550(m, ctx, 'Ａ５５０雷撃'); }             // キャノンタートル
+  function s36(m, l, side, ctx) { lightning550(m, ctx, 'Ａ５５０烈風'); }             // ヘルフライアー
 
-  function s34(m, laneIndex, side) {                            // サイコダイバー：潜入能力
+  function s34(m, laneIndex, side, ctx) {                       // サイコダイバー：潜入能力
     // 魔法カード138『潜入』と同じ挙動（自分自身が他ユニットの裏向きＣＨとして潜行する）を
     // ユニット固有能力として持つ、という解釈
     const unitId = m.board.lanes[laneIndex].unit;
-    const t = pick(m, unitLanesWithRoom(m, laneIndex));
+    const t = decide(m, ctx, 34);
     if (t == null) { note(m, '潜入能力：潜行先が無い'); return; }
     const destName = nameOf(m, m.board.lanes[t].unit);
     m.board.lanes[laneIndex] = S.emptyLane();
@@ -284,7 +369,7 @@
     note(m, '潜入能力：' + nameOf(m, unitId) + ' が ' + destName + ' へ潜行した');
   }
 
-  function s35(m, laneIndex, side) {                            // ティンバータンク：自己ＣＨシャッフル
+  function s35(m, laneIndex, side, ctx) {                       // ティンバータンク：自己ＣＨシャッフル
     const ln = m.board.lanes[laneIndex];
     if (!ln.channels.length) { note(m, '自己ＣＨシャッフル：ＣＨが無い'); return; }
     for (let i = ln.channels.length - 1; i > 0; i--) {
@@ -295,23 +380,22 @@
     note(m, '自己ＣＨシャッフル：ＣＨの並びをシャッフルした');
   }
 
-  function s38(m, laneIndex, side) {                            // デモングローブ：手札＋１入手
+  function s38(m, laneIndex, side, ctx) {                       // デモングローブ：手札＋１入手
     const p = m.players[side], Turn = turnApi();
     const id = Turn.draw(m.rng, p, m);
     capHand(m, side);
     note(m, '手札＋１入手：' + (id == null ? '山札が無い' : nameOf(m, id) + ' を引いた'));
   }
 
-  function s44(m, laneIndex, side) { closeOne(m, 'クローズ'); }   // ブレインサッカー：クローズ×１
-  function s48(m, laneIndex, side) { peekOne(m, 'ＣＨ確認'); }    // スカウター：ＣＨ×１確認
-  function s49(m, laneIndex, side) { peekOne(m, 'ＣＨ確認'); }    // シャドウハンズ：ＣＨ×１確認
+  function s44(m, l, side, ctx) { closeOne(m, ctx, 'クローズ'); }  // ブレインサッカー：クローズ×１
+  function s48(m, l, side, ctx) { peekOne(m, ctx, 'ＣＨ確認'); }   // スカウター：ＣＨ×１確認
+  function s49(m, l, side, ctx) { peekOne(m, ctx, 'ＣＨ確認'); }   // シャドウハンズ：ＣＨ×１確認
 
-  function s70(m, laneIndex, side) {                            // ポルターガイスト：妄執・憑依：D-150
+  function s70(m, laneIndex, side, ctx) {                       // ポルターガイスト：妄執・憑依：D-150
     // 「妄執」は魔法カード148と同じ自爆＋憑依の型。「憑依：D-150」は、このユニット自身が
     // 通常攻撃で倒されたときに残すカース96（防御力-150。カードバトル仕様書§9.2）と同じ効果を、
     // 自ら能動的に発動できる、という解釈（既存のカース96の集計処理をそのまま再利用できる）
-    recalc(m);
-    const dest = pick(m, unitLanesWithRoom(m, laneIndex));
+    const dest = decide(m, ctx, 70);
     combatApi().destroy(m, laneIndex, { normalAttack: false });
     note(m, '妄執：自爆した');
     if (dest != null) {
@@ -342,14 +426,15 @@
    * 無効(190)・抑制(120)のチェックは行わない（開：型はそれらを迂回する、という仕様のため）。
    * 戻り値 {consumed} … このカード自身のホストレーン自体が消滅した（30イビルアイ）ことを
    * 呼び出し元（combat.js/turn.js のオープンループ）へ知らせる */
-  function onUnitOpen(m, laneIndex, layer, cardId) {
+  function onUnitOpen(m, laneIndex, layer, cardId, opts) {
     const handler = B_HANDLERS[cardId];
     if (!handler) return { consumed: false, handled: false };
     const ln0 = m.board.lanes[laneIndex];
     const ch0 = ln0 && ln0.channels[layer - 1];
     const caster = ch0 ? (ch0.mine ? 'self' : 'enemy') : m.active;
     const opener = m.combat ? combatApi().openerSide(m) : m.active;
-    const r = handler(m, { laneIndex: laneIndex, layer: layer, cardId: cardId, opener: opener, caster: caster }) || {};
+    const r = handler(m, { laneIndex: laneIndex, layer: layer, cardId: cardId, opener: opener,
+      caster: caster, choice: opts && opts.choice }) || {};
     /* handled … 効果を処理したのでリバース召還はしない（階層が残っていても） */
     return { consumed: !!r.consumed, handled: !!r.consumed || !!r.handled };
   }
@@ -357,14 +442,15 @@
   /** turn.js の specialAction() から、メインステップの4つ目の主行動として呼ばれる（§10.1）。
    * 呼び出し側が「対象の有無に関わらず必ず硬直させる」処理を担当するので、ここでは純粋に
    * 効果の解決だけを行う */
-  function doSpecialAction(m, laneIndex, side) {
+  function doSpecialAction(m, laneIndex, side, opts) {
     const cardId = m.board.lanes[laneIndex].unit;
     const handler = C_HANDLERS[cardId];
     if (!handler) return;
-    handler(m, laneIndex, side);
+    handler(m, laneIndex, side, { laneIndex: laneIndex, cardId: cardId, caster: side,
+      choice: opts && opts.choice });
   }
 
-  const api = { onUnitOpen, doSpecialAction, B_TYPE, C_TYPE };
+  const api = { onUnitOpen, doSpecialAction, targetsFor, B_TYPE, C_TYPE };
   global.CQUnits = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

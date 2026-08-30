@@ -844,6 +844,67 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('潜行は破壊ではないのでＬＰは減らない',
     await page.evaluate(() => M.players.self.lp === 10));
   await shot('wp5-sennyu');
+
+  /* --- M6.7 WP6：ユニット固有能力の対象選択 ---------------------------------
+   * 魔法とまったく同じ配線（CQUnits.targetsFor → startPick → choice）で動くこと。 */
+  /* ⑦ 開：クローズ×１（ミルファイター）。表向きのＣＨなら何でも戻せる・自分のレーンは除く */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 8, ch: [{ id: 151, up: true, by: 'self' }, { id: 1, up: false, by: 'self' }] },
+    '1': { unit: 8, ch: [] },
+    '3': { unit: 8, ch: [{ id: 151, up: true, by: 'enemy' }, { id: 152, up: true, by: 'enemy' }] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="2"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(300);
+  ok('★ユニットの「開：」能力でも対象を選べる（クローズ×１）',
+    await page.evaluate(() => UI.pick && UI.pick.kind === 'ch' && UI.pick.card === 1),
+    JSON.stringify(await page.evaluate(() => UI.pick && { k: UI.pick.kind, c: UI.pick.card })));
+  ok('★自分の乗っているレーンの表向きＣＨは光らない（§4-1・本人指摘）',
+    (await page.$$eval('.card.ch.pick', (els) => els.map((e) => e.dataset.lane + ':' + e.dataset.layer).join(','))) === '3:1,3:2',
+    await page.$$eval('.card.ch.pick', (els) => els.map((e) => e.dataset.lane + ':' + e.dataset.layer).join(',')));
+  await shot('wp6-unit-open');
+  await page.click('.card.ch[data-lane="3"][data-layer="2"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(800);
+  ok('選んだカードだけが裏に戻る',
+    await page.evaluate(() => M.board.lanes[3].channels[0].up === true
+      && M.board.lanes[3].channels[1].up === false));
+
+  /* ⑧ 特：Ａ５５０雷撃（ヨルムンガンドの特殊行動）でも対象を選べる */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 10, ch: [] }, '3': { unit: 8, ch: [] }, '4': { unit: 8, ch: [] } } }));
+  await page.click('.lane[data-lane="0"] .card.unit', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(250);
+  await page.click('[data-act="special-action"]');
+  await page.waitForTimeout(300);
+  ok('★特殊行動（Ｃ型）でも対象を選べる（Ａ５５０雷撃）',
+    (await page.$$eval('.lane.pick-lane', (els) => els.map((e) => e.dataset.lane).join(','))) === '3,4',
+    await page.$$eval('.lane.pick-lane', (els) => els.map((e) => e.dataset.lane).join(',')));
+  await shot('wp6-special');
+  await page.click('.lane[data-lane="4"] .card.unit', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(1100);
+  ok('選んだユニットだけが破壊される',
+    await page.evaluate(() => M.board.lanes[4].unit === null && M.board.lanes[3].unit === 8),
+    JSON.stringify(await page.evaluate(() => M.board.lanes.map((l) => l.unit))));
+
+  /* ⑨ 開：敵手札×１奪取（ステルスゴブリン）。手札から選ぶ型 */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, {
+    hand: { self: [], enemy: [101, 8, 151] },
+    lanes: { '0': { unit: 8, ch: [{ id: 29, up: false, by: 'self' }] },
+             '1': { unit: 8, ch: [] }, '3': { unit: 8, ch: [] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(350);
+  ok('★敵手札奪取は相手の手札が全部見える（種類の制限なし）',
+    (await page.$$('#info-fix .dp-card')).length === 3
+      && (await page.$$('#info-fix .dp-card.dim')).length === 0,
+    String((await page.$$('#info-fix .dp-card')).length) + '枚／沈み '
+      + String((await page.$$('#info-fix .dp-card.dim')).length) + '枚');
+  await page.click('#info-fix .dp-card[data-act="pick-hand"][data-i="2"]');
+  await page.waitForTimeout(800);
+  ok('選んだ1枚が自分の手札に移る',
+    await page.evaluate(() => M.players.enemy.hand.join(',') === '101,8'
+      && M.players.self.hand.indexOf(151) >= 0),
+    JSON.stringify(await page.evaluate(() => M.log.slice(-2))));
   await reopenBoard();
   /* ストーリー側のセーブに触れていないこと（フリーバトルと同じ扱い） */
   ok('盤面セットアップはストーリーのセーブを壊さない',
