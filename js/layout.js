@@ -1467,7 +1467,21 @@ function infoCardHTML(card, o) {
     <div class="i-tag">${TYPE_NAME[card.t]}</div>${own === undefined ? '' : ownTagHTML(own, unit)}
     <h3>${card.n}</h3>
     <div class="i-kv">${kv}</div>${now}
-    <p class="i-t">${card.e || '（特殊能力なし）'}</p>${foot}`;
+    <p class="i-t">${card.e || '（特殊能力なし）'}</p>${cardCondHTML(card)}${foot}`;
+}
+
+/** 発動条件のバッジ（M6.7 WP4・2026-08-30）。
+ * 説明文に「／戦闘中×強制中×（レベル３」と押し込むのをやめ、**別の欄**に出す。
+ * 条件はエンジン（magic.js の NO_COMBAT / NO_FORCED）が持っているものをそのまま読む
+ * ——data.js に書き写すと必ずどちらかが古くなるので、**二重に持たない**。
+ * 詠唱Ｌｖ・召還Ｌｖは能力値の欄（i-kv）に既に出ているので、ここでは繰り返さない。 */
+function cardCondHTML(card) {
+  if (!card || typeof CQMagic === 'undefined') return '';
+  const tags = [];
+  if (CQMagic.NO_COMBAT && CQMagic.NO_COMBAT[card.id]) tags.push('戦闘中は発動しません');
+  if (CQMagic.NO_FORCED && CQMagic.NO_FORCED[card.id]) tags.push('強制開放・強制転回では発動しません');
+  if (!tags.length) return '';
+  return `<div class="i-cond">${tags.map((t) => `<span>${t}</span>`).join('')}</div>`;
 }
 
 function miniCardHTML(card) {
@@ -2622,6 +2636,7 @@ function renderDetail() {
       <div class="bn">${c.n}</div>
       <div class="bstat">${stat}</div>
       <div class="btext">${c.e || ''}</div>
+      ${cardCondHTML(c)}
     </div>
     <div class="obt"><h4>入手方法</h4>
       <div class="obtain">${(c.g || '').replace(/</g, '&lt;')}</div></div>`;

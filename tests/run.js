@@ -5038,6 +5038,57 @@ t('戦闘中は当事者の2レーンだけが母数（§4-1）', () => {
   eq(uf(m, 1).targets, [{ lane: 3, idx: 0 }], '戦闘中は当事者だけ');
 });
 
+
+/* ================= M6.7 WP4: 説明文の全面書き直し =================
+ * 追補§0-2「分かりにくい説明文はすべて分かりやすく書き直す」。
+ * ・主語と対象をはっきり書く
+ * ・発動条件（戦闘中×・強制中×・レベル）は文章に混ぜず、画面の別欄（.i-cond）に出す
+ * ・原作テキストは eOrig に残す（資料との突き合わせのため） */
+section('M6.7 WP4: 説明文');
+
+t('全169種に説明文がある', () => {
+  const empty = CARDS.filter((c) => !c.e || !String(c.e).trim()).map((c) => c.id);
+  eq(empty, [], '空の説明文が無い');
+  eq(CARDS.length, 180, 'デッキに入る169種＋カース9種＋おじゃま虫');
+});
+
+t('★発動条件が説明文に混ざっていない（別の欄に出す）', () => {
+  /* 「／戦闘中×」「／強制中×」「（レベル３」のような書き方が残っていないこと。
+   * これらは画面側 cardCondHTML() がエンジンの NO_COMBAT / NO_FORCED から出す。 */
+  const bad = CARDS.filter((c) => /／\s*(戦闘中|強制中)|（レベル|\(レベル/.test(c.e || ''))
+    .map((c) => c.id + ' ' + c.n + '：' + c.e);
+  eq(bad, [], '条件が文末に押し込まれた説明文は残っていない');
+});
+
+t('説明文の長さが揃っている（カード枠に収まる範囲）', () => {
+  const longOnes = CARDS.filter((c) => (c.e || '').length > 60)
+    .map((c) => c.id + ' ' + c.n + '(' + c.e.length + '字)');
+  eq(longOnes, [], '60字を超える説明文は無い');
+});
+
+t('★原作テキストは eOrig に残っている（資料と突き合わせられる）', () => {
+  /* 書き直したカードは必ず元の文を控えている。 */
+  const rewritten = CARDS.filter((c) => c.eOrig);
+  eq(rewritten.length >= 169, true, '書き直した分だけ控えがある：' + rewritten.length + '件');
+  const same = rewritten.filter((c) => c.e === c.eOrig).map((c) => c.id);
+  eq(same, [], '控えと同じ文が eOrig に入っているものは無い');
+});
+
+t('全角の記号・数字で統一されている（画面の他の文字と揃える）', () => {
+  /* 半角のカタカナ・半角数字が混じると、カードの上で見た目が崩れる。 */
+  const bad = CARDS.filter((c) => /[0-9]/.test((c.e || '').replace(/\(\d+\)/g, '')))
+    .map((c) => c.id + ' ' + c.n + '：' + c.e);
+  eq(bad, [], '説明文の数字は全角（カードＩＤの参照だけ半角括弧つきで許す）');
+});
+
+t('魔法の詠唱Ｌｖは data と エンジン（LEVEL_REQ）で一致している', () => {
+  /* WP2 から続く不変条件。説明文を書き直しても崩れていないこと。 */
+  const bad = CARDS.filter((c) => c.t === 'M')
+    .filter((c) => c.lv !== (CQMagic.LEVEL_REQ[c.id] || 1))
+    .map((c) => c.id + ' data=' + c.lv + ' engine=' + (CQMagic.LEVEL_REQ[c.id] || 1));
+  eq(bad, [], '表示と実装が食い違っていない');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

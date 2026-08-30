@@ -498,6 +498,13 @@ img.curse-art{
 
 /* 引いた札から選ぶ画面（122予見・146口寄せ。M6.7 WP3）。
  * 情報パネルの中に、めくったカードを横に並べる。予見は5枚なので横スクロールを許す。 */
+/* 発動条件のバッジ（M6.7 WP4）。説明文の外に出して、条件だけを拾い読みできるようにする。 */
+.i-cond{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.i-cond span{
+  font-size:12px;font-weight:700;line-height:1.3;
+  color:#ffc9c9;background:#3a1418;border:1px solid #7f2a33;
+  border-radius:6px;padding:3px 8px;
+}
 .dp-row{display:flex;gap:8px;margin-top:10px;overflow-x:auto;padding-bottom:4px}
 .dp-card{flex:0 0 92px;background:#1a2338;border:2px solid var(--line);border-radius:10px;
   padding:6px;cursor:pointer;transition:border-color .12s,transform .12s}

@@ -554,6 +554,24 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('デッキ編集はアンロックに関係なく全モンスターが並ぶ',
     (await page.$$('#tbody tr')).length === await page.evaluate(() => CARDS.filter((c) => c.t === 'U').length),
     String((await page.$$('#tbody tr')).length) + '行');
+  /* M6.7 WP4：説明文を書き直し、発動条件は文章から出して別の欄（.i-cond）に置いた。 */
+  await page.click('.dtab.M');
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { selectedId = 108; renderDetail(); });
+  await page.waitForTimeout(120);
+  ok('★カードの説明文が実装どおりの文になっている（M6.7 WP4）',
+    (await page.$eval('#detail .btext', (e) => e.textContent)).indexOf('下から順に１枚ずつ表にする') >= 0,
+    await page.$eval('#detail .btext', (e) => e.textContent));
+  ok('★発動条件は説明文の外に、別の欄で出る',
+    (await page.$$eval('#detail .i-cond span', (els) => els.map((e) => e.textContent).join('／'))) === '戦闘中は発動しません／強制開放・強制転回では発動しません',
+    await page.$$eval('#detail .i-cond span', (els) => els.map((e) => e.textContent).join('／')));
+  await page.evaluate(() => { selectedId = 101; renderDetail(); });
+  await page.waitForTimeout(120);
+  ok('条件の無いカードにはバッジが出ない',
+    (await page.$$('#detail .i-cond span')).length === 0);
+  await shot('wp4-card-text');
+  await page.click('.dtab.U');
+  await page.waitForTimeout(200);
   const deckBefore = await page.evaluate(() => Object.values(deck).reduce((s, n) => s + n, 0));
   await page.click('#tbody [data-plus]');
   await page.waitForTimeout(120);
