@@ -843,6 +843,37 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
       && M.log.some((l) => l.indexOf('クローズ：') === 0)),
     JSON.stringify(await page.evaluate(() => M.log.slice(-3))));
 
+  /* ★招来の召還レベルは「唱えた深さ」で決まる（2026-08-30 本人判断）。
+   * 浅いところで唱えるとＬｖ1しか呼べず、深く唱えると大物も呼べる。
+   * 呼べないユニットはそもそも候補に出さない（選んだのに壊れる、という罠にしない）。 */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, { lanes: {
+    '0': { unit: 13, ch: [{ id: 180, up: false, by: 'self' }, { id: 180, up: false, by: 'self' },
+                          { id: 180, up: false, by: 'self' }, { id: 180, up: false, by: 'self' },
+                          { id: 121, up: false, by: 'self' }] },
+    '1': { unit: 13, ch: [{ id: 121, up: false, by: 'self' }] },
+    '3': { unit: 13, ch: [{ id: 1, up: false, by: 'self' }, { id: 10, up: false, by: 'self' }] },
+    '4': { unit: 13, ch: [{ id: 2, up: false, by: 'self' }] } } }));
+  await page.click('.card.ch[data-lane="1"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(300);
+  ok('★浅く唱えた招来では、召還Ｌｖの高いユニットが候補に出ない',
+    await page.evaluate(() => UI.pick && UI.pick.kind === 'ch'
+      && UI.pick.targets.map((t) => M.board.lanes[t.lane].channels[t.idx].card).indexOf(10) < 0),
+    JSON.stringify(await page.evaluate(() => UI.pick
+      && UI.pick.targets.map((t) => M.board.lanes[t.lane].channels[t.idx].card))));
+  await page.click('.card.ch[data-lane="3"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(800);
+  await page.click('.card.ch[data-lane="0"][data-layer="5"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(350);
+  ok('★深く唱えた招来なら、召還Ｌｖ5の大物も候補に入る',
+    await page.evaluate(() => UI.pick && UI.pick.kind === 'ch'
+      && UI.pick.targets.map((t) => M.board.lanes[t.lane].channels[t.idx].card).indexOf(10) >= 0),
+    JSON.stringify(await page.evaluate(() => UI.pick
+      && UI.pick.targets.map((t) => M.board.lanes[t.lane].channels[t.idx].card))));
+  await shot('shourai-depth');
+  await page.click('.card.ch[data-lane="4"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(700);
+
   /* ⑥ 潜入(138)：このカードが付いているユニットごと、他ユニットの中へ潜る */
   await reopenBoard();
   await startBoard(Object.assign({}, BASE, { lanes: {

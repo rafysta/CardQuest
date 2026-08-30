@@ -485,13 +485,26 @@
       case 118:   /* 押収：DASH */
         return chs(rDash(m, c));
       case 121: { /* 招来：潜行しているユニットカード。**中身が分かっているものだけ**選べる
-                   *（自分が置いたか、透視・解析で既知になったもの）。原作もこの条件。 */
+                   *（自分が置いたか、透視・解析で既知になったもの）。原作もこの条件。
+                   *
+                   * ★召還レベルの判定（2026-08-30 本人判断）：**唱えた深さで決まる**。
+                   *   このカードを置いた階層 ≧ 相手ユニットの召還Ｌｖ でないと呼べない。
+                   *   ——原作は「潜行していた階層」で見ており、それは普通のリバース召還と
+                   *   まったく同じ規則だったが、実測すると大物（召還Ｌｖ3以上）の97.7%が
+                   *   引けなくなり、5000Ｇのカードとして物足りなかった。
+                   *   「深く唱えるほど大きなものを呼べる」ほうが、詠唱Ｌｖの考え方とも揃い、
+                   *   魔道書(186)・スペルリーダー(53)でその深さに下駄をはかせる余地も残る。
+                   *   呼べないユニットは**候補に出さない**（選んだのに壊れる、という罠にしない）。 */
         const mine = c.caster === 'self';
+        recalc(m);
+        const here = m.board.lanes[c.laneIndex];
+        const depth = (c.layer || 1) + ((here && here.acc && here.acc.tome) || 0);
         return chs(allChannels(m, function (ch, l) {
           if (!inScope(m, c, l) || ch.up) return false;
           const card = m.cards[ch.card];
           if (!card || card.t !== 'U') return false;
-          return ch.mine === mine || ch.revealed;
+          if (!(ch.mine === mine || ch.revealed)) return false;
+          return depth >= S.unitStats(card).lv;
         }));
       }
       case 141:   /* 思念波：防御力551〜1000（550以下は雷撃の担当。原作の住み分け） */
@@ -775,7 +788,7 @@
 
   function h121(m, ctx) {                                     // 招来：潜行しているユニット1つを自分の場に召還
     const t = decide(m, ctx, 121);       // 潜行しているユニットカード（中身が分かっているものだけ）
-    if (!t) { note(m, '招来：召還できる潜行ユニットが無い'); return; }
+    if (!t) { note(m, '招来：呼べる潜行ユニットが無い（唱えた階層より召還Ｌｖの高いものは呼べない）'); return; }
     // M6 戦場ルール：ふさがれたレーン（laneLock）は召還先にできず、
     // 素のＣＨ数が上限を超えるユニット（noHighCH）はそもそも出せない
     let dest = pick(m, Field.freeLanesOf(m, ctx.caster));

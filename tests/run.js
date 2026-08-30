@@ -5089,6 +5089,56 @@ t('魔法の詠唱Ｌｖは data と エンジン（LEVEL_REQ）で一致して�
   eq(bad, [], '表示と実装が食い違っていない');
 });
 
+
+/* ================= 招来(121)の召還レベル判定（2026-08-30 本人判断） =================
+ * 「唱えた深さ ≧ 相手ユニットの召還Ｌｖ」で決まる。呼べないものは候補に出さない。 */
+section('招来(121)：唱えた深さで呼べるものが決まる');
+
+t('★浅いところで唱えると、大物は候補に出ない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(121)]);                 /* 第1層で唱える */
+  m.board.lanes[3] = lane(13, [down(1, { mine: true }),     /* ミルファイター＝召還Ｌｖ1 */
+                               down(10, { mine: true })]);  /* ヨルムンガンド＝召還Ｌｖ5 */
+  const r = CQMagic.targetsFor(m, 121, { laneIndex: 0, layer: 1, caster: 'self' });
+  eq(r.targets, [{ lane: 3, idx: 0 }], '第1層ではＬｖ1しか呼べない');
+});
+
+t('★深いところで唱えると、大物も呼べる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(180), down(180), down(180), down(180), down(121)]);
+  m.board.lanes[3] = lane(13, [down(10, { mine: true })]);   /* 召還Ｌｖ5 */
+  const r = CQMagic.targetsFor(m, 121, { laneIndex: 0, layer: 5, caster: 'self' });
+  eq(r.targets, [{ lane: 3, idx: 0 }], '第5層ならＬｖ5も候補に入る');
+});
+
+t('★魔道書(186)は唱えた深さに下駄をはかせる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [up(186), down(180), down(121)]);   /* 第3層＋魔道書2 ＝ 深さ5 */
+  m.board.lanes[3] = lane(13, [down(10, { mine: true })]);
+  CQStats.recalc(m.board, OPT);
+  const r = CQMagic.targetsFor(m, 121, { laneIndex: 0, layer: 3, caster: 'self' });
+  eq(r.targets, [{ lane: 3, idx: 0 }], '第3層でも魔道書があればＬｖ5を呼べる');
+});
+
+t('呼べるものが無ければ不発（選んだのに壊れる、という罠にしない）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(121)]);
+  m.board.lanes[3] = lane(13, [down(10, { mine: true })]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].channels.map((c) => c.card), [10], '潜行ユニットはそのまま残る（破壊されない）');
+  eq(m.log.some((l) => l.indexOf('招来：呼べる潜行ユニットが無い') === 0), true, '不発の記録が残る');
+});
+
+t('深さの条件を満たせば、これまでどおり「開：」能力も出る', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [down(180), down(180), down(121)]);   /* 第3層 */
+  m.board.lanes[2] = lane(13, [down(16, { mine: true })]);          /* レッドレックス＝召還Ｌｖ4 */
+  m.board.lanes[3] = lane(8, []);
+  CQStats.recalc(m.board, OPT);
+  eq(CQMagic.targetsFor(m, 121, { laneIndex: 0, layer: 3, caster: 'self' }).targets, [],
+    '第3層ではＬｖ4のレッドレックスは呼べない');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }
