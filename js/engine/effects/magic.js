@@ -1311,11 +1311,20 @@
     const o = opts || {};
     const ln00 = m.board.lanes[laneIndex];
     const chSelf = ln00 && ln00.channels[layer - 1];      /* このカードの実体（発動後の後始末用） */
+    /* ★戦闘の最中に開かれた魔法は、その場では壊さない（2026-08-31 本人指摘）。
+     * 「戦闘が続いている間は残っていてほしい。戦闘が終わり次第破壊されてほしい」——
+     * v0.16.36 で入れた「使い終わったら砕ける」が戦闘中にも効いてしまい、憑依解除が
+     * 相手のＣＨを壊した**直後に自分も消える**のが分かりにくかった。戦闘中に開いた魔法は
+     * 表のまま場に残し、戦闘終了の魔法消去（combat.js endBattle → expireMagic）に任せる。
+     * ——**入り口で見た状態**を使うこと。効果そのものが戦闘を終わらせる札（呪爆など）だと
+     * 処理の途中で m.combat が null になり、そのときは既に expireMagic が掃除し終えている。 */
+    const inCombat = !!m.combat;
     /* 不発でも使い終わり＝破壊される（2026-08-31 本人指定。原作も詠唱レベル不足で
-     * 「カードは消滅する」§116）。連鎖中（o.forced）は連鎖の終わりにまとめて消えるので触らない。 */
+     * 「カードは消滅する」§116）。連鎖中（o.forced）は連鎖の終わりにまとめて消えるので触らない。
+     * 戦闘中（inCombat）も同じ理由で触らない＝戦闘終了まで残る。 */
     const fizzle = function (msg) {
       note(m, msg);
-      const gone = !o.forced && expireSpent(m, laneIndex, chSelf);
+      const gone = !o.forced && !inCombat && expireSpent(m, laneIndex, chSelf);
       return { consumed: gone };
     };
     if (o.nullified) return fizzle('無効：' + nameOf(m, cardId) + ' は発動しなかった');
@@ -1356,9 +1365,10 @@
     }
     /* ★使い終わった魔法は破壊される（2026-08-31 本人指定）。
      *   ・持続型（FLAG_MAGIC の7種）は残る——「表で居ること」が効果そのものだから
+     *   ・戦闘中（inCombat）は残る——戦闘が終わってから、まとめて魔法消去で消える（本人指摘）
      *   ・連鎖中（o.forced）は残る——連鎖の終わりにまとめて消える（前項の仕組み）
      *   ・選択待ち（122予見・146口寄せの対話中）は残る——resolvePending が済んでから消す */
-    if (!o.forced && !FLAG_MAGIC[cardId] && !consumed && !m.forcedChain) {
+    if (!o.forced && !inCombat && !FLAG_MAGIC[cardId] && !consumed && !m.forcedChain) {
       /* !m.forcedChain：108/109 は自分自身が**連鎖のマーカー**になる。ここで消すと
        * 「元凶を壊せば連鎖が止まる」が成立しなくなるので、連鎖の終わり（endForcedChain）
        * にマーカーとして消える。連鎖が即時に完走した場合も同じ経路で既に消えている。 */

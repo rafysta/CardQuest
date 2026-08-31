@@ -5323,7 +5323,9 @@ t('中断された連鎖でも、そこまでに開いた魔法は消える', ()
  * 原則：効果を発揮した後（不発でも）、魔法カードは消える。
  * 例外：①持続型7種（104爆殺・106増幅・117障壁・120抑制・136遮蔽・143偽装・145鏡身）
  *       ——「表で居ること」が効果そのものなので残り、従来どおりターン終わりに消える
- *       ②停滞(151)のレーン ③連鎖中（連鎖の終わりにまとめて消える） */
+ *       ②停滞(151)のレーン ③連鎖中（連鎖の終わりにまとめて消える）
+ *       ④**戦闘中**（2026-08-31 本人指摘）——戦闘が続いている間は表のまま残り、
+ *         戦闘終了の魔法消去（endBattle → expireMagic）でまとめて消える */
 section('魔法は使い終わると破壊される');
 
 t('★一発型の魔法は、発動した後すぐ消える（139爆雷）', () => {
@@ -5342,15 +5344,49 @@ t('★不発でも消える：詠唱レベル不足（原作§116「カードは
   eq(m.board.lanes[3].channels[0].revealed, false, '効果は出ていない');
 });
 
-t('★不発でも消える：戦闘中に開いた戦闘不可の魔法', () => {
+t('★戦闘中に開いた魔法は、戦闘が終わるまで場に残る（101憑依解除）', () => {
+  /* 本人の報告（2026-08-31）：憑依解除が相手のＣＨを壊した直後に自分も消えていた。
+   * 戦闘の最中は表のまま残し、戦闘が終わってから消えるのが望ましい。 */
+  const m = duel(8, [down(101)], 1, [down(151), down(152)]);
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 1, { choice: { lane: 3, idx: 1 } });
+  eq(m.board.lanes[3].channels.map((c) => c.card), [151], '狙った1枚は壊れる');
+  eq(m.board.lanes[0].channels.map((c) => [c.card, c.up]), [[101, true]],
+     '使い終わった101は表のまま戦闘中は残る');
+  fin(m);
+  eq(m.combat, null, '戦闘が終わった');
+  eq(m.board.lanes[0].channels.length, 0, '戦闘が終わると消える');
+});
+
+t('★不発の魔法も、戦闘中なら戦闘が終わってから消える（124凍結＝戦闘中×）', () => {
+  /* 防御側にも伏せ札を持たせておく——攻撃側が開き終えた時点で双方の開ける札が尽きると、
+   * その場で判定まで走って戦闘が終わってしまい、「戦闘の間」を見られない。 */
+  const m = duel(8, [down(124)], 1, [down(151), down(152)]);
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 1);
+  eq(m.log.some((t2) => /戦闘中は発動しない/.test(t2)), true, '不発になっている');
+  eq(m.combat != null, true, 'まだ戦闘中');
+  eq(m.board.lanes[0].channels.map((c) => c.card), [124], '戦闘の間は残る');
+  fin(m);
+  eq(m.board.lanes[0].channels.length, 0, '戦闘が終わると消える');
+});
+
+t('★戦闘中はＵＩの予約（赤枠→粉々）に自分自身を載せない', () => {
+  const m = duel(8, [down(101)], 1, [down(151), down(152)]);
+  CQCombat.declareAttack(m, 0, 3);
+  CQMagic.beginAim(m);
+  CQCombat.open(m, 1, { choice: { lane: 3, idx: 1 } });
+  const aimed = CQMagic.endAim(m);
+  eq(aimed.some((a) => a.card === 152), true, '狙った152は予約される');
+  eq(aimed.some((a) => a.card === 101), false, '使い終わった101は予約されない＝壊れる演出も出ない');
+});
+
+t('★戦闘の外では従来どおり、その場で消える（同じ101で比べる）', () => {
   const m = mkBattleBoard();
-  m.board.lanes[0] = lane(8, [down(124)]);                 /* 凍結＝戦闘中× */
-  m.board.lanes[3] = lane(8, []);
-  m.combat = { attacker: 0, defender: 3, opener: 'attacker' };
-  m.board.lanes[0].channels[0].up = true;                  /* 戦闘オープンで表になった状態 */
-  CQMagic.onMagicOpen(m, 0, 1, 124, {});
-  eq(m.board.lanes[0].channels.length, 0, '不発のカードも消える');
-  eq(m.board.lanes[3].stiff, false, '効果は出ていない');
+  m.board.lanes[0] = lane(8, [down(101)]);
+  m.board.lanes[3] = lane(8, [down(151)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[0].channels.length, 0, 'メインステップなら発動後すぐ消える');
 });
 
 t('★持続型（117障壁）は残る——「表で居ること」が効果だから', () => {
