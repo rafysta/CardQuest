@@ -33,7 +33,7 @@ body{
 }
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 button:disabled{opacity:.35;cursor:default}
-input{-webkit-user-select:text;user-select:text}
+input,textarea{-webkit-user-select:text;user-select:text}
 
 /* ---- 画面サイズは Galaxy Tab S11 横向き（1280×800）に固定する ----
  * 大きい画面で開いてもレイアウトが伸びないよう、常に 1280×800 の箱として組み、
@@ -1714,3 +1714,62 @@ td.nm{font-weight:800}
 .res-journal{color:var(--accent);font-size:13px;margin:0 0 4px;min-height:1.2em}
 .res-carry-note{color:var(--dim);font-size:12px;margin:0 0 8px}
 .res-done{width:100%;padding:12px;font-size:16px;margin-top:0}
+
+/* ---- 盤面レポート（js/report.js・2026-08-31） ----
+ * 🛠メニューの「📮 盤面を報告」で開くダイアログ。cq-confirm-overlay と同じ理由で
+ * #app の中に position:absolute で置く（#app の transform:scale と一緒に縮む）。 */
+.cqr-overlay{
+  position:absolute;inset:0;background:rgba(3,5,10,.72);z-index:1150;
+  display:flex;align-items:center;justify-content:center;
+}
+.cqr-box{
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  width:min(760px,calc(100% - 64px));max-height:calc(100% - 48px);
+  display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(0,0,0,.6);
+}
+.cqr-h{
+  display:flex;align-items:center;gap:10px;font-size:16px;font-weight:800;
+  padding:14px 18px;border-bottom:1px solid var(--line);
+}
+.cqr-sub{font-size:12px;font-weight:700;color:var(--accent)}
+.cqr-x{margin-left:auto;font-size:16px;color:var(--dim);padding:2px 6px}
+.cqr-x:hover{color:var(--txt)}
+.cqr-body{padding:14px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.cqr-lb{font-size:13px;color:var(--dim)}
+.cqr-ta{
+  width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+  color:var(--txt);font:inherit;font-size:16px;line-height:1.5;padding:10px 12px;resize:none;
+}
+.cqr-ta:focus{outline:none;border-color:var(--accent)}
+.cqr-where{
+  font-size:13px;color:var(--dim);background:var(--panel2);
+  border-radius:8px;padding:7px 10px;
+}
+.cqr-hist{
+  font-size:12px;line-height:1.7;color:var(--dim);
+  border-top:1px dashed var(--line);padding-top:8px;max-height:190px;overflow-y:auto;
+}
+.cqr-hist-h{font-weight:800;color:var(--txt);margin-bottom:4px;font-size:12px}
+.cqr-dim{color:var(--dim)}
+.cqr-msg{
+  font-size:13px;line-height:1.6;padding:8px 18px;
+  border-top:1px dashed var(--line);color:var(--txt);
+}
+.cqr-btns{
+  display:flex;gap:10px;align-items:center;padding:12px 18px;
+  border-top:1px solid var(--line);
+}
+.cqr-btns .btn{flex:0 0 auto;min-width:200px;height:48px;font-size:16px}
+.cqr-btns .tiny{flex:none}
+.cqr-btns .tiny[data-cqr="list"]{margin-left:auto}
+/* 控えの一覧 */
+.cqr-list{gap:6px}
+.cqr-row{
+  display:flex;align-items:center;gap:8px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px;
+}
+.cqr-row-t{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.cqr-row-t b{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cqr-row-t small{font-size:11px;color:var(--dim)}
+.cqr-row .tiny{padding:6px 10px}
+.cqr-row .tiny.del{color:#ff9a8b}

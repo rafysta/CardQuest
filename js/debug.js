@@ -8,6 +8,10 @@
  *   🔄 最新版のチェック … いま読み込まれている版が、公開中のもの・GitHubのものと同じかを見る。
  *   📐 ルーラー         … 画面に80px方眼の点線と番号を重ねる。「x:3, y:5 から縦3・横5」の
  *                        ような位置指定ができるようになる。もう一度押すと消える。
+ *   📮 盤面を報告      … いまの盤面と直前5手の動きをＪＳＯＮにして、Androidの共有機能で
+ *                        自分あてにメールで送る（2026-08-31・本人指定。ランの最中に
+ *                        「いまのカードの動きが気になる」と思ったとき、手を止めずに
+ *                        後で見返せるように残しておくためのもの）。js/report.js。
  *   🎬 目覚めの場面     … 冒頭、アンバーと初めて出会って話す場面だけを最初から見返して
  *                        元の画面に戻る（2026-08-29・本人指定。プレイヤーが後で振り返りたい
  *                        ときのためのメニュー。cq_meta.openingSeen やランの状態には触れない）。
@@ -28,6 +32,7 @@ const CQDebug = (function () {
     { icon: '🃏', label: 'デッキ編集', hint: '全169種から自由に組む（フリーバトル用）', run: openDeckEdit },
     { icon: '🧪', label: '盤面をセットして戦う', hint: 'レーン・ＣＨ・手札を指定して戦闘を始める', run: openBoardSetupScreen },
     { icon: '⚔', label: 'バトルをスキップ（勝利）', hint: 'いまの戦闘を勝ちで終わらせる', run: skipBattle },
+    { icon: '📮', label: '盤面を報告', hint: 'いまの盤面と直前5手をメールで自分に送る', run: openReport },
     { icon: '🔄', label: '最新版のチェック', hint: '公開中・GitHubの版と見比べる', run: checkVersion },
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
     { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene }
@@ -68,6 +73,14 @@ const CQDebug = (function () {
       if (typeof RUN_ACTIVE !== 'undefined') { RUN_ACTIVE = false; runOverHook = null; }
       openBoardSetup();
     });
+  }
+
+  /* 📮 盤面を報告（2026-08-31）。中身は js/report.js。ランの状態にも対戦の状態にも触れない
+   * （読むだけ）ので、フリーバトルのような「移ると戦闘が失われる」確認は要らない。 */
+  function openReport() {
+    close();
+    if (typeof CQReport === 'undefined' || !CQReport.open) return out('報告の仕組みが読み込まれていません。');
+    CQReport.open();
   }
 
   function close() { if (panel) { panel.remove(); panel = null; } }
@@ -242,5 +255,5 @@ const CQDebug = (function () {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
-  return { toggle, close, skipBattle, checkVersion, toggleRuler, playOpeningScene };
+  return { toggle, close, skipBattle, checkVersion, toggleRuler, playOpeningScene, openReport };
 })();

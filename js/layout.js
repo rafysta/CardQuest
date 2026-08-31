@@ -1062,7 +1062,13 @@ async function runStep() {
 
 /* ================= 描画 ================= */
 
-function renderAll() { renderStatus(); renderBoard(); renderHand(); renderPanel(); }
+/* 盤面レポート（js/report.js・2026-08-31）：ログが伸びていたらその時点の盤面を1つ積む。
+ * ここに置くのは「エンジンのどの入口を通っても必ず最後にここへ来る」ため。読むだけなので
+ * 対戦・乱数には影響しない（report.js 側で例外も握りつぶしてある）。 */
+function renderAll() {
+  if (typeof CQReport !== 'undefined') CQReport.tick();
+  renderStatus(); renderBoard(); renderHand(); renderPanel();
+}
 
 function renderStatus() {
   const me = M.players.self, foe = M.players.enemy;
