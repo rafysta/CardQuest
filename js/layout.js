@@ -530,6 +530,15 @@ document.getElementById('free-root').addEventListener('click', (ev) => {
 const BOARD_PRESET_KEY = 'cq_debug_board';
 let BSET = null;                 /* 編集中の盤面（CQBoardSpec の形）。初回は下で作る */
 let bsetMsg = '';                /* 画面上部に出す一言（検証の結果など） */
+/* 「📮 盤面を報告」で送ったＪＳＯＮ（封筒）をそのまま貼り付けたときに覚えておくもの
+ * （2026-08-31 本人指定）。直した後に「同じ場面をもう一度」を確かめるための道具で、
+ *   ・コメントと場所を画面に出す（何を確かめようとしていたか思い出せるように）
+ *   ・「いま」「−1手」…と、報告に入っている盤面を選んで取り込める
+ *   ・報告が戦場ルールを持っていれば、それも再現に使う（BSFIELD）
+ * ふつうの盤面ＪＳＯＮを取り込んだとき・まっさらにしたときは null に戻す。 */
+let BSREPORT = null;
+let BSFIELD = null;              /* 報告から来た戦場ルール（null＝画面の FIELD_SETS を使う） */
+let bsSnap = -1;                 /* 取り込んでいる時点（-1＝いま／0以上＝報告の history の番号） */
 
 /** デバッグメニューから開く。戦闘中ならいまの盤面を初期値にする。 */
 function openBoardSetup() {
@@ -562,6 +571,46 @@ function bsOptions(kinds, selected, noneLabel, labels) {
 function bsPresetNames() {
   try { return Object.keys(JSON.parse(localStorage.getItem(BOARD_PRESET_KEY) || '{}')); }
   catch (_) { return []; }
+}
+
+/** 取り込んだ報告（BSREPORT）の欄。取り込んでいなければ何も出さない。
+ * 「いま」と「−N手」を並べ、押すとその時点の盤面が編集欄に入る（2026-08-31 本人指定）。
+ * ここが「直した→同じ場面をもう一度」を回すための入口になる。 */
+function bsReportBox() {
+  const rep = BSREPORT;
+  if (!rep) return '';
+  const w = rep.where || {};
+  const where = [w.area,
+    w.turn != null ? 'ターン' + w.turn : null,
+    w.active ? (w.active === 'self' ? '自分の手番' : '相手の手番') : null,
+    w.lp ? 'ＬＰ 自' + w.lp.self + '／敵' + w.lp.enemy : null].filter(Boolean).join('・');
+  const stamp = rep.app ? `（v${esc(rep.app)}${rep.at ? '・' + esc(String(rep.at).replace('T', ' ').slice(0, 16)) : ''}）` : '';
+  const pick = (label, i) =>
+    `<button class="free-pick ${bsSnap === i ? 'on' : ''}" data-bs="snap" data-i="${i}">${esc(label)}</button>`;
+  return `
+    <div class="bs-report">
+      <div class="bs-report-h">📮 報告を読み込みました${stamp}</div>
+      ${rep.comment ? `<p class="bs-report-c">${esc(rep.comment)}</p>` : ''}
+      ${where ? `<p class="bs-report-w">${esc(where)}</p>` : ''}
+      ${rep.history.length ? `
+        <div class="free-row"><span class="free-cap">どの時点にするか</span>
+          ${pick('いま', -1)}${rep.history.map((h, i) => pick(h.label, i)).join('')}
+        </div>
+        <div class="bs-report-l">${bsSnapLog()}</div>` : ''}
+      ${BSFIELD ? '<p class="bs-report-w">戦場ルールも報告のものを使います</p>' : ''}
+    </div>`;
+}
+
+/** いま選んでいる時点で「何が起きたか」。−N手はその手が**終わった**時点の盤面なので、
+ * 「−2手を選ぶと −1手の動きをもう一度やり直せる」という関係になる。 */
+function bsSnapLog() {
+  const rep = BSREPORT;
+  if (!rep) return '';
+  if (bsSnap < 0) return '報告を押した時点の盤面です。';
+  const h = rep.history[bsSnap];
+  if (!h) return '';
+  const lines = (h.log.length ? h.log : ['（動きなし）']).map((t) => '・' + esc(t)).join('<br>');
+  return `${esc(h.label)}が終わった時点の盤面です（この後の動きをもう一度なぞれます）。<br>${lines}`;
 }
 
 /** 盤面セットアップ画面を描く（#board-root）。 */
@@ -658,13 +707,14 @@ function renderBoardSetup() {
             <input id="bs-preset-name" type="text" placeholder="名前を付けて保存" maxlength="24">
             <button class="tiny" data-bs="preset-save">保存</button>
           </div>
-          <h3>ＪＳＯＮ（Claudeとの受け渡し）</h3>
+          <h3>ＪＳＯＮ（Claudeとの受け渡し／報告の読み込み）</h3>
           <div class="free-row">
             <button class="tiny" data-bs="json-dump">いまの盤面を書き出す</button>
             <button class="tiny" data-bs="json-load">貼り付けたものを取り込む</button>
             <button class="tiny" data-bs="clear">まっさらにする</button>
           </div>
-          <textarea id="bs-json" spellcheck="false" placeholder="ここへ盤面のＪＳＯＮを貼り付けて「取り込む」"></textarea>
+          <textarea id="bs-json" spellcheck="false" placeholder="盤面のＪＳＯＮ、または「📮 盤面を報告」で送ったメールのＪＳＯＮを貼り付けて「取り込む」"></textarea>
+          ${bsReportBox()}
         </div>
       </div>
       <div class="free-go">
@@ -692,7 +742,9 @@ function startBoardBattle() {
     enemyDeck: SAMPLE_DECK.slice(),
     first: chk.spec.first,
     opponentId: 101,
-    fieldRules: FIELD_SETS[fieldSet].rules,
+    /* 報告から取り込んだ戦場ルールがあればそれを使う（同じ場面を作り直すため）。
+     * 画面で戦場ルールを選び直すと BSFIELD は外れ、そちらが優先される。 */
+    fieldRules: BSFIELD || FIELD_SETS[fieldSet].rules,
     mode: chk.spec.win === 'field' ? 'field' : undefined,
     enemyBoard: chk.spec.win === 'field' ? [1] : undefined,   /* 中身は下で丸ごと差し替える */
     hooks: {
@@ -730,8 +782,9 @@ document.getElementById('board-root').addEventListener('click', (ev) => {
     case 'active': s.active = v; break;
     case 'phase': s.phase = v; break;
     case 'win': s.win = v; break;
-    case 'field': fieldSet = +v; break;
-    case 'clear': BSET = CQBoardSpec.blank(); break;
+    /* 画面で戦場ルールを選び直したら、報告から来たルールより画面の選択を優先する */
+    case 'field': fieldSet = +v; BSFIELD = null; break;
+    case 'clear': BSET = CQBoardSpec.blank(); BSREPORT = null; BSFIELD = null; bsSnap = -1; break;
     case 'json-dump': {
       const ta = document.getElementById('bs-json');
       if (ta) { ta.value = CQBoardSpec.stringify(BSET); ta.select(); }   /* 貼り付け欄は書き出しで上書きする */
@@ -742,7 +795,28 @@ document.getElementById('board-root').addEventListener('click', (ev) => {
       const ta = document.getElementById('bs-json');
       const r = CQBoardSpec.parse(ta ? ta.value : '', CARD_BY_ID);
       if (r.errors.length) { bsetMsg = '取り込めません：' + r.errors.join(' ／ '); break; }
-      BSET = r.spec; bsetMsg = '取り込みました';
+      BSET = r.spec;
+      /* 「📮 盤面を報告」のＪＳＯＮ（封筒）なら、中の盤面を取り出したうえで
+       * コメント・場所・直前の手も覚えておく（2026-08-31 本人指定）。 */
+      BSREPORT = r.report || null;
+      bsSnap = -1;
+      BSFIELD = (r.report && r.report.where && Array.isArray(r.report.where.fieldRules)
+                 && r.report.where.fieldRules.length) ? r.report.where.fieldRules : null;
+      bsetMsg = r.report
+        ? '報告から盤面を取り込みました' + (r.report.history.length ? '（下の「どの時点にするか」で前の手にも戻せます）' : '')
+        : '取り込みました';
+      break;
+    }
+    /* 報告に入っている盤面（いま／−N手）を編集欄へ移す */
+    case 'snap': {
+      if (!BSREPORT) break;
+      const i = +b.dataset.i;
+      const src = i < 0 ? BSREPORT.board : (BSREPORT.history[i] || {}).board;
+      if (!src) { bsetMsg = 'その時点の盤面は報告に入っていません'; break; }
+      const rs = CQBoardSpec.normalize(src, CARD_BY_ID);
+      if (rs.errors.length) { bsetMsg = '取り込めません：' + rs.errors.join(' ／ '); break; }
+      BSET = rs.spec; bsSnap = i;
+      bsetMsg = (i < 0 ? 'いま' : BSREPORT.history[i].label) + 'の盤面にしました';
       break;
     }
     case 'preset-save': {
@@ -761,6 +835,7 @@ document.getElementById('board-root').addEventListener('click', (ev) => {
       try { all = JSON.parse(localStorage.getItem(BOARD_PRESET_KEY) || '{}'); } catch (_) { all = {}; }
       if (!name || !all[name]) { bsetMsg = '呼び出せる盤面がありません'; break; }
       BSET = CQBoardSpec.normalize(all[name], CARD_BY_ID).spec;
+      BSREPORT = null; BSFIELD = null; bsSnap = -1;
       bsetMsg = '「' + name + '」を呼び出しました';
       break;
     }

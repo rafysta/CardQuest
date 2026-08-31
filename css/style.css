@@ -1494,6 +1494,17 @@ td.nm{font-weight:800}
   background:var(--panel2);border:1px solid var(--line);color:var(--txt);
   border-radius:8px;padding:8px 10px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
+/* 「📮 盤面を報告」のＪＳＯＮを取り込んだときだけ出る欄（2026-08-31）。
+ * 何を確かめようとしていた場面か（コメント・場所）と、いつの盤面にするかを選ばせる。 */
+.bs-report{
+  margin-top:10px;padding:10px 12px;border-radius:10px;
+  background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);
+}
+.bs-report-h{font-size:12px;font-weight:800;color:var(--accent);margin-bottom:6px}
+.bs-report-c{font-size:13px;line-height:1.6;margin-bottom:6px}
+.bs-report-w{font-size:11px;color:var(--dim);margin-bottom:6px}
+.bs-report-l{font-size:11px;line-height:1.7;color:var(--dim);margin-top:6px}
+.bs-report .free-pick{padding:5px 10px;font-size:12px}
 @media (max-width:900px){
   .bs-lanes{grid-template-columns:repeat(2,1fr)}
 }

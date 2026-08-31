@@ -4616,6 +4616,64 @@ t('ＪＳＯＮとして壊れていても落ちない', () => {
   eq(CQBoardSpec.parse('[1,2,3]', CARD_BY_ID).errors.length, 1, '配列は受け取らない');
 });
 
+/* ---- 「📮 盤面を報告」のＪＳＯＮ（封筒）をそのまま貼れる（2026-08-31 本人指定） ----
+ * 直した後に「同じ場面をもう一度」を確かめるための入口。メールで届いたＪＳＯＮを
+ * 盤面セットアップの貼り付け欄にそのまま入れれば、中の盤面が取り出される。 */
+function mkReport(board, history) {
+  return {
+    kind: 'cardquest-board-report', app: '0.16.39', at: '2026-08-31T23:10:58+09:00',
+    comment: '憑依解除が使った直後に消えている',
+    where: { area: '草原', turn: 12, active: 'self', lp: { self: 11, enemy: 10 },
+             fieldRules: [{ id: 'laneLock', lanes: [2] }] },
+    board: board, history: history || [], names: {}, log: ['戦闘終了']
+  };
+}
+const REP_NOW = { lanes: { '0': { unit: 8, ch: [{ id: 101, up: true, by: 'self' }] },
+                           '3': { unit: 70, ch: [] } } };
+const REP_PREV = { lanes: { '0': { unit: 8, ch: [{ id: 101, up: false, by: 'self' }] },
+                            '3': { unit: 70, ch: [{ id: 167, up: false, by: 'enemy' }] } } };
+
+t('報告のＪＳＯＮを貼り付けると、中の盤面が取り出される', () => {
+  const r = CQBoardSpec.parse(JSON.stringify(mkReport(REP_NOW)), CARD_BY_ID);
+  eq(r.errors, [], 'エラーなく読める');
+  eq(r.spec.lanes['0'].ch[0].id, 101, '封筒の中の盤面が入っている');
+  eq(r.report.comment, '憑依解除が使った直後に消えている', 'コメントも取り出せる');
+  eq(r.report.where.area, '草原', '場所も取り出せる');
+});
+
+t('報告の履歴は古い順に −N手 の名前が付く（その手が終わった時点の盤面）', () => {
+  const rep = mkReport(REP_NOW, [
+    { turn: 12, log: ['自分 が 3 階層目に押し込み'], board: REP_PREV },
+    { turn: 12, log: ['自分 が 4階層目の 憑依解除 をオープン'], board: REP_NOW }
+  ]);
+  const r = CQBoardSpec.parse(JSON.stringify(rep), CARD_BY_ID);
+  eq(r.report.history.map((h) => h.label), ['−2手', '−1手'], '古いほうが大きい番号');
+  const back = CQBoardSpec.normalize(r.report.history[0].board, CARD_BY_ID);
+  eq(back.errors, [], '履歴の盤面もそのまま取り込める');
+  eq(back.spec.lanes['3'].ch[0].id, 167, '−2手の時点では腐食がまだ生きている');
+});
+
+t('盤面の入っていない報告（戦闘中でないとき）は、そう言って断る', () => {
+  const rep = mkReport(null);
+  const r = CQBoardSpec.parse(JSON.stringify(rep), CARD_BY_ID);
+  eq(r.errors.length, 1, '1件指摘される');
+  eq(/盤面が入っていません/.test(r.errors[0]), true, '理由が分かる：' + r.errors[0]);
+});
+
+t('ふつうの盤面ＪＳＯＮを貼ったときは report が付かない（今までどおり）', () => {
+  const r = CQBoardSpec.parse(JSON.stringify(REP_NOW), CARD_BY_ID);
+  eq(r.errors, [], 'エラーなく読める');
+  eq(r.report, null, '封筒ではない');
+  eq(r.spec.lanes['3'].unit, 70, '盤面はそのまま');
+});
+
+t('unwrap は封筒でないものに null を返す（誤検出しない）', () => {
+  eq(CQBoardSpec.unwrap(REP_NOW), null, '盤面記述は封筒ではない');
+  eq(CQBoardSpec.unwrap(null), null, '空でも落ちない');
+  eq(CQBoardSpec.unwrap([1, 2]), null, '配列でも落ちない');
+  eq(CQBoardSpec.unwrap(mkReport(REP_NOW)) !== null, true, '封筒は見分けられる');
+});
+
 
 /* ================= 破壊の予約（赤枠→粉々→消える） =================
  * 2026-08-30 本人指定。憑依解除(101)は一瞬でカードを消していたので何が壊れたのか

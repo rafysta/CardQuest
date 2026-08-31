@@ -223,16 +223,54 @@
       + '  "lanes": {\n' + lines.join(',\n') + (lines.length ? '\n' : '') + '  }\n}';
   }
 
-  /** 貼り付けられた文字列を読む。戻り値 { spec, errors }。 */
+  /* ---- 「盤面を報告」の封筒をほどく（2026-08-31 本人指定） --------------------
+   * js/report.js が作るメール用のＪＳＯＮは、盤面そのものではなく**封筒**である：
+   *   { kind:'cardquest-board-report', comment, where, board:{…この形…}, history:[…], … }
+   * 直した後に「同じ場面をもう一度」を確かめたいので、その封筒をそのまま貼り付けても
+   * 中の盤面を取り出せるようにする。中身は結局この形なので、ほどくだけでよい。
+   *
+   * 戻り値 null … 封筒ではない（＝ふつうの盤面記述）。
+   *        それ以外 … { board, history:[{ label, log, board }], comment, at, app, where }
+   *        history は古い順（label は「−5手」…「−1手」）。board は「いま」の盤面。 */
+  function unwrap(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const looksLikeReport = raw.kind === 'cardquest-board-report'
+      || (raw.board && typeof raw.board === 'object' && !raw.lanes);
+    if (!looksLikeReport) return null;
+    const hist = Array.isArray(raw.history) ? raw.history : [];
+    return {
+      board: (raw.board && typeof raw.board === 'object') ? raw.board : null,
+      history: hist.map(function (h, i) {
+        return { label: '−' + (hist.length - i) + '手',
+                 log: Array.isArray(h && h.log) ? h.log.slice() : [],
+                 board: (h && h.board && typeof h.board === 'object') ? h.board : null };
+      }).filter(function (h) { return !!h.board; }),
+      comment: typeof raw.comment === 'string' ? raw.comment : '',
+      at: typeof raw.at === 'string' ? raw.at : '',
+      app: typeof raw.app === 'string' ? raw.app : '',
+      where: (raw.where && typeof raw.where === 'object') ? raw.where : {}
+    };
+  }
+
+  /** 貼り付けられた文字列を読む。戻り値 { spec, errors, report }。
+   * report … 「盤面を報告」の封筒だったときだけ入る（unwrap の戻り値）。呼び出し側は
+   * これを見て「どの手の盤面を取り込むか」を選ばせられる。ふつうの盤面記述なら null。 */
   function parse(text, cards) {
     let raw;
     try { raw = JSON.parse(String(text)); }
-    catch (e) { return { spec: blank(), errors: ['ＪＳＯＮとして読めません：' + e.message] }; }
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { spec: blank(), errors: ['いちばん外側は { } で囲んでください'] };
-    return normalize(raw, cards);
+    catch (e) { return { spec: blank(), errors: ['ＪＳＯＮとして読めません：' + e.message], report: null }; }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { spec: blank(), errors: ['いちばん外側は { } で囲んでください'], report: null };
+    const rep = unwrap(raw);
+    if (rep) {
+      if (!rep.board) return { spec: blank(), errors: ['報告のＪＳＯＮですが、盤面が入っていません（戦闘中ではないときの報告かもしれません）'], report: rep };
+      const r = normalize(rep.board, cards);
+      return { spec: r.spec, errors: r.errors, report: rep };
+    }
+    const r = normalize(raw, cards);
+    return { spec: r.spec, errors: r.errors, report: null };
   }
 
-  const api = { blank, ownerOf, normalize, apply, dump, stringify, parse };
+  const api = { blank, ownerOf, normalize, apply, dump, stringify, parse, unwrap };
   global.CQBoardSpec = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

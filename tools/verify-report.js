@@ -216,6 +216,69 @@ const SPEC = {
        ['cq_meta', 'cq_run', 'cq_reports', 'cq_debug_board'].indexOf(k) < 0).length === 0,
      untouched.keys.join('／'));
 
+  /* --- 9) 往復：報告のＪＳＯＮを「盤面をセットして戦う」に貼って、その場面を作り直す ---
+   * 2026-08-31 本人指定の本命の使い道。直したあとに同じ場面をもう一度確かめるための道。 */
+  await page.evaluate((spec) => {
+    BSET = CQBoardSpec.normalize(spec, CARD_BY_ID).spec;
+    startBoardBattle();                       /* 履歴を作り直す（4節で偽のログを積んだため） */
+  }, SPEC);
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    renderAll();                              /* いちばん古い履歴＝この時点の盤面 */
+    /* 盤面が実際に変わる手を1つ挟む（「−1手」と「いま」が別物になるように） */
+    const ln = M.board.lanes[3];
+    ln.channels.pop(); ln.count = ln.channels.length;
+    M.log.push('（検証）敵のＣＨが1枚減った');
+    renderAll();
+  });
+
+  const trip = await page.evaluate(() => {
+    const rep = CQReport.build('直したので同じ場面をもう一度');
+    openBoardSetup();
+    const ta = document.getElementById('bs-json');
+    ta.value = JSON.stringify(rep, null, 2);
+    document.querySelector('[data-bs="json-load"]').click();
+    const snaps = Array.from(document.querySelectorAll('[data-bs="snap"]'));
+    return {
+      msg: bsetMsg,
+      box: !!document.querySelector('.bs-report'),
+      comment: (document.querySelector('.bs-report-c') || {}).textContent || '',
+      labels: snaps.map((b) => b.textContent),
+      nowCh: (BSET.lanes['3'] || { ch: [] }).ch.length
+    };
+  });
+  ok('報告のＪＳＯＮをそのまま取り込める', /報告から盤面を取り込みました/.test(trip.msg), trip.msg);
+  ok('報告の欄が出る', trip.box);
+  ok('コメントが画面に出る', /同じ場面をもう一度/.test(trip.comment), trip.comment);
+  ok('「いま」と「−N手」が並ぶ', trip.labels[0] === 'いま' && /^−\d+手$/.test(trip.labels[1] || ''),
+     JSON.stringify(trip.labels));
+  ok('「いま」の盤面は手を進めた後のもの', trip.nowCh === 0, String(trip.nowCh));
+
+  const older = await page.evaluate(() => {
+    const snaps = Array.from(document.querySelectorAll('[data-bs="snap"]'));
+    snaps[1].click();                          /* いちばん古い −N手 */
+    return { msg: bsetMsg, ch: (BSET.lanes['3'] || { ch: [] }).ch.length,
+             unit: (BSET.lanes['3'] || {}).unit };
+  });
+  ok('前の手の盤面に戻せる', older.ch === 1 && older.unit === 70, JSON.stringify(older));
+
+  const restarted = await page.evaluate(() => {
+    document.querySelector('[data-bs="start"]').click();
+    return { screen: (document.querySelector('.screen.on') || {}).id,
+             ch: M.board.lanes[3].channels.length,
+             unit: M.board.lanes[3].unit };
+  });
+  await page.waitForTimeout(300);
+  ok('その盤面で戦闘を始められる', restarted.screen === 'screen-battle', restarted.screen);
+  ok('作り直した盤面が報告どおり', restarted.ch === 1 && restarted.unit === 70, JSON.stringify(restarted));
+
+  const cleared = await page.evaluate(() => {
+    openBoardSetup();
+    document.querySelector('[data-bs="clear"]').click();
+    return { box: !!document.querySelector('.bs-report'), report: BSREPORT };
+  });
+  ok('まっさらにすると報告の欄も消える', cleared.box === false && cleared.report === null);
+
   /* --- 8) コンソールエラー --- */
   ok('コンソールエラー 0 件', errors.length === 0, errors.slice(0, 3).join(' ／ '));
 
