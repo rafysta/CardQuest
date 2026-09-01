@@ -75,6 +75,44 @@ const FSTAT = { first: { n: 0, win: 0 }, second: { n: 0, win: 0 } };
  * WP6で通常戦闘のＧが無くなったので、宝箱が主収入になっているかを見る。 */
 const ESTAT = { runs: 0, goldEnd: 0, goldKept: 0, goldCut: 0, cards: 0 };  /* goldKept/goldCut は M6.6 WP11 の清算の減額ぶん */
 
+/* M7 WP1（実装計画追補_M7_カード入手経路の再配分.md §5）：変更前の基準値を取るための計測。
+ * ★ロジックには一切触れない——この工程は数字を取るだけ。 */
+
+/* 1ランあたりの獲得枚数を種別（モンスター／魔法／技能）に分けて数える。
+ * カードのtフィールド：U=モンスター（カースCも撃破時点ではUのまま貰えるのでUに含める）／
+ * M=魔法／S=技能。run.gainedCardsは戦利品・宝箱・購入・？イベントすべてを含む（gainCard参照）。 */
+const CARDKIND_STAT = { runs: 0, monster: 0, magic: 0, skill: 0, other: 0, magicSkillZeroRuns: 0 };
+
+/* 1ランでショップ（🛒）に1度でも立ち寄れたか（マップ仕様書§7・追補§3-2の確認用） */
+const SHOPVISIT_STAT = { runs: 0, visited: 0 };
+
+/* 1ランのＧ収支：獲得（宝箱・ボスのファイトマネー・換金・？イベントのプラス分）と
+ * ショップ支出（購入・LP回復・霧払い）を分けて集計する。清算前後の値はESTATで既に取っている。
+ * 個々のアクション呼び出し前後の run.gold の差分を見るだけで、ロジックには触れない。 */
+const GOLDFLOW_STAT = { income: 0, shopSpend: 0 };
+function trackGoldDelta(before, after) {
+  const d = after - before;
+  if (d > 0) GOLDFLOW_STAT.income += d;
+  else if (d < 0) GOLDFLOW_STAT.shopSpend += -d;
+}
+
+/* キャリア（1本のmeta＝草原→森）通算のダブり枚数：各カードについて所持数（本＋デッキ）が
+ * 1枚を超えた分の合計。経済追補§4-2bの一括換金がどれだけの量を処理することになるかの目安。 */
+const DUPE_STAT = { careers: 0, total: 0 };
+function careerDupeCount(meta) {
+  const ids = {};
+  Object.keys(meta.book || {}).forEach((k) => { ids[k] = true; });
+  Object.keys(meta.deck || {}).forEach((k) => { ids[k] = true; });
+  let dup = 0;
+  Object.keys(ids).forEach((k) => {
+    const id = +k;
+    if (id === 180) return;  /* 空白は数えない */
+    const total = (meta.book[id] || 0) + (meta.deck[id] || 0);
+    if (total > 1) dup += total - 1;
+  });
+  return dup;
+}
+
 function mockStorage() {
   const m = {};
   return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } };
@@ -193,6 +231,7 @@ function playRun(areaId, seed, meta, rng) {
   CQRun.depart(run);
 
   let steps = 0, battles = 0, totalTurns = 0;
+  let shopVisited = false;   /* M7 WP1：このランでショップに1度でも立ち寄ったか */
   while (!run.outcome && steps++ < 60) {
     const n = CQRun.currentNode(run);
     if (!n.cleared) {
@@ -221,7 +260,11 @@ function playRun(areaId, seed, meta, rng) {
           if (run.outcome) break;
           continue;
         }
-        CQRun.reportBattle(run, n, M, meta);
+        {
+          const beforeG = run.gold;
+          CQRun.reportBattle(run, n, M, meta);   /* ボスのファイトマネーがここでrun.goldに入る */
+          trackGoldDelta(beforeG, run.gold);
+        }
         /* M6.6 WP7：戦利品はここでは自動で振り分けない（振り分け画面待ちに積まれるだけ）。
          * ヘッドレスなので本物のUI操作の代用として、空きがあればデッキへ・無ければ本へ、
          * という単純な方針でその場で確定させる（本物のプレイヤー操作の近似）。 */
@@ -231,23 +274,42 @@ function playRun(areaId, seed, meta, rng) {
         });
         if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
       } else if (n.type === 'chest') {
+        const beforeG = run.gold;
         CQRun.openChest(run, n);
+        trackGoldDelta(beforeG, run.gold);
       } else if (n.type === 'rest') {
         CQRun.rest(run, n);
       } else if (n.type === 'shop') {
+        shopVisited = true;
         if (n.stock.length && rng.next() < 0.6) {
           const id = n.stock[rng.int(0, n.stock.length - 1)];
+          const beforeG = run.gold;
           CQRun.shopBuy(run, CARD_BY_ID, n, id);
+          trackGoldDelta(beforeG, run.gold);
         }
-        if (run.lp < run.maxLp && rng.next() < 0.4) CQRun.shopHeal(run, n);
-        if (n.hasFogClear && !run.map.fog.cleared && rng.next() < 0.5) CQRun.shopClearFog(run, n);
+        if (run.lp < run.maxLp && rng.next() < 0.4) {
+          const beforeG = run.gold;
+          CQRun.shopHeal(run, n);
+          trackGoldDelta(beforeG, run.gold);
+        }
+        if (n.hasFogClear && !run.map.fog.cleared && rng.next() < 0.5) {
+          const beforeG = run.gold;
+          CQRun.shopClearFog(run, n);
+          trackGoldDelta(beforeG, run.gold);
+        }
         CQRun.shopLeave(run, n);
       } else if (n.type === 'exchange') {
         const ids = Object.keys(run.deck).filter((k) => run.deck[k] > 0 && +k !== CQRun.BLANK);
-        if (ids.length && rng.next() < 0.5) CQRun.sell(run, CARD_BY_ID, +ids[rng.int(0, ids.length - 1)]);
+        if (ids.length && rng.next() < 0.5) {
+          const beforeG = run.gold;
+          CQRun.sell(run, CARD_BY_ID, +ids[rng.int(0, ids.length - 1)]);
+          trackGoldDelta(beforeG, run.gold);
+        }
         CQRun.exchangeLeave(run, n);
       } else if (n.type === 'question') {
+        const beforeG = run.gold;
         CQRun.resolveQuestion(run, n);
+        trackGoldDelta(beforeG, run.gold);
       }
       checkRunInvariants(run, meta);
       if (run.outcome) break;
@@ -260,6 +322,26 @@ function playRun(areaId, seed, meta, rng) {
   }
   const knownBefore = (meta.known || []).length;
   ESTAT.runs++; ESTAT.goldEnd += run.gold; ESTAT.cards += (run.gainedCards || []).length;
+
+  /* M7 WP1：獲得枚数の種別内訳・ショップ立寄り率の集計（run.gainedCardsは戦利品・宝箱・
+   * 購入・？イベントすべてを含む。gainCard参照）。settle前のrun.gainedCardsで数える。 */
+  {
+    let mCount = 0, magCount = 0, skCount = 0, otherCount = 0;
+    (run.gainedCards || []).forEach((id) => {
+      const c = CARD_BY_ID[id];
+      if (!c) { otherCount++; return; }
+      if (c.t === 'U' || c.t === 'C') mCount++;
+      else if (c.t === 'M') magCount++;
+      else if (c.t === 'S') skCount++;
+      else otherCount++;
+    });
+    CARDKIND_STAT.runs++;
+    CARDKIND_STAT.monster += mCount; CARDKIND_STAT.magic += magCount;
+    CARDKIND_STAT.skill += skCount; CARDKIND_STAT.other += otherCount;
+    if (magCount + skCount === 0) CARDKIND_STAT.magicSkillZeroRuns++;
+  }
+  SHOPVISIT_STAT.runs++;
+  if (shopVisited) SHOPVISIT_STAT.visited++;
   /* M6.6 WP11：清算で「今日の獲得ぶん」が終わり方に応じて削られる（リタイヤ▲50%・
    * ゲームオーバー▲75%）。ランの大半は敗北なので、ここが経済に一番効く数字になった。
    * settleGold は副作用が無いので、settle の前に呼んで内訳だけ先に集計してよい。 */
@@ -306,6 +388,9 @@ for (let seed = 1; seed <= trials; seed++) {
       stat.battles += res.battles; stat.turns += res.totalTurns;
       CQSave.saveMeta(storage, meta);
     }
+    /* M7 WP1：このキャリア（草原→森）が終わった時点でのダブり枚数を集計する */
+    DUPE_STAT.careers++;
+    DUPE_STAT.total += careerDupeCount(meta);
   } catch (e) {
     stat.errors.push('seed ' + seed + ': ' + e.message);
   }
@@ -332,6 +417,25 @@ console.log(`  1ランあたり：獲得カード ${(ESTAT.cards / Math.max(1, E
   + ` / 清算前の所持Ｇ ${(ESTAT.goldEnd / Math.max(1, ESTAT.runs)).toFixed(0)}`
   + ` / 清算後 ${(ESTAT.goldKept / Math.max(1, ESTAT.runs)).toFixed(0)}`
   + ` / 減額 ${(ESTAT.goldCut / Math.max(1, ESTAT.runs)).toFixed(0)}`);
+
+/* M7 WP1（実装計画追補_M7_カード入手経路の再配分.md §5）：変更前の基準値。
+ * ここから下は今回追加した計測。ロジックは一切変えていない。 */
+console.log('');
+console.log('--- M7 WP1 基準値（経済追補§5） ---');
+console.log(`  1ランあたりの獲得枚数（種別内訳）：モンスター ${(CARDKIND_STAT.monster / Math.max(1, CARDKIND_STAT.runs)).toFixed(2)} 枚`
+  + ` / 魔法 ${(CARDKIND_STAT.magic / Math.max(1, CARDKIND_STAT.runs)).toFixed(2)} 枚`
+  + ` / 技能 ${(CARDKIND_STAT.skill / Math.max(1, CARDKIND_STAT.runs)).toFixed(2)} 枚`
+  + (CARDKIND_STAT.other ? ` / その他 ${(CARDKIND_STAT.other / Math.max(1, CARDKIND_STAT.runs)).toFixed(2)} 枚` : ''));
+console.log(`  魔法・技能が0枚だったランの割合：${pct(CARDKIND_STAT.magicSkillZeroRuns, CARDKIND_STAT.runs)}`
+  + `（${CARDKIND_STAT.magicSkillZeroRuns} / ${CARDKIND_STAT.runs} 回）`);
+console.log(`  1ランでショップに立ち寄れた率：${pct(SHOPVISIT_STAT.visited, SHOPVISIT_STAT.runs)}`
+  + `（${SHOPVISIT_STAT.visited} / ${SHOPVISIT_STAT.runs} 回）`);
+console.log(`  1ランのＧ収支：獲得 ${(GOLDFLOW_STAT.income / Math.max(1, ESTAT.runs)).toFixed(0)}`
+  + ` / ショップ支出 ${(GOLDFLOW_STAT.shopSpend / Math.max(1, ESTAT.runs)).toFixed(0)}`
+  + ` / 清算後Ｇ（再掲） ${(ESTAT.goldKept / Math.max(1, ESTAT.runs)).toFixed(0)}`);
+console.log(`  キャリア通算のダブり枚数：平均 ${(DUPE_STAT.total / Math.max(1, DUPE_STAT.careers)).toFixed(1)} 枚`
+  + `（${DUPE_STAT.careers} キャリア）`);
+
 if (stat.errors.length) {
   console.log(`\n例外 ${stat.errors.length} 件:`);
   stat.errors.slice(0, 10).forEach((e) => console.log('  ' + e));
