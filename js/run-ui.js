@@ -653,15 +653,17 @@ function draftCardBig(id, isRental) {
   </div>`;
 }
 
-/** 「変更しない」＝空白のまま残す枠。候補3枚と視覚的に区別する（§4 WP4）。 */
+/** 「変更しない」＝このレンタル枠を借りない。候補3枚と視覚的に区別する（§4 WP4）。
+ * M7 WP3.5（案B）：targetId は通常つねに BLANK（実カードの押し出しが無くなったため）。
+ * isBlank===false になるのは旧セーブ互換の経路（draftTarget参照）だけ。 */
 function draftKeepCardHTML(targetId) {
   const c = CARD_BY_ID[targetId];
   const isBlank = +targetId === CQRun.BLANK;
   return `<div class="draft-card keep" data-act="pick-draft" data-id="${targetId}">
     <div class="dc-art">${artInner(c, 4)}</div>
-    <div class="dc-n">${isBlank ? '空白のまま' : esc(c.n) + ' を残す'}</div>
+    <div class="dc-n">${isBlank ? '借りない' : esc(c.n) + ' を残す'}</div>
     <div class="dc-stat"><span>変更しない</span></div>
-    <div class="dc-e">${isBlank ? '枠を埋めずにおく。' : esc(c.e || '')}</div>
+    <div class="dc-e">${isBlank ? 'このレンタル枠は使わずにおく。' : esc(c.e || '')}</div>
   </div>`;
 }
 
@@ -682,8 +684,9 @@ function renderStartDraft() {
     </div>
     <div class="draft-row">${opts}${draftKeepCardHTML(dp.targetId)}</div>
     <p class="draft-note">選んだカードは<b>このラン限定のレンタル</b>です。無料で借りられますが、
-      記憶データには入らず、探索が終わると返却されます。デッキの空白1枚と入れ替わります。
-      <b>レンタルしたカードは売ることができません</b>（換金所には出せません）。</p>`;
+      記憶データには入らず、探索が終わると返却されます。<b>デッキ40枚とは別枠</b>で持てるので、
+      デッキの中身は変わりません。<b>レンタルしたカードは売ることができません</b>
+      （換金所には出せません。買い取り所で買い取れば手元に残せます）。</p>`;
 }
 
 /* ---- ④ 出発（暗転→明転） ---- */
@@ -1417,14 +1420,18 @@ function renderDeckView() {
   const run = RUI.run;
   gridEnter('deckview');
   const items = runCarryItems(run);
-  const total = CQCollection.countsTotal(run.deck) + (run.rentals ? run.rentals.length : 0);
+  /* M7 WP3.5（案B）：レンタルはデッキ40枚の枠外なので別掲する（40／40と表示されているのに
+   * 実際は42枚戦えている、という不一致を避ける）。 */
+  const total = CQCollection.countsTotal(run.deck);
   const blank = Math.max(0, CQRun.DECK_SIZE - total);
+  const rentals = run.rentals ? run.rentals.length : 0;
   runRoot().innerHTML = `
     <div class="cg-head">
       <div class="cg-title">デッキ</div>
       <div class="cg-stats">
         <span>デッキ <b>${total}</b>／${CQRun.DECK_SIZE}</span>
         <span>空白 <b>${blank}</b>枚</span>
+        ${rentals ? `<span>レンタル <b>${rentals}</b>枚（枠外）</span>` : ''}
       </div>
       <button class="btn ok cg-done" data-act="deckview-leave">マップに戻る</button>
     </div>
@@ -1467,8 +1474,8 @@ function renderLoot() {
   const run = RUI.run;
   gridEnter('loot');
   const pending = run.lootPending || [];
-  const remain = Math.max(0, CQRun.DECK_SIZE - CQCollection.countsTotal(run.deck)
-    - (run.rentals ? run.rentals.length : 0));
+  /* M7 WP3.5（案B）：デッキの空きはレンタル枚数と無関係（レンタルは枠外）。 */
+  const remain = Math.max(0, CQRun.DECK_SIZE - CQCollection.countsTotal(run.deck));
   const items = pending.map(function (id) { return { id: id, rental: false }; });
   runRoot().innerHTML = `
     <div class="cg-head">

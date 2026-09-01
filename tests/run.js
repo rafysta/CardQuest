@@ -3446,17 +3446,30 @@ t('ラン中の入手：デッキに空きがあればデッキへ、満杯な�
   eq(run.gainedCards, [41, 41], 'どちらもgainedCardsには入る');
 });
 
-t('レンタルは空白の枠を埋める：空き枠の計算に数えられ、40枚を超えない', () => {
-  /* デッキ39枚＋レンタル1枚＝実質40枚。ここからのドラフト対象は空白ではなく実カードになり、
-   * 入手も本行きになる（40枚超過で戦闘デッキから黙って切り捨てられるのを防ぐ） */
+t('M7 WP3.5（案B）：レンタルはデッキ40枚の枠外。デッキの空き判定にレンタルは数えない', () => {
+  /* デッキ39枚＋レンタル1枚。旧仕様（レンタルは空白の枠を埋める）ならここで「実質満杯」
+   * だったが、案Bではデッキそのものにまだ1枠空きがあるので、入手はデッキへ入る。 */
   const meta = { book: {}, deck: { 8: 39 }, known: [8], gold: 0, cleared: [] };
   const run = CQRun.start(CARD_BY_ID, 'grassland', 27, meta);
   run.rentals.push(70);
-  eq(CQRun.draftTarget(run, CARD_BY_ID) !== 180, true, '実質満杯ならドラフト対象は実カード');
-  eq(CQRun.gainCard(run, 41), 'book', '実質満杯なら入手は本行き');
+  eq(CQRun.draftTarget(run, CARD_BY_ID), 180, 'ドラフト対象は常に空白（実カードは押し出さない）');
+  eq(CQRun.gainCard(run, 41), 'deck', 'デッキにまだ1枠空きがあるのでデッキへ入る（レンタルは無関係）');
   const deck = CQRun.buildPlayerDeck(run);
-  eq(deck.length, CQRun.DECK_SIZE, '戦闘デッキは40枚ちょうど');
+  eq(deck.length, CQRun.DECK_SIZE + 1, '戦闘デッキは40枚＋レンタル1枚＝41枚（案B）');
   eq(deck.indexOf(70) >= 0, true, 'レンタルが戦闘デッキに必ず入っている');
+});
+
+t('M7 WP3.5（案B）：デッキが40枚ちょうどでもレンタルは別枠で入手・ドラフトできる', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 28, freshMeta());   /* スターター40枚＝満杯 */
+  eq(CQRun.gainCard(run, 41), 'book', 'デッキが満杯（本人の40枚）なら入手は本行き（従来どおり）');
+  eq(CQRun.hasBlankSlot(run), true, 'デッキは満杯でもレンタルの空き枠はまだある');
+  const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
+  eq(!!dp, true, 'デッキが満杯でもドラフトは発生する（案B）');
+  CQRun.applyDraft(run, dp.options[0], CARD_BY_ID);
+  eq(run.rentals.length, 1, 'レンタルが1枚入る');
+  eq(CQCollection.countsTotal(run.deck), STARTER.length, 'デッキ本体（本人の40枚）は変わらない');
+  const deck = CQRun.buildPlayerDeck(run);
+  eq(deck.length, CQRun.DECK_SIZE + 1, '戦闘デッキは40枚＋レンタル1枚＝41枚');
 });
 
 t('清算（settle）：bookAddがbookへ・gainedCardsがknownへ・レンタルは登録されない', () => {
@@ -3495,29 +3508,37 @@ t('清算（settle）：旧セーブ由来の実体の空白(180)はmeta.deckに
   eq(meta.deck[180], undefined, '空白は実体で保存しない');
 });
 
-t('ドラフトの空白は仮想：デッキが40枚未満なら対象は空白。実カードの押し出しは本行き', () => {
+t('ドラフト対象は常に空白（案B・実カードは押し出さない）。デッキ未満杯でも満杯でも同じ', () => {
   const meta = { book: {}, deck: { 8: 3 }, known: [8], gold: 0, cleared: [] };
   const run = CQRun.start(CARD_BY_ID, 'grassland', 25, meta);
   const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
-  eq(dp.targetId, 180, '40枚未満なら空白が対象（実体が無くても）');
+  eq(dp.targetId, 180, '空白が対象（実体が無くても）');
   CQRun.applyDraft(run, dp.options[0], CARD_BY_ID);
   eq(run.deck[8], 3, '実カードは減らない');
   eq(run.rentals.length, 1, 'レンタルが入る');
-  /* 満杯デッキ：M6.6 WP4から、空白が無いランではドラフト自体が発生しない（§2-4） */
+  /* M7 WP3.5（案B）：デッキが満杯（本人の40枚）でも、レンタルは別枠なのでドラフトは起きる */
   const meta2 = freshMeta();          /* スターター40枚＝満杯 */
   const run2 = CQRun.start(CARD_BY_ID, 'grassland', 26, meta2);
-  eq(CQRun.beginDraftRound(run2, CARD_BY_ID), null, '満杯ならドラフトは起きない（WP4）');
-  eq(CQRun.draftTarget(run2, CARD_BY_ID) !== 180, true,
-    'draftTarget単体では従来どおり最安の実カードを返す（満杯時の対象計算そのものは残す）');
-  /* 押し出し＝本行きの処理自体は残っている（v0.16.5以前に保存された中断中のランを
-   * 再開したとき、実カードが対象の draftPending が残っている場合に通る経路）。
-   * beginDraftRound を経由せず直接組み立てて確かめる。 */
-  const target = CQRun.draftTarget(run2, CARD_BY_ID);
-  const before = run2.deck[target];
-  run2.draftPending = { round: 0, options: [run2.map.draftPools[0][0]], targetId: target };
-  CQRun.applyDraft(run2, run2.draftPending.options[0], CARD_BY_ID);
-  eq(run2.deck[target], before - 1, '押し出されてデッキから減る');
-  eq(run2.bookAdd[target], 1, '消滅ではなく本行きになる');
+  const dp2 = CQRun.beginDraftRound(run2, CARD_BY_ID);
+  eq(!!dp2, true, '満杯でもドラフトは起きる（案B）');
+  eq(dp2.targetId, 180, '満杯でも対象は空白（実カードは押し出さない）');
+  CQRun.applyDraft(run2, dp2.options[0], CARD_BY_ID);
+  eq(CQCollection.countsTotal(run2.deck), STARTER.length, '本人のデッキ40枚はそのまま変わらない');
+  eq(run2.rentals.length, 1, 'レンタルが1枚入る（本カードの押し出しは発生しない）');
+});
+
+t('旧セーブ互換：run.deckに実体の空白(180)が残っていれば、レンタル受け入れ時にそれを1枚消費する', () => {
+  /* M6.6 WP3の移動モデルより前の cq_run を再開した場合の経路。draftTarget自体は
+   * 常にBLANKを返すが、run.deck[180]が実在すればapplyDraftがそれを1枚減らす。 */
+  const meta = { book: {}, deck: { 8: 3 }, known: [8], gold: 0, cleared: [] };
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 26, meta);
+  run.deck[180] = 2;                  /* 旧cq_runの再開を模す */
+  const target = CQRun.draftTarget(run, CARD_BY_ID);
+  eq(target, 180, '対象は空白');
+  run.draftPending = { round: 0, options: [run.map.draftPools[0][0]], targetId: target };
+  CQRun.applyDraft(run, run.draftPending.options[0], CARD_BY_ID);
+  eq(run.deck[180], 1, '実体の空白が1枚消費される');
+  eq(run.rentals.length, 1, 'レンタルは1枚入る');
 });
 
 /* ================= M6 ラン：セーブ（js/meta/save.js） ================= */
@@ -3712,34 +3733,47 @@ t('おまかせドラフトは最大2回（3回から変更）', () => {
   eq(rounds, 2, '空白が足りていても3回目は来ない');
 });
 
-/* §4 WP4 の受け入れ基準「空白0/1/2枚の3ケースのドラフト分岐をテスト化」 */
-t('空白0枚：ドラフトは1回も発生しない', () => {
+/* §4 WP4 の受け入れ基準「空白0/1/2枚の3ケースのドラフト分岐をテスト化」。
+ * M7 WP3.5（案B）で「空白」の意味がデッキの空きからレンタルの空き枠に変わったため、
+ * このセクションのテストは「デッキの空白」ではなく「レンタルの空き枠」を軸に書き直した。
+ * デッキ自体の空き（roomyMeta の blanks）はもう発生条件に関係ないことを、あわせて確認する。 */
+t('レンタル0枠（買い取り済み等でRENTAL_MAXに達した）：ドラフトは1回も発生しない', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 42, roomyMeta(0));
-  eq(CQRun.hasBlankSlot(run), false, '空白なし');
+  run.rentals.push(70, 71);           /* RENTAL_MAX(2)まで埋める */
+  eq(CQRun.hasBlankSlot(run), false, 'レンタルの空き枠なし');
   eq(CQRun.beginDraftRound(run, CARD_BY_ID), null, '発生しない');
 });
 
-t('空白1枚：1回目で埋めたら2回目は発生しない', () => {
-  const run = CQRun.start(CARD_BY_ID, 'grassland', 43, roomyMeta(1));
-  const dp1 = CQRun.beginDraftRound(run, CARD_BY_ID);
-  eq(!!dp1, true, '1回目は発生する');
-  eq(dp1.targetId, 180, '対象は空白');
-  CQRun.applyDraft(run, dp1.options[0], CARD_BY_ID);    /* レンタルで空白を埋める */
-  eq(run.rentals.length, 1, 'レンタルが1枚入った');
-  eq(CQRun.beginDraftRound(run, CARD_BY_ID), null, '空白が無くなったので2回目は発生しない');
+t('デッキが40枚ちょうど（roomyMeta(0)）でも、レンタルの空き枠があればドラフトは発生する（案B）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 42, roomyMeta(0));
+  eq(CQCollection.countsTotal(run.deck), 40, 'デッキは40枚ちょうど（空白なし）');
+  eq(CQRun.hasBlankSlot(run), true, 'デッキは満杯でもレンタルの空き枠はある');
+  eq(!!CQRun.beginDraftRound(run, CARD_BY_ID), true, '発生する（旧仕様なら発生しなかったケース）');
 });
 
-t('空白1枚：空白を選んで残せば2回目が発生する', () => {
-  const run = CQRun.start(CARD_BY_ID, 'grassland', 44, roomyMeta(1));
+t('レンタル残り1枠：1回目で使ったら2回目は発生しない（案B）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 43, roomyMeta(1));
+  run.rentals.push(70);                                 /* すでに1枠使用済み＝残りRENTAL_MAX-1=1枠 */
   const dp1 = CQRun.beginDraftRound(run, CARD_BY_ID);
-  CQRun.applyDraft(run, dp1.targetId, CARD_BY_ID);      /* 「変更しない」＝空白のまま */
-  eq(run.rentals.length, 0, 'レンタルは入らない');
+  eq(!!dp1, true, '1回目は発生する（残り1枠）');
+  eq(dp1.targetId, 180, '対象は空白（実カードは押し出さない）');
+  CQRun.applyDraft(run, dp1.options[0], CARD_BY_ID);    /* 残り1枠を使う */
+  eq(run.rentals.length, 2, 'レンタルが2枚になった＝RENTAL_MAXに到達');
+  eq(CQRun.beginDraftRound(run, CARD_BY_ID), null, 'レンタル枠が無くなったので2回目は発生しない');
+});
+
+t('レンタル残り1枠：「変更しない」を選べば枠は空いたままなので次回も発生する', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 44, roomyMeta(1));
+  run.rentals.push(70);
+  const dp1 = CQRun.beginDraftRound(run, CARD_BY_ID);
+  CQRun.applyDraft(run, dp1.targetId, CARD_BY_ID);      /* 「変更しない」＝借りない */
+  eq(run.rentals.length, 1, 'レンタルは増えない');
   const dp2 = CQRun.beginDraftRound(run, CARD_BY_ID);
-  eq(!!dp2, true, '空白が残っているので2回目が発生する');
+  eq(!!dp2, true, 'レンタル枠が残っているので2回目が発生する');
   eq(dp2.round, 1, '2回目の候補プールを使う');
 });
 
-t('空白2枚：2回とも発生し、2回とも埋められる', () => {
+t('レンタル枠2つとも空き：2回とも発生し、2回とも埋められる（RENTAL_MAX＝2）', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 45, roomyMeta(2));
   const dp1 = CQRun.beginDraftRound(run, CARD_BY_ID);
   eq(!!dp1, true, '1回目が発生');

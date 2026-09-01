@@ -26,6 +26,16 @@
   /* おまかせドラフトの回数（マップ仕様書§1.2は3回だったが、実装計画追補M6.6 §2-4で
    * 最大2回に変更。1回目＝エリアの敵／2回目＝いま買える魔法・技能）。 */
   const DRAFT_ROUNDS = 2;
+  /* M7 WP3.5（マップ仕様書§1.2・経済追補§4-5 の案B・2026-09-01本人確定）：
+   * レンタルは「デッキ40枚の枠外」。ホームでデッキ編集ができるようになると本が40枚を超え、
+   * デッキを常に40枚きっちり組めてしまう——旧仕様（レンタルは空白の枠を埋める＝40枚の内側）
+   * のままだと、その瞬間おまかせドラフトが二度と発生しなくなり、買い取り所（WP8）が
+   * 常に空振りになる構造上の欠陥があった（M7 WP2で発見）。
+   * 案Bはこれを「レンタルは常に別枠」にすることで解消する：戦闘デッキは実質
+   * 40枚（本人のデッキ）＋レンタル最大 RENTAL_MAX 枚＝最大42枚になる。
+   * ラウンド数と上限が同じ概念なので RENTAL_MAX は DRAFT_ROUNDS をそのまま使う
+   * （1ラウンドにつき増えるレンタルは最大1枚のため）。 */
+  const RENTAL_MAX = DRAFT_ROUNDS;
   /* フリーユニット戦の敵デッキの組成（M6.6 WP6・§7-5）。敵は召還できないので支援中心にし、
    * ユニットはチャネル弾として少量だけ混ぜる。合計は DECK_SIZE（40枚）ちょうどにする。
    * 旧構成は「ユニット20＋支援シェル20」だったが、召還が封じられた以上ユニット20枚は
@@ -77,17 +87,23 @@
     return units.slice(0, 20).concat(CQAreas.SUPPORT_SHELL);
   }
 
-  /** 所持デッキ（多重集合）＋このランのレンタルから、実戦闘に使う DECK_SIZE 枚の配列を作る。
-   * 足りなければ空白(180)で埋め、多ければ切り詰める（切り詰めはデッキが大きく育った後の保険）。 */
+  /** 所持デッキ（多重集合）＋このランのレンタルから、実戦闘に使う配列を作る。
+   * M7 WP3.5（案B）：**レンタルはデッキ40枚の枠外**。本人のデッキは DECK_SIZE（40枚。
+   * 足りなければ空白(180)で埋める・多ければ切り詰める＝デッキが大きく育った後の保険）に
+   * 固定したうえで、レンタル（最大 RENTAL_MAX 枚）をその後ろに足す。戦闘エンジン
+   * （js/engine/turn.js）はカードID配列の長さに制約が無い多重集合実装なので、
+   * 40枚を超える配列（最大42枚）をそのまま渡してよい（山札切れ・再装填のロジックも
+   * 「残り枚数」ベースで動くため影響しない）。 */
   function buildPlayerDeck(run) {
     const ids = [];
     Object.keys(run.deck).forEach(function (k) {
       const n = run.deck[k];
       for (let i = 0; i < n; i++) ids.push(+k);
     });
-    run.rentals.forEach(function (id) { ids.push(id); });
     while (ids.length < DECK_SIZE) ids.push(BLANK);
-    return ids.slice(0, DECK_SIZE);
+    const deck = ids.slice(0, DECK_SIZE);
+    (run.rentals || []).forEach(function (id) { deck.push(id); });
+    return deck;
   }
 
   /* ---- ラン開始 ------------------------------------------------------------ */
@@ -132,13 +148,13 @@
   /** ラン中の入手（戦利品・宝箱・購入・？イベント）。デッキに空きがあればデッキへ、
    * 入らなければ（合計40・同種3枚制限）本行き＝run.bookAdd に貯める。どちらでも必ず貰える。
    * WP7で「その場でデッキ／本を選ぶ画面」に置き換わるまでの自動振り分け。
-   * 戻り値は実際に入った先（'deck'|'book'）。 */
+   * 戻り値は実際に入った先（'deck'|'book'）。
+   * M7 WP3.5（案B）：レンタルはデッキ40枚の枠外になったので、空き枠の計算に**数えない**
+   * （以前はレンタルが仮想の空白を埋めている扱いだったが、いまは別枠なので無関係）。 */
   function gainCard(run, id) {
     if (+id === BLANK) return null;
     if (!run.bookAdd) run.bookAdd = {};   /* 旧形式の cq_run（中断中のラン）を再開した場合の保険 */
-    /* レンタルは空白の枠を埋めているので、空き枠の計算に数える（draftTarget と同じ理由） */
-    const rentals = run.rentals ? run.rentals.length : 0;
-    const hasSlot = CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE;
+    const hasSlot = CQCollection.countsTotal(run.deck) < DECK_SIZE;
     if (hasSlot && CQCollection.canAddToDeck(run.deck, id).ok) {
       run.deck[id] = (run.deck[id] || 0) + 1;
       run.gainedCards.push(id);
@@ -151,37 +167,33 @@
 
   /* ---- おまかせドラフト（§1.2） -------------------------------------------- */
 
-  /** 今すぐ置き換えるとしたら、どのカードが対象になるか（空白優先→定価の低い順）。
-   * M6.6 WP3：空白は実体として持たなくなった（40枚に満たない分が空白）ので、
-   * デッキ合計＋既に借りているレンタルが40未満なら空白が対象
-   * （レンタルは空白の枠を埋めるカードなので、空きの計算に数えないと40枚を超えてしまう）。
-   * 旧セーブに残る実体の空白(180)も同様に扱う。 */
-  function draftTarget(run, cards) {
+  /** おまかせドラフトで「変更しない」を選んだときに残る対象（＝レンタルを受け取らない場合）。
+   * M7 WP3.5（案B）より前は「デッキが満杯なら実カードを1枚押し出す（定価の低い順）」だったが、
+   * **案Bではレンタルがデッキ40枚の枠外になったため、実カードを押し出す必要が無くなった**。
+   * つまり通常は常に BLANK（180＝「借りない」の意味の見張り値。draftKeepCardHTML が
+   * 「変更しない」の絵として使う）を返す。唯一の例外は**旧セーブ互換**：M6.6 WP3の移動モデル
+   * より前の cq_run を再開した場合、run.deck に実体の空白(180)がそのまま残っていることがあり、
+   * その場合はそれ自体が対象になる（applyDraft側で自然に片付く。実質は同じ「空白」なので
+   * 処理を分ける必要が無い）。 */
+  function draftTarget(run) {
     if ((run.deck[BLANK] || 0) > 0) return BLANK;
-    const rentals = run.rentals ? run.rentals.length : 0;
-    if (CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE) return BLANK;
-    let best = null;
-    Object.keys(run.deck).forEach(function (k) {
-      const id = +k;
-      if (id === BLANK) return;
-      if ((run.deck[id] || 0) <= 0) return;
-      const p = cards[id] ? cards[id].p : 0;
-      if (best === null || p < (cards[best] ? cards[best].p : Infinity)) best = id;
-    });
-    return best;
+    return BLANK;
   }
 
-  /** 空白の枠が残っているか（＝おまかせドラフトが発生する条件。§2-4・WP4）。
-   * 実体の空白(180)が旧セーブに残っている場合も、40枚に満たない仮想の空白も、どちらも見る。 */
+  /** レンタルをもう1枠借りられるか（＝おまかせドラフトが発生する条件。§2-4 WP4・
+   * M7 WP3.5 案B）。**デッキ（本人の40枚）が満杯かどうかはもう関係ない**——
+   * レンタルは40枚の枠外なので、上限はレンタルの本数そのもの（RENTAL_MAX＝DRAFT_ROUNDS）。
+   * 旧セーブ互換：run.deck に実体の空白(180)が残っている場合はそちらを優先して埋める。 */
   function hasBlankSlot(run) {
     if ((run.deck[BLANK] || 0) > 0) return true;
     const rentals = run.rentals ? run.rentals.length : 0;
-    return CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE;
+    return rentals < RENTAL_MAX;
   }
 
-  /** 次のドラフトを始める。M6.6 WP4で **3回→最大2回**・**空白がある時だけ発生**に変更。
-   * 空白が無ければ null を返す＝呼び出し側はドラフトを飛ばして出発する。
-   * 「空白が1枚だけの時：1回目で埋めたら2回目は発生しない／空白を残したら2回目が発生」という
+  /** 次のドラフトを始める。M6.6 WP4で **3回→最大2回**・**レンタルの空き枠がある時だけ発生**
+   * に変更（M7 WP3.5・案Bでは「レンタルの空き枠」＝デッキの空白ではなくレンタル本数の余地）。
+   * 空きが無ければ null を返す＝呼び出し側はドラフトを飛ばして出発する。
+   * 「1枚だけ空きがある時：1回目で埋めたら2回目は発生しない／変更しなければ2回目が発生」という
    * §4 WP4 の要求は、毎回ここで空きを見直すことで自然に満たされる。 */
   function beginDraftRound(run, cards) {
     if (run.draftDone >= DRAFT_ROUNDS) return null;
@@ -194,8 +206,12 @@
     return run.draftPending;
   }
 
-  /** pickedId が targetId と同じ＝「変更しない」。それ以外はレンタルとして入れ替える
-   * （§1.2「所持済みが候補でも扱いはレンタルで統一」＝おまかせドラフトの入手は常にレンタル）。
+  /** pickedId が targetId と同じ＝「変更しない」（＝そのレンタル枠を借りない）。それ以外は
+   * レンタルとして追加する（§1.2「所持済みが候補でも扱いはレンタルで統一」＝おまかせドラフトの
+   * 入手は常にレンタル）。M7 WP3.5（案B）：targetId は通常つねに BLANK（実カードを押し出す
+   * 必要が無くなった）で、以下の「run.deck[dp.targetId] を1枚減らす」処理は**旧セーブ互換専用**
+   * ——M6.6 WP3の移動モデルより前の cq_run に実体の空白(180)が残っていた場合だけ通り、
+   * それを1枚消費する（実カードを押し出すケースはもう発生しない）。
    * cards はログ表示用（省略可・後方互換）：渡せばカード名で、渡さなければ従来どおりIDで出す。 */
   function applyDraft(run, pickedId, cards) {
     const dp = run.draftPending;
@@ -203,13 +219,7 @@
     const name = function (id) { return cards && cards[id] ? cards[id].n : id; };
     if (pickedId !== dp.targetId) {
       if ((run.deck[dp.targetId] || 0) > 0) {
-        run.deck[dp.targetId] -= 1;
-        /* M6.6 WP3：実カードを押し出した場合は消滅ではなく本行き（settleでメタのbookへ）。
-         * 空白(180)が対象のときは仮想の空きが埋まるだけなので何も足さない。 */
-        if (dp.targetId !== BLANK) {
-          if (!run.bookAdd) run.bookAdd = {};
-          run.bookAdd[dp.targetId] = (run.bookAdd[dp.targetId] || 0) + 1;
-        }
+        run.deck[dp.targetId] -= 1;   /* 旧セーブ互換：実体の空白(180)を1枚消費するだけ */
       }
       run.rentals.push(pickedId);
       run.log.push('おまかせドラフト：' + name(dp.targetId) + ' → ' + name(pickedId) + '（レンタル）');
@@ -368,11 +378,11 @@
 
   /* ---- 戦利品の振り分け（M6.6 WP7） ---------------------------------------- */
 
-  /** そのカードを今すぐ「デッキに加える」が選べるか（合計40未満・同種上限内。
-   * gainCard の判定と同じ理由でレンタルも空き枠の計算に数える）。 */
+  /** そのカードを今すぐ「デッキに加える」が選べるか（合計40未満・同種上限内）。
+   * M7 WP3.5（案B）：レンタルはデッキ40枚の枠外なので、gainCard と同じ理由で
+   * 空き枠の計算に**数えない**（以前は数えていた）。 */
   function canAssignToDeck(run, id) {
-    const rentals = run.rentals ? run.rentals.length : 0;
-    const hasSlot = CQCollection.countsTotal(run.deck) + rentals < DECK_SIZE;
+    const hasSlot = CQCollection.countsTotal(run.deck) < DECK_SIZE;
     return hasSlot && CQCollection.canAddToDeck(run.deck, id).ok;
   }
 
@@ -592,7 +602,7 @@
   }
 
   const api = {
-    DECK_SIZE, BLANK, DRAFT_ROUNDS, buildBattleDeck, buildBossDeck, buildPlayerDeck,
+    DECK_SIZE, BLANK, DRAFT_ROUNDS, RENTAL_MAX, buildBattleDeck, buildBossDeck, buildPlayerDeck,
     start, gainCard, beginDraftRound, applyDraft, draftTarget, hasBlankSlot, depart,
     node, currentNode, choices, advance,
     battleSeed, firstTurnOf, battleSetup, reportBattle, reportFlee,
