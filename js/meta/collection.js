@@ -116,10 +116,126 @@
     return { ok: true, gold: price || 0 };
   }
 
+  /* ==== コレクション段階・マスターレベル・ショップ母集団（M7 WP2） ==============
+   *
+   * 『CardQuest 実装計画追補_M7_カード入手経路の再配分.md』§2-1・§3 と
+   * 『同 M7 作業パッケージ』WP2 の実装。ここが M7 の設計の要で、
+   * **ラン中ショップ（WP3）とホームのログショップ（WP7）が同じ関数を共有する**ための場所。
+   * 数字を2箇所に持たない——M6.6 WP9 の売値で一度踏んだ「表示と実装がズレる」事故の対策。
+   */
+
+  /* 記憶データ（known＝一度でも入手した種類）の数で決まる段階。原作準拠：
+   * 0〜19→1／20〜51→2／52〜99→3／100〜167→4／168→5（ゲーム仕様書§6.2）。
+   *
+   * ★「コレクション段階」と「マスターレベル」は**同じ数字**である（原作のログショップの
+   * 品揃え段階がマスターレベルと一致する）。呼ぶ文脈で名前が違うだけなので、
+   * 実装は1本しか持たない——片方だけ直して数字が割れる事故を構造的に防ぐ。 */
+  const STAGE_STEPS = [20, 52, 100, 168];
+  const STAGE_MAX = STAGE_STEPS.length + 1;      /* ＝5 */
+
+  /** 記憶データの種類数 → 段階（＝マスターレベル）1〜5 */
+  function masterLevel(knownCount) {
+    let lv = 1;
+    STAGE_STEPS.forEach(function (need) { if ((knownCount || 0) >= need) lv += 1; });
+    return lv;
+  }
+  /** masterLevel の別名。ショップの品揃えを語る文脈ではこちらで呼ぶ（同じ関数）。 */
+  const stage = masterLevel;
+
+  function masterLevelOf(meta) { return masterLevel(ensure(meta).known.length); }
+  function stageOf(meta) { return masterLevelOf(meta); }
+
+  /** 次の段階まであと何種類か（0＝もう最大段階）。コレクション図鑑（WP6）の表示用。 */
+  function nextStageNeed(knownCount) {
+    const n = knownCount || 0;
+    for (let i = 0; i < STAGE_STEPS.length; i++) {
+      if (n < STAGE_STEPS[i]) return STAGE_STEPS[i] - n;
+    }
+    return 0;
+  }
+
+  /* ---- マスターレベルの効果（ゲーム仕様書§6.2） ---------------------------- */
+
+  /* ＬＰ初期値＝9＋マスターレベル（ゲーム仕様書§2.3）。上限15は「Lv5で14・実績の+1で15」
+   * （§6.2）という原作の設計から来ている。**この値はランの出発ＬＰ（run.startLp）になり、
+   * 清算のひっ算と称号「無傷の一日」の基準にもなる**ので、動かすと波及範囲が広い。 */
+  const LP_BASE = 9;
+  const LP_CAP = 15;
+  function startLp(level) { return Math.min(LP_CAP, LP_BASE + (level || 1)); }
+  function startLpOf(meta) { return startLp(masterLevelOf(meta)); }
+
+  /* デッキ保存枠：既定3つ（ゲーム仕様書§3.2「複数デッキ（3つ程度）」）＋マスターレベル4で+1
+   * （§6.2）。実際に複数デッキを持てるようにするのは WP9。ここは数だけを決める。 */
+  const DECK_SLOTS_BASE = 3;
+  const DECK_SLOTS_BONUS_LEVEL = 4;
+  function deckSlots(level) {
+    return DECK_SLOTS_BASE + ((level || 1) >= DECK_SLOTS_BONUS_LEVEL ? 1 : 0);
+  }
+
+  /* ---- 貴重カードとショップ母集団 ------------------------------------------ */
+
+  /* ホームのログショップが使う一律の貴重閾値（経済追補§3-4末尾）。
+   * **エリア別にするのはラン中ショップの品揃え判定と買い取り価格だけ**で、ホームは一律。
+   * 二重の意味を持たせると事故るので、エリア別の表は js/run/areas.js（RARE_TIERS）に置き、
+   * こちらには持たない。値はマップ仕様書§7の初期値そのまま（要調整のツマミ）。 */
+  const RARE_THRESHOLD_HOME = 3000;
+
+  /** 貴重カードか（定価が閾値**以上**。「ちょうど」は貴重に含む）。
+   * 閾値の比較をこの1関数に閉じ込めておく——UI側で `p > 3000` と書き間違える余地を無くす。 */
+  function isRare(card, threshold) {
+    if (!card || typeof card.p !== 'number') return false;
+    return card.p >= (threshold == null ? RARE_THRESHOLD_HOME : threshold);
+  }
+
+  /** そのカードがショップで解禁される段階（原作データの g テキスト「コレクション段階n〜」）。
+   * 表記が無いカードは**ショップでは売られない**（戦利品・報酬でしか手に入らない）＝null。 */
+  function shopStageOf(card) {
+    if (!card || typeof card.g !== 'string') return null;
+    const m = card.g.match(/コレクション段階(\d+)/);
+    return m ? +m[1] : null;
+  }
+
+  /** ★ラン中ショップ（WP3）とホームのログショップ（WP7）が共有する母集団。
+   *
+   *   cards       … CARD_BY_ID
+   *   stageLevel  … いまのコレクション段階（1〜5）
+   *   opts.rareAt … 貴重カードの閾値（省略時はホームの一律値）
+   *   opts.rare   … 'exclude'＝貴重を外す（ラン中ショップ）／'only'＝貴重だけ（ホームの限定枠）／
+   *                 省略＝全部（おまかせドラフトの候補など）
+   *
+   * **モンスターは絶対に返さない**（経済追補§2-1「原作の7種すら再現しない」）。
+   * 原作データには段階表記を持つモンスターが7種あるが、ここで種別を見て落としている。
+   * 返り値は [{id, price}] の価格昇順（enemyPool と同じ形）。 */
+  function shopPool(cards, stageLevel, opts) {
+    const lv = stageLevel || 1;
+    const o = opts || {};
+    const threshold = o.rareAt == null ? RARE_THRESHOLD_HOME : o.rareAt;
+    const res = [];
+    Object.keys(cards || {}).forEach(function (k) {
+      const c = cards[k];
+      if (!c) return;
+      if (c.t !== 'M' && c.t !== 'S') return;               /* 魔法・技能だけ（§2-1） */
+      if (+c.id === BLANK) return;                          /* 空白は実体を持たない */
+      if (typeof c.p !== 'number' || c.p <= 0) return;      /* 非売品（価格なし） */
+      const st = shopStageOf(c);
+      if (st === null || st > lv) return;                   /* まだ解禁されていない */
+      if (o.rare === 'exclude' && isRare(c, threshold)) return;
+      if (o.rare === 'only' && !isRare(c, threshold)) return;
+      res.push({ id: c.id, price: c.p });
+    });
+    res.sort(function (a, b) { return a.price - b.price; });
+    return res;
+  }
+
   const api = {
     DECK_MAX, KIND_MAX, PIG, BLANK,
     countsTotal, canAddToDeck, ensure, registerKnown,
-    deckTotal, blankCount, moveToDeck, moveToBook, addCard, sellFromDeck
+    deckTotal, blankCount, moveToDeck, moveToBook, addCard, sellFromDeck,
+    /* M7 WP2 */
+    STAGE_STEPS, STAGE_MAX, LP_BASE, LP_CAP, DECK_SLOTS_BASE, DECK_SLOTS_BONUS_LEVEL,
+    RARE_THRESHOLD_HOME,
+    masterLevel, stage, masterLevelOf, stageOf, nextStageNeed,
+    startLp, startLpOf, deckSlots, isRare, shopStageOf, shopPool
   };
   global.CQCollection = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -105,14 +105,20 @@
       ? meta.known.slice()
       : Object.keys(meta.deck).filter(function (k) { return meta.deck[k] > 0; }).map(Number);
     const map = CQMap.generate({ cards: cards, areaId: areaId, seed: seed, ownedIds: ownedIds });
+    /* M7 WP2：ＬＰ初期値＝9＋マスターレベル（ゲーム仕様書§2.3・§6.2）。
+     * 記憶データが増えるほど1点ずつ増える＝収集そのものが探索の余力になる。
+     * 段階1では10で、M6.6までのハードコード値と同じ（新規プレイヤーの体験は変わらない）。
+     * この値は startLp としてそのまま清算のひっ算と称号「無傷の一日」の基準になる。 */
+    const level = CQCollection.masterLevel((meta.known || []).length);
+    const lp0 = CQCollection.startLp(level);
     return {
       areaId: areaId, seed: seed, map: map,
       at: map.start,
-      lp: 10, maxLp: 15,
+      lp: lp0, maxLp: CQCollection.LP_CAP,
       gold: meta.gold,
       /* M6.6 WP11：清算のひっ算（持ち込み／今日の獲得／減額）と称号「無傷の一日」の判定に、
        * 出発時点の値が要る。run.gold は買い物で減りも増えもするので、後から復元できない。 */
-      startGold: meta.gold, startLp: 10,
+      startGold: meta.gold, startLp: lp0,
       deck: Object.assign({}, meta.deck),
       bookAdd: {},
       rentals: [],

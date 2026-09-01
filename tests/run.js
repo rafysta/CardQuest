@@ -3038,7 +3038,10 @@ function roomyMeta(blanks) {
 t('ラン開始：マップと初期状態が揃う', () => {
   const run = CQRun.start(CARD_BY_ID, 'grassland', 123, freshMeta());
   eq(run.at, run.map.start, '開始マスに立っている');
-  eq(run.lp, 10, 'ＬＰ初期値');
+  /* M7 WP2：ＬＰ初期値は 9＋マスターレベル になった。freshMeta の記憶データは40種＝段階2
+   * なので11で出発する（新規プレイヤーは記憶データ8種＝段階1なので従来どおり10）。 */
+  eq(run.lp, CQCollection.startLp(CQCollection.masterLevel(STARTER.length)), 'ＬＰ初期値＝9＋マスターレベル');
+  eq(run.lp, 11, 'freshMeta（40種＝段階2）では11');
   eq(run.rentals, [], 'レンタルは最初は空');
   eq(Object.values(run.deck).reduce((a, b) => a + b, 0), STARTER.length, '所持デッキは初期デッキと同じ枚数');
 });
@@ -4399,17 +4402,21 @@ t('称号：リタイヤ・敗北では踏破者の称号は付かない', () =>
   eq(CQRun.earnedTitles(run, meta).map((x) => x.key), ['firstReturn'], '帰還だけ');
 });
 
-t('称号：「無傷の一日」はクリア時のＬＰが出発時（10）以上のとき（2026-08-29本人確定）', () => {
-  /* 追補の原文は「ＬＰ満タン」だが、ランは10／15で始まる＝満タンではないため、
-   * 文字どおりだと回復してからクリアしないと取れない。出発時まで保っていればよい、に確定。 */
+t('称号：「無傷の一日」はクリア時のＬＰが出発時以上のとき（2026-08-29本人確定）', () => {
+  /* 追補の原文は「ＬＰ満タン」だが、ランは満タンでは始まらないため、文字どおりだと
+   * 回復してからクリアしないと取れない。出発時まで保っていればよい、に確定。
+   * M7 WP2：出発時のＬＰが 9＋マスターレベル になったので、基準は run.startLp そのもの
+   * （固定値10ではない）。段階が上がっても判定が自動で追随することをここで固定する。 */
   const meta = freshMeta();
-  const kept = endedRun(meta, 'win', { gold: 500, lp: 10 });
-  eq(CQRun.earnedTitles(kept, meta).map((x) => x.key).indexOf('flawless') >= 0, true, 'ＬＰ10で付く');
+  const base = CQRun.start(CARD_BY_ID, 'grassland', 900, meta).startLp;
+  eq(base, 11, '前提：freshMeta（40種＝段階2）の出発ＬＰは11');
+  const kept = endedRun(meta, 'win', { gold: 500, lp: base });
+  eq(CQRun.earnedTitles(kept, meta).map((x) => x.key).indexOf('flawless') >= 0, true, '出発時のＬＰのままなら付く');
   const healed = endedRun(meta, 'win', { gold: 500, lp: 15 });
   eq(CQRun.earnedTitles(healed, meta).map((x) => x.key).indexOf('flawless') >= 0, true, '回復済みでも付く');
-  const hurt = endedRun(meta, 'win', { gold: 500, lp: 9 });
+  const hurt = endedRun(meta, 'win', { gold: 500, lp: base - 1 });
   eq(CQRun.earnedTitles(hurt, meta).map((x) => x.key).indexOf('flawless') >= 0, false, '1でも削れたら付かない');
-  const lost = endedRun(meta, 'lose', { gold: 500, lp: 10 });
+  const lost = endedRun(meta, 'lose', { gold: 500, lp: base });
   eq(CQRun.earnedTitles(lost, meta).map((x) => x.key).indexOf('flawless') >= 0, false, 'クリアでなければ付かない');
 });
 
@@ -5514,6 +5521,163 @@ t('★ＵＩ経路（予約）でも同じ：使い終わった魔法に赤枠�
   eq(m.board.lanes[0].channels.some((c) => c.card === 139), true, 'まだ場にある＝赤枠で見せられる');
   CQMagic.strikeDoomed(m);
   eq(m.board.lanes[0].channels.length, 0, '演出の後に消える');
+});
+
+/* ================= M7 WP2: コレクション基盤 ================= */
+section('M7 WP2: コレクション基盤');
+
+t('コレクション段階：境界値ちょうどで上がる（ゲーム仕様書§6.2）', () => {
+  /* 0〜19／20〜51／52〜99／100〜167／168 の5段階。境界の「手前」と「ちょうど」を両方固定する
+   * ——off-by-one はここでしか捕まえられない。 */
+  eq(CQCollection.masterLevel(0), 1, '0種は段階1');
+  eq(CQCollection.masterLevel(19), 1, '19種はまだ段階1');
+  eq(CQCollection.masterLevel(20), 2, '20種ちょうどで段階2');
+  eq(CQCollection.masterLevel(51), 2, '51種はまだ段階2');
+  eq(CQCollection.masterLevel(52), 3, '52種ちょうどで段階3');
+  eq(CQCollection.masterLevel(99), 3, '99種はまだ段階3');
+  eq(CQCollection.masterLevel(100), 4, '100種ちょうどで段階4');
+  eq(CQCollection.masterLevel(167), 4, '167種はまだ段階4');
+  eq(CQCollection.masterLevel(168), 5, '168種ちょうどで段階5');
+  eq(CQCollection.masterLevel(169), 5, '169種でも段階5より上は無い');
+});
+
+t('コレクション段階とマスターレベルは同じ数字（名前が2つあるだけ）', () => {
+  /* 原作のログショップの品揃え段階＝マスターレベル。片方だけ直して数字がズレる事故を防ぐため、
+   * 実装は1本しか持たない——ここではその同一性そのものを固定する。 */
+  [0, 19, 20, 51, 52, 99, 100, 167, 168].forEach((n) => {
+    eq(CQCollection.stage(n), CQCollection.masterLevel(n), n + '種：段階とマスターレベルが一致');
+  });
+  eq(CQAreas.masterLevel(52), CQCollection.masterLevel(52), 'areas.js 経由でも同じ数字（後方互換）');
+});
+
+t('コレクション段階：metaから直接引ける／次の段階までの残り種類数', () => {
+  const meta = { known: [] };
+  eq(CQCollection.masterLevelOf(meta), 1, '記憶データ0種は段階1');
+  eq(CQCollection.nextStageNeed(0), 20, '段階2まであと20種');
+  eq(CQCollection.nextStageNeed(19), 1, 'あと1種で段階2');
+  eq(CQCollection.nextStageNeed(20), 32, '段階3まであと32種（52−20）');
+  eq(CQCollection.nextStageNeed(168), 0, '最大段階では0');
+  meta.known = [];
+  for (let i = 1; i <= 20; i++) meta.known.push(i);
+  eq(CQCollection.masterLevelOf(meta), 2, '記憶データ20種で段階2');
+});
+
+t('shopPool：モンスターを1枚も返さない（経済追補§2-1）', () => {
+  /* ★この工程でいちばん大事なテスト。原作データには「コレクション段階n〜」の表記を持つ
+   * モンスターが7種ある（ワーウルフ・ピッグマン・アンフィビアス・スピアバード・デアデビル・
+   * ネクロスフィア・ストライフ）。経済追補§2-1は「原作の7種すら再現しない」と決めたので、
+   * 段階表記があっても shopPool は返してはいけない。 */
+  const shopUnits = CARDS.filter((c) => c.t === 'U' && /コレクション段階/.test(c.g || ''));
+  eq(shopUnits.length, 7, '前提：段階表記を持つモンスターが原作どおり7種ある（データ側の見張り）');
+  [1, 2, 3, 4, 5].forEach((lv) => {
+    const pool = CQCollection.shopPool(CARD_BY_ID, lv);
+    eq(pool.filter((e) => CARD_BY_ID[e.id].t === 'U').length, 0, '段階' + lv + '：モンスターが0枚');
+    eq(pool.filter((e) => CARD_BY_ID[e.id].t === 'C').length, 0, '段階' + lv + '：カースも0枚');
+    eq(pool.every((e) => CARD_BY_ID[e.id].t === 'M' || CARD_BY_ID[e.id].t === 'S'), true,
+      '段階' + lv + '：魔法か技能だけ');
+    eq(pool.some((e) => e.id === CQCollection.BLANK || e.id === 200), false,
+      '段階' + lv + '：空白もおじゃま虫も出ない');
+  });
+  const lv5 = CQCollection.shopPool(CARD_BY_ID, 5).map((e) => e.id);
+  shopUnits.forEach((c) => eq(lv5.indexOf(c.id) < 0, true, c.n + '（原作ショップの7種）は並ばない'));
+});
+
+t('shopPool：段階が上がると母集団は広がる（減らない）', () => {
+  let prev = 0, prevIds = [];
+  [1, 2, 3, 4, 5].forEach((lv) => {
+    const pool = CQCollection.shopPool(CARD_BY_ID, lv);
+    eq(pool.length >= prev, true, '段階' + lv + 'は段階' + (lv - 1) + '以上の品数');
+    prevIds.forEach((id) => eq(pool.some((e) => e.id === id), true, '段階' + lv + 'でも' + id + 'は買える'));
+    /* 解禁段階が現在の段階を超えるものは入らない */
+    pool.forEach((e) => {
+      const m = (CARD_BY_ID[e.id].g || '').match(/コレクション段階(\d+)/);
+      eq(!!m && +m[1] <= lv, true, 'id' + e.id + 'の解禁段階は' + lv + '以下');
+    });
+    prev = pool.length; prevIds = pool.map((e) => e.id);
+  });
+  const p = CQCollection.shopPool(CARD_BY_ID, 3);
+  eq(p.map((e) => e.price).slice().sort((a, b) => a - b), p.map((e) => e.price), '価格の昇順で返す');
+});
+
+t('shopPool：貴重カードの出し分け（境界＝閾値ちょうどは貴重）', () => {
+  /* 『収束』(170) は定価3000Ｇちょうど・段階1（経済追補§3-3が名指ししている例）。
+   * 「以上」が貴重なので、閾値3000のエリアでは並ばず、閾値5000のエリアでは並ぶ。 */
+  eq(CARD_BY_ID[170].p, 3000, '前提：収束は3000Ｇ');
+  const ex3000 = CQCollection.shopPool(CARD_BY_ID, 1, { rareAt: 3000, rare: 'exclude' });
+  eq(ex3000.some((e) => e.id === 170), false, '閾値3000では収束は並ばない（ちょうどは貴重）');
+  eq(ex3000.every((e) => CARD_BY_ID[e.id].p < 3000), true, '除外したら全部3000Ｇ未満');
+  const ex5000 = CQCollection.shopPool(CARD_BY_ID, 1, { rareAt: 5000, rare: 'exclude' });
+  eq(ex5000.some((e) => e.id === 170), true, '閾値5000なら収束も並ぶ');
+  const only = CQCollection.shopPool(CARD_BY_ID, 1, { rareAt: 3000, rare: 'only' });
+  eq(only.every((e) => CARD_BY_ID[e.id].p >= 3000), true, '限定枠側は全部3000Ｇ以上');
+  eq(only.some((e) => e.id === 170), true, '限定枠には収束が入る');
+  /* exclude と only は重ならず、合わせると全部になる（取りこぼしが無いことの確認） */
+  const all = CQCollection.shopPool(CARD_BY_ID, 1);
+  eq(ex3000.length + only.length, all.length, '除外分＋限定枠分＝全部');
+  eq(CQCollection.isRare(CARD_BY_ID[170], 3000), true, '判定関数：3000は貴重');
+  eq(CQCollection.isRare(CARD_BY_ID[117], 3000), false, '判定関数：2000は貴重でない');
+});
+
+t('貴重カード閾値：エリア別の表と参照箇所が一致する（経済追補§3-4）', () => {
+  /* M6.6 WP9 の売値で一度踏んだ「表示と実装がズレる」事故の再発防止。
+   * 数値は RARE_TIERS の1箇所だけに持ち、エリア定義は帯の名前で参照する。 */
+  eq(CQAreas.RARE_TIERS.starter, 3000, '草原・森の帯＝3000Ｇ');
+  eq(CQAreas.RARE_TIERS.mid, 5000, '山地・海辺の帯＝5000Ｇ');
+  eq(CQAreas.RARE_TIERS.high, 8000, '砂漠・ダンジョン群の帯＝8000Ｇ');
+  eq(CQAreas.RARE_TIERS.final, 12000, '神殿・外部教会の帯＝12000Ｇ');
+  CQAreas.list().forEach((def) => {
+    eq(Object.prototype.hasOwnProperty.call(CQAreas.RARE_TIERS, def.rareTier), true,
+      def.name + 'の rareTier は表にある帯');
+    eq(CQAreas.rareThreshold(def.id), CQAreas.RARE_TIERS[def.rareTier],
+      def.name + '：参照結果が表の値と一致');
+  });
+  eq(CQAreas.rareThreshold('grassland'), 3000, '草原は3000Ｇ（現行のまま）');
+  eq(CQAreas.rareThreshold('forest'), 3000, '森も3000Ｇ');
+  eq(CQAreas.rareThreshold('unknown-area'), 3000, '未定義のエリアでも落ちず既定値を返す');
+  /* ホーム側は一律値。エリア別にするのはラン中ショップの品揃えと買い取り価格だけ（§3-4末尾） */
+  eq(CQCollection.RARE_THRESHOLD_HOME, 3000, 'ホームのログショップは一律3000Ｇ');
+});
+
+t('ＬＰ初期値：9＋マスターレベル（ゲーム仕様書§2.3・§6.2）', () => {
+  eq(CQCollection.startLp(1), 10, '段階1は10（現行と同じ）');
+  eq(CQCollection.startLp(2), 11, '段階2で+1');
+  eq(CQCollection.startLp(3), 12, '段階3で+1');
+  eq(CQCollection.startLp(4), 13, '段階4で+1');
+  eq(CQCollection.startLp(5), 14, '段階5で14（実績の+1でようやく上限15）');
+  eq(CQCollection.LP_CAP, 15, '上限は15');
+  eq(CQCollection.startLp(99), 15, '万一レベルが伸びても上限を超えない');
+});
+
+t('ＬＰ初期値：ランの出発値に効く（清算・称号の基準もここ）', () => {
+  const fresh = { book: {}, deck: CQSave.toDeckCounts([8]), known: [], gold: 0, cleared: [], openingSeen: true };
+  const r1 = CQRun.start(CARD_BY_ID, 'grassland', 501, fresh);
+  eq([r1.lp, r1.startLp], [10, 10], '記憶データ0種＝段階1なら10で出発');
+  const lv2 = { book: {}, deck: CQSave.toDeckCounts([8]), known: [], gold: 0, cleared: [], openingSeen: true };
+  for (let i = 1; i <= 20; i++) lv2.known.push(i);
+  const r2 = CQRun.start(CARD_BY_ID, 'grassland', 501, lv2);
+  eq([r2.lp, r2.startLp], [11, 11], '記憶データ20種＝段階2なら11で出発');
+  eq(r2.maxLp, 15, '上限は段階によらず15');
+  /* 称号「無傷の一日」は出発時のＬＰが基準なので、段階が上がっても自動的に追随する */
+  r2.outcome = 'win'; r2.lp = 11;
+  eq(CQRun.earnedTitles(r2, lv2).map((x) => x.key).indexOf('flawless') >= 0, true, '11で帰れば無傷');
+  r2.lp = 10;
+  eq(CQRun.earnedTitles(r2, lv2).map((x) => x.key).indexOf('flawless') >= 0, false, '10まで削れたら無傷ではない');
+});
+
+t('デッキ保存枠：マスターレベル4で+1（ゲーム仕様書§6.2）', () => {
+  eq(CQCollection.deckSlots(1), 3, '段階1は3つ');
+  eq(CQCollection.deckSlots(3), 3, '段階3までは3つ');
+  eq(CQCollection.deckSlots(4), 4, '段階4で+1');
+  eq(CQCollection.deckSlots(5), 4, '段階5も4つ');
+});
+
+t('後方互換：areas.js のショップ品揃えは shopPool と同じものを返す', () => {
+  /* map.js のドラフト候補（M6.6 WP4）が使っている経路。WP2で実装をcollection.jsへ寄せたが、
+   * 返すものが変わっていないこと＝マップ生成が一切動いていないことを固定する。 */
+  [1, 3, 5].forEach((lv) => {
+    eq(CQAreas.shopSpellPool(CARD_BY_ID, lv), CQCollection.shopPool(CARD_BY_ID, lv),
+      '段階' + lv + '：areas.js経由と同じ結果');
+  });
 });
 
 /* ================= 結果 ================= */
