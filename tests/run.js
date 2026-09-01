@@ -3010,6 +3010,71 @@ t('おまかせドラフトの候補は3回とも重複しない', () => {
   eq(new Set(all).size, all.length, '3回ぶん9枚（プールが十分あれば）すべて別カード');
 });
 
+/* ---- M7 WP3: ラン中の経済変更（ショップ母集団の差し替え・宝箱のカード種別） ---- */
+
+t('ショップの品揃えにモンスターが1枚も出ない（経済追補§2-1）', () => {
+  let sawShop = false;
+  for (const areaId of ['grassland', 'forest']) {
+    for (let seed = 1; seed <= 120; seed++) {
+      const m = CQMap.generate({ cards: CARD_BY_ID, areaId, seed, ownedIds: [] });
+      Object.values(m.nodes).forEach((n) => {
+        if (n.type !== 'shop') return;
+        sawShop = true;
+        n.stock.forEach((id) => {
+          const c = CARD_BY_ID[id];
+          if (c.t !== 'M' && c.t !== 'S') {
+            throw new Error(areaId + ' seed ' + seed + '：ショップにモンスター(' + id + ')が並んだ');
+          }
+        });
+      });
+    }
+  }
+  eq(sawShop, true, '十分な試行でショップが出現している（テストの前提）');
+});
+
+t('ショップの品揃えは高マスターレベルでも貴重カード閾値以上を含まない（経済追補§3-3・§3-4）', () => {
+  const owned = [];
+  for (let i = 1; i <= 170; i++) owned.push(i); // 段階5にする
+  for (let seed = 1; seed <= 60; seed++) {
+    const m = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed, ownedIds: owned });
+    Object.values(m.nodes).forEach((n) => {
+      if (n.type !== 'shop') return;
+      n.stock.forEach((id) => {
+        const c = CARD_BY_ID[id];
+        eq(c.p < CQAreas.rareThreshold('grassland'), true,
+           'seed ' + seed + '：ショップに貴重カード(' + id + '・' + c.p + 'G)が並んだ');
+      });
+    });
+  }
+});
+
+t('宝箱から出るカードはモンスターにならない（経済追補§2-2）', () => {
+  let sawCard = false;
+  for (const areaId of ['grassland', 'forest']) {
+    for (let seed = 1; seed <= 150; seed++) {
+      const m = CQMap.generate({ cards: CARD_BY_ID, areaId, seed, ownedIds: [] });
+      Object.values(m.nodes).forEach((n) => {
+        if (n.type !== 'chest' || n.cardId == null) return;
+        sawCard = true;
+        const c = CARD_BY_ID[n.cardId];
+        if (c.t !== 'M' && c.t !== 'S') {
+          throw new Error(areaId + ' seed ' + seed + '：宝箱からモンスター(' + n.cardId + ')が出た');
+        }
+      });
+    }
+  }
+  eq(sawCard, true, '十分な試行で宝箱からカードが出ている（テストの前提）');
+});
+
+t('ショップ在庫・宝箱カードも同一シード・同一入力なら再現する（マップ仕様書§3）', () => {
+  const a = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed: 321, ownedIds: [1, 2, 3] });
+  const b = CQMap.generate({ cards: CARD_BY_ID, areaId: 'grassland', seed: 321, ownedIds: [1, 2, 3] });
+  const stocks = (m) => Object.values(m.nodes).filter((n) => n.type === 'shop').map((n) => n.stock);
+  const cards = (m) => Object.values(m.nodes).filter((n) => n.type === 'chest').map((n) => n.cardId);
+  eq(JSON.stringify(stocks(a)), JSON.stringify(stocks(b)), 'ショップ在庫が再現する');
+  eq(JSON.stringify(cards(a)), JSON.stringify(cards(b)), '宝箱のカードが再現する');
+});
+
 /* ================= M6 ラン：進行管理（js/run/run.js） ================= */
 section('M6 ラン: 進行管理');
 

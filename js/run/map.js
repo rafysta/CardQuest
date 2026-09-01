@@ -10,6 +10,8 @@
 
   const CQAreas = typeof require === 'function' && typeof module !== 'undefined'
     ? require('./areas.js') : global.CQAreas;
+  const CQCollection = typeof require === 'function' && typeof module !== 'undefined'
+    ? require('../meta/collection.js') : global.CQCollection;
 
   /* ---- §1.3 セグメントのペアテンプレート ------------------------------- */
   /* 表記は「1マス目→2マス目」。type は battle(strength) / chest(rare?) / shop / rest / exchange / question */
@@ -103,12 +105,17 @@
    * （10G単位に丸め・マップ生成時に確定＝決定的。§7-1）に変更した。ただし生成はマスを
    * 順番に作っていく途中で行われるため、この時点ではまだ他の敵が出揃っていない。
    * そのためここでは仮に0を入れておき、全ノードが揃った後（generate() の末尾）で
-   * まとめて確定させる（fixChestGold 参照）。カード抽選（cardId）はここまで通り。 */
-  function rollChest(rng, pool, rare) {
+   * まとめて確定させる（fixChestGold 参照）。
+   *
+   * M7 WP3（経済追補§2-2）：宝箱のカード抽選テーブルから**モンスターを除外**した。
+   * カードが出るときは必ず魔法・技能（spellPool＝ショップと同じ母集団。§2-1「戦利品・宝箱・
+   * ショップ全体でモンスターに寄りすぎ」への対策）。抽選確率・rare時の上位半分ロジックは
+   * 変更していない（母集団を敵プールから魔法・技能プールへ差し替えただけ）。 */
+  function rollChest(rng, spellPool, rare) {
     let cardId = null;
     if (rare || rng.next() < 0.6) {
-      const cut = rare ? Math.max(1, Math.floor(pool.length * 0.5)) : 0;
-      const cand = pool.slice(cut);
+      const cut = rare ? Math.max(1, Math.floor(spellPool.length * 0.5)) : 0;
+      const cand = spellPool.slice(cut);
       if (cand.length) cardId = rng.pick(cand).id;
     }
     return { type: 'chest', rare: !!rare, gold: 0, cardId: cardId, opened: false };
@@ -132,10 +139,14 @@
     });
   }
 
-  function rollShop(rng, pool, area, fogActive) {
+  /** M7 WP3（経済追補§2-1・§3）：ショップ在庫は原作ドロップ表（敵プール）参照をやめ、
+   * `CQCollection.shopPool()` からの抽選にした。母集団はラン開始時に一度だけ確定し
+   * （generate() 側で計算した spellPool を毎回渡すだけ）、抽選そのものはシードで決定的。
+   * モンスターは絶対に混ざらない（shopPool 自体がモンスターを返さないため）。 */
+  function rollShop(rng, spellPool, fogActive) {
     const stock = [];
-    const n = Math.min(4, pool.length);
-    const bag = pool.slice();
+    const n = Math.min(4, spellPool.length);
+    const bag = spellPool.slice();
     for (let i = 0; i < n && bag.length; i++) {
       const idx = rng.int(0, bag.length - 1);
       stock.push(bag.splice(idx, 1)[0].id);
@@ -143,10 +154,10 @@
     return { type: 'shop', stock: stock, healCost: 100, fogClearCost: 100, hasFogClear: fogActive };
   }
 
-  function makeNode(rng, area, pool, spec, fogActive) {
+  function makeNode(rng, area, pool, spellPool, spec, fogActive) {
     if (spec.type === 'battle') return makeBattleNode(rng, area, pool, spec.strength);
-    if (spec.type === 'chest') return rollChest(rng, pool, spec.rare);
-    if (spec.type === 'shop') return rollShop(rng, pool, area, fogActive);
+    if (spec.type === 'chest') return rollChest(rng, spellPool, spec.rare);
+    if (spec.type === 'shop') return rollShop(rng, spellPool, fogActive);
     if (spec.type === 'rest') return { type: 'rest', cleared: false };
     if (spec.type === 'exchange') return { type: 'exchange', cleared: false };
     if (spec.type === 'question') {
@@ -209,6 +220,13 @@
     const rng = (typeof require === 'function' && typeof module !== 'undefined' ? require('../engine/rng.js') : global.CQRng)
       .create(opts.seed);
     const pool = CQAreas.enemyPool(opts.cards, area.id);
+    /* M7 WP3（経済追補§2-1・§3-3・§3-4）：ショップ在庫・宝箱カードの母集団。
+     * ラン開始時のマスターレベル・そのエリアの貴重閾値で一度だけ確定する（決定的）。
+     * 貴重（閾値以上）はラン中ショップ・宝箱には出さない（rare:'exclude'）——
+     * 貴重カードの入手経路は買い取り所／ホームのログショップ限定枠／ボス報酬（経済追補§6-1）。 */
+    const level = CQAreas.masterLevel((opts.ownedIds || []).length);
+    const spellPool = CQCollection.shopPool(opts.cards, level,
+      { rareAt: CQAreas.rareThreshold(area.id), rare: 'exclude' });
     const layout = CQAreas.layout(area.id);   /* 背景の道に合わせた行yの補正（M6.5b・§4） */
     const fogActive = rng.next() < area.fog.chance;
 
@@ -219,7 +237,7 @@
     let autoId = 0;
     function add(spec, seg, branch, slot, col, row) {
       const id = 'n' + (autoId++);
-      const n = makeNode(rng, area, pool, spec, fogActive);
+      const n = makeNode(rng, area, pool, spellPool, spec, fogActive);
       n.id = id; n.seg = seg; n.branch = branch; n.slot = slot;
       n.fog = fogActive && seg !== null && seg >= 1;   // §5：開始と第1セグメントは常に見える
       n.connectsTo = [];
@@ -255,7 +273,7 @@
       const hasShop = nonBattleIds.some(function (id) { return nodes[id].type === 'shop'; });
       if (!hasShop && nonBattleIds.length) {
         const target = nodes[nonBattleIds[0]];
-        Object.assign(target, rollShop(rng, pool, area, true));
+        Object.assign(target, rollShop(rng, spellPool, true));
         target.type = 'shop';
       }
     }
