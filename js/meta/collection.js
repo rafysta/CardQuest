@@ -164,13 +164,12 @@
   function startLp(level) { return Math.min(LP_CAP, LP_BASE + (level || 1)); }
   function startLpOf(meta) { return startLp(masterLevelOf(meta)); }
 
-  /* デッキ保存枠：既定3つ（ゲーム仕様書§3.2「複数デッキ（3つ程度）」）＋マスターレベル4で+1
-   * （§6.2）。実際に複数デッキを持てるようにするのは WP9。ここは数だけを決める。 */
-  const DECK_SLOTS_BASE = 3;
-  const DECK_SLOTS_BONUS_LEVEL = 4;
-  function deckSlots(level) {
-    return DECK_SLOTS_BASE + ((level || 1) >= DECK_SLOTS_BONUS_LEVEL ? 1 : 0);
-  }
+  /* ★デッキ保存枠は作らない（2026-09-01 本人確認）。
+   * ゲーム仕様書§3.2の「複数デッキ（3つ程度）」と§6.2の「Lv4でデッキ保存枠+1」は
+   * **M6.6 WP3 の移動モデルで置き換えられた古い記述**である。移動モデルでは、カードの実体は
+   * 「本」か「デッキ」のどちらか一方にしか無く（複製ではなく移動）、**デッキは1つだけ**。
+   * デッキを2つ持つには同じカードの実体が2枚要るので、複数デッキは移動モデルと両立しない。
+   * したがってマスターレベルの効果は「品揃え段階」と「ＬＰ初期値+1」の2つだけ。 */
 
   /* ---- 貴重カードとショップ母集団 ------------------------------------------ */
 
@@ -232,10 +231,9 @@
     countsTotal, canAddToDeck, ensure, registerKnown,
     deckTotal, blankCount, moveToDeck, moveToBook, addCard, sellFromDeck,
     /* M7 WP2 */
-    STAGE_STEPS, STAGE_MAX, LP_BASE, LP_CAP, DECK_SLOTS_BASE, DECK_SLOTS_BONUS_LEVEL,
-    RARE_THRESHOLD_HOME,
+    STAGE_STEPS, STAGE_MAX, LP_BASE, LP_CAP, RARE_THRESHOLD_HOME,
     masterLevel, stage, masterLevelOf, stageOf, nextStageNeed,
-    startLp, startLpOf, deckSlots, isRare, shopStageOf, shopPool
+    startLp, startLpOf, isRare, shopStageOf, shopPool
   };
   global.CQCollection = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

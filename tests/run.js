@@ -5664,11 +5664,16 @@ t('ＬＰ初期値：ランの出発値に効く（清算・称号の基準も�
   eq(CQRun.earnedTitles(r2, lv2).map((x) => x.key).indexOf('flawless') >= 0, false, '10まで削れたら無傷ではない');
 });
 
-t('デッキ保存枠：マスターレベル4で+1（ゲーム仕様書§6.2）', () => {
-  eq(CQCollection.deckSlots(1), 3, '段階1は3つ');
-  eq(CQCollection.deckSlots(3), 3, '段階3までは3つ');
-  eq(CQCollection.deckSlots(4), 4, '段階4で+1');
-  eq(CQCollection.deckSlots(5), 4, '段階5も4つ');
+t('デッキは1つだけ（複数デッキは移動モデルと両立しないので作らない）', () => {
+  /* 2026-09-01 本人確認。ゲーム仕様書§3.2「複数デッキ（3つ程度）」・§6.2「Lv4でデッキ保存枠+1」は
+   * M6.6 WP3 の移動モデル（実体は本かデッキのどちらか一方・複製ではなく移動）で置き換えられた
+   * 古い記述。マスターレベルの効果は「品揃え段階」と「ＬＰ初期値+1」の2つだけ。
+   * 枠数を返す関数を**復活させない**ための見張りとしてこのテストを置く。 */
+  eq(typeof CQCollection.deckSlots, 'undefined', 'デッキ保存枠という概念は無い');
+  const meta = CQSave.loadMeta(mockStorage(), [8, 8, 101]);
+  eq(Array.isArray(meta.deck), false, 'meta.deck はデッキの配列ではなく');
+  eq(typeof meta.deck, 'object', '1つ分の {cardId: 枚数} である');
+  eq(CQCollection.DECK_MAX, 40, 'デッキは40枚');
 });
 
 t('後方互換：areas.js のショップ品揃えは shopPool と同じものを返す', () => {
