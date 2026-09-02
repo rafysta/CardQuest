@@ -9,6 +9,12 @@
  *   visits:      {areaId: count}  エリアごとの訪問回数（WP4）。開始マスの案内を
  *                                 「初回3つ／2回目以降1つ」で出し分けるのに使う
  *   seenHints:   {key: true}      一度だけ出すヒント（台本§5）。出したらキーを立てる
+ *   homeVisited: boolean          ホーム画面（M7 WP5）に一度でも来たか。§2.1（初回3つ）と
+ *                                 §2.2（通常・ランダム1つ）の出し分けに使う
+ *   homeSeenLevel: number         最後に節目として見せたマスターレベル。次に上がった回で
+ *                                 §2.3 onLevelUp を1回だけ出す（checkLevelUp）
+ *   homeSeenAreas: [areaId, ...]  節目として見せ終えたエリア解放。新しく解放された分だけ
+ *                                 §2.3 onAreaOpen を出す（checkAreaOpen）
  *   gold / cleared / …           その他のメタ
  * cq_run … 中断中のランのオートセーブ（js/run/run.js の run オブジェクトそのもの）
  *
@@ -72,7 +78,7 @@
     });
     return {
       book: book, deck: {}, known: known, gold: 0, cleared: [],
-      openingSeen: false, visits: {}, seenHints: {}
+      openingSeen: false, visits: {}, seenHints: {}, homeVisited: false
     };
   }
 
@@ -81,6 +87,7 @@
   function ensureFields(m) {
     if (!m.visits || typeof m.visits !== 'object') m.visits = {};       /* WP4：エリア訪問回数 */
     if (!m.seenHints || typeof m.seenHints !== 'object') m.seenHints = {}; /* WP4：一度だけのヒント */
+    if (m.homeVisited == null) m.homeVisited = false;                  /* WP5：ホーム初回判定 */
     return m;
   }
 
@@ -105,6 +112,35 @@
   function markHint(meta, key) {
     if (!meta.seenHints) meta.seenHints = {};
     meta.seenHints[key] = true;
+  }
+
+  /* ---- ホーム画面の節目（台本§2.3・M7 WP5） ----
+   * ホーム画面は cq_meta のみで判定する（run-ui.js から CQCollection.masterLevelOf /
+   * CQAreas.isUnlocked で作った値を渡してもらう。ここに require を増やして循環させない）。
+   * 「今の値」を初めて見た回は知らせずに基準値として記録するだけ＝アップデート直後の
+   * 既存プレイヤーに、それまでの分をまとめて節目扱いで見せてしまう事故を防ぐ。 */
+
+  /** マスターレベルが上がっていれば true を返し、基準を更新する。 */
+  function checkLevelUp(meta, currentLevel) {
+    if (meta.homeSeenLevel == null) { meta.homeSeenLevel = currentLevel; return false; }
+    if (currentLevel > meta.homeSeenLevel) { meta.homeSeenLevel = currentLevel; return true; }
+    return false;
+  }
+
+  /** 新しく解放されたエリアidの配列を返し、基準を更新する（unlockedIds＝今アンロック中の全id）。 */
+  function checkAreaOpen(meta, unlockedIds) {
+    const ids = unlockedIds || [];
+    if (!meta.homeSeenAreas) { meta.homeSeenAreas = ids.slice(); return []; }
+    const opened = ids.filter(function (id) { return meta.homeSeenAreas.indexOf(id) < 0; });
+    opened.forEach(function (id) { meta.homeSeenAreas.push(id); });
+    return opened;
+  }
+
+  /** ホームへ来たのが初めてか（呼ぶと同時に既読にする）。 */
+  function markHomeVisited(meta) {
+    const first = !meta.homeVisited;
+    meta.homeVisited = true;
+    return first;
   }
 
   /** cq_meta を読む。無ければ defaultDeckIds（カードIDの配列・重複可）から初期状態を作る。
@@ -158,7 +194,8 @@
 
   const api = {
     loadMeta, saveMeta, clearMeta, loadRun, saveRun, clearRun, toDeckCounts, migrate, initialMeta,
-    ensureFields, visitCount, markVisit, hintSeen, markHint
+    ensureFields, visitCount, markVisit, hintSeen, markHint,
+    checkLevelUp, checkAreaOpen, markHomeVisited
   };
   global.CQSave = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

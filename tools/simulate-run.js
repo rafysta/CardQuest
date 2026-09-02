@@ -463,7 +463,7 @@ console.log(`  1ランあたりの宝箱を開けた回数：平均 ${(CHEST_STA
   + ` / 1回も開けられなかったランの割合 ${pct(CHEST_STAT.zeroChestRuns, CHEST_STAT.runs)}`
   + `（${CHEST_STAT.zeroChestRuns} / ${CHEST_STAT.runs} 回）`);
 console.log(`  宝箱を開けてカードが出た割合：${pct(CHEST_STAT.cardGiven, CHEST_STAT.opened)}`
-  + `（${CHEST_STAT.cardGiven} / ${CHEST_STAT.opened} 回。抽選確率60%＋rareチェストは必中ぶん）`);
+  + `（${CHEST_STAT.cardGiven} / ${CHEST_STAT.opened} 回。抽選確率80%＋rareチェストは必中ぶん。WP4で60%→80%に調整）`);
 console.log(`  ショップ購入の試行 ${SHOPBUY_STAT.attempts} 回のうちＧ不足で失敗：${pct(SHOPBUY_STAT.failedGold, SHOPBUY_STAT.attempts)}`
   + `（${SHOPBUY_STAT.failedGold} / ${SHOPBUY_STAT.attempts} 回）`);
 

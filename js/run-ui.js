@@ -54,6 +54,9 @@ const RUI = {
    * 台本を最後まで見る／スキップしたときに openingSeen を書き換えず、元の画面
    * （openingBackTo）に戻ってコールバックを呼ぶ。previewBattleIntro と同じ形。 */
   openingPreview: null, openingBackTo: null,
+  /* ホーム画面（ジェイルタウン・M7 WP5）のアンバー吹き出し（初回／通常ランダム／節目）。
+   * cq_run には保存しない＝再訪のたびに enterHome() が組み直す。 */
+  homeGuide: null, homeGuideStep: 0,
   /* カードグリッド＋情報パネル（M6.6 WP9）の選択中カード。換金所・デッキ確認・ショップ・
    * 戦利品振り分けの4画面で共用する。gridCtx が変わった（＝違う画面に入った）ときだけ
    * gridSel をリセットする——同じ画面内での再描画（購入・売却のたび）では選択を保つため。
@@ -120,7 +123,7 @@ function runInit() {
     /* 初回起動のみ（M6.6 WP1）：目覚めの場面へ。§4 WP2「最初からやり直す」→リロード後もここを通る。 */
     RUI.run = null; RUI.view = 'opening';
     RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
-  } else { RUI.run = null; RUI.view = 'areaSelect'; }
+  } else { enterHome(); return; }
   runRender();
 }
 
@@ -182,9 +185,10 @@ function finishOpening() {
   }
   RUI.meta.openingSeen = true;
   CQSave.saveMeta(RUN_STORAGE, RUI.meta);
-  RUI.view = 'areaSelect';
   RUI.openingStep = 0; RUI.openingIntroDone = false; RUI.openingFadeOut = false;
-  runRender();
+  /* §4 WP1のフロー末尾は「エリア選択」だったが、M7 WP5でホームが着地点になった
+   * （受け入れ基準：初回起動＝オープニング→ホーム→エリア選択の順）。 */
+  enterHome();
 }
 
 /** デバッグメニュー用：冒頭の目覚めの場面（アンバーと初めて出会って話す場面）だけを
@@ -200,6 +204,89 @@ function previewOpening(onDone) {
   return { ok: true };
 }
 if (typeof window !== 'undefined') window.previewOpening = previewOpening;
+
+/* ================= ホーム画面（ジェイルタウン・M7 WP5） =================
+ *
+ * オープニング後・リザルトの「今回の探検を終える」後の着地点（『作業パッケージ』WP5）。
+ * 施設は6つ。「冒険に出る」だけ機能する（→エリア選択）。残り5つ（ログショップ／コレクション／
+ * デッキ編集／記録／設定）はWP6〜WP10がまだ無いので、押せない状態で淡く出す
+ * （『世界観とプレイヤー案内』§6.2「初回だけ淡く表示」と同じ見た目の扱い）。
+ *
+ * ★開始マス（持ち出し画面）の扱い：WP5時点では外さない。台本§2.3も「実際に画面を外すのは
+ * WP9（正式なデッキ編集）と同時でよい」としており、ホームの「デッキ編集」施設がまだ
+ * 押せない今、開始マスの持ち出し画面を外すとデッキを組む手段が無くなってしまう。
+ * よってWP9でホームのデッキ編集が機能化されるのと同時に外す——順序はここで決めた
+ * （『作業パッケージ』WP5実施メモに記録）。
+ *
+ * アンバーの吹き出し（台本§2）は amberBubbleHTML を使い回す。マップの案内（RUI.guide）と
+ * 同じ「タップ送り・スキップ可」の部品だが、状態は別に持つ（同時に両方使うことは無いが、
+ * 混線を避けるため RUI.homeGuide として独立させてある）。 */
+
+const HOME_FACILITIES = [
+  { id: 'adventure', label: '冒険に出る', act: 'home-go-adventure', ready: true },
+  { id: 'shop', label: 'ログショップ', ready: false },
+  { id: 'collection', label: 'コレクション', ready: false },
+  { id: 'deck', label: 'デッキ編集', ready: false },
+  { id: 'record', label: '記録', ready: false },
+  { id: 'settings', label: '設定', ready: false }
+];
+
+/** ホームへ入る（または戻る）。節目（マスターレベル上昇・エリア解放）を確認し、
+ * 出すべき吹き出しを1つ組んでから描画する。優先順位：節目 ＞ 初回3つ ＞ 通常ランダム1つ
+ * （節目は「見逃し不可」＝台本§2.3。同じ訪問で複数の節目が重なったら、その全部を続けて出す）。 */
+function enterHome() {
+  RUI.run = null;
+  RUI.view = 'home';
+  const meta = RUI.meta;
+  let script = [];
+  const lvl = CQCollection.masterLevelOf(meta);
+  if (CQSave.checkLevelUp(meta, lvl)) {
+    script = script.concat(CQLore.fill(CQLore.LORE.home.onLevelUp, { n: (meta.known || []).length }));
+  }
+  const unlockedIds = CQAreas.list()
+    .filter(function (a) { return CQAreas.isUnlocked(a.id, meta.cleared || []); })
+    .map(function (a) { return a.id; });
+  CQSave.checkAreaOpen(meta, unlockedIds).forEach(function (id) {
+    const area = CQAreas.get(id);
+    script = script.concat(CQLore.fill(CQLore.LORE.home.onAreaOpen, { area: area ? area.name : id }));
+  });
+  const wasFirst = CQSave.markHomeVisited(meta);
+  if (!script.length) {
+    script = wasFirst ? CQLore.LORE.home.first.slice() : CQLore.pickOne(CQLore.LORE.home.idle).slice();
+  }
+  CQSave.saveMeta(RUN_STORAGE, meta);
+  RUI.homeGuide = script; RUI.homeGuideStep = 0;
+  runRender();
+}
+
+function finishHomeGuide() {
+  RUI.homeGuide = null; RUI.homeGuideStep = 0;
+  runRender();
+}
+
+function renderHome() {
+  const meta = RUI.meta;
+  const guiding = !!(RUI.homeGuide && RUI.homeGuide.length);
+  const tiles = HOME_FACILITIES.map(function (f) {
+    return `<button class="home-tile${f.ready ? '' : ' home-tile-disabled'}"
+        ${f.ready && !guiding ? `data-act="${f.act}"` : 'disabled'}>
+      <span class="home-tile-label">${esc(f.label)}</span>
+      ${f.ready ? '' : '<span class="home-tile-soon">準備中</span>'}
+    </button>`;
+  }).join('');
+  const overlay = guiding
+    ? amberBubbleHTML(RUI.homeGuide[Math.min(RUI.homeGuideStep || 0, RUI.homeGuide.length - 1)],
+        { nextAct: 'home-guide-next', skipAct: 'home-guide-skip' })
+    : '';
+  runRoot().innerHTML = `
+    <div class="home-scene">
+      <img class="home-bg" src="assets/ui/home_jailtown.png" alt="" draggable="false" onerror="this.style.display='none'">
+      <div class="run-hud"><div class="run-hud-g">所持Ｇ：<b>${meta.gold}</b></div></div>
+      <h2 class="run-h2">ジェイルタウン</h2>
+      <div class="home-grid">${tiles}</div>
+    </div>
+    ${overlay}`;
+}
 
 /* ================= エリア選択 ================= */
 
@@ -219,6 +306,7 @@ function renderAreaSelect() {
     <div class="run-hud">
       <div class="run-hud-g">所持Ｇ：<b>${RUI.meta.gold}</b></div>
     </div>
+    <button class="area-back-btn" data-act="go-home">← ホームへ</button>
     <h2 class="run-h2">冒険に出る</h2>
     <div class="area-grid">${tiles}</div>
     <button class="area-reset-btn" data-act="reset-progress">最初からやり直す</button>`;
@@ -1679,6 +1767,7 @@ function runRender() {
     else if (lootWaiting) RUI.view = 'loot';
   }
   if (RUI.view === 'opening') renderOpening();
+  else if (RUI.view === 'home') renderHome();
   else if (RUI.view === 'areaSelect') renderAreaSelect();
   else if (RUI.view === 'start') renderStart();
   else if (RUI.view === 'map') renderMap();
@@ -1777,6 +1866,19 @@ function runAct(act, id, idx) {
     case 'opening-skip':
       /* 「押したら即マップ選択へ」（§4 WP1）。タップ送り終了時のフェードアウトは挟まない */
       return finishOpening();
+    case 'home-guide-next': {
+      const next = (RUI.homeGuideStep || 0) + 1;
+      if (next >= (RUI.homeGuide || []).length) return finishHomeGuide();
+      RUI.homeGuideStep = next;
+      return runRender();
+    }
+    case 'home-guide-skip':
+      return finishHomeGuide();
+    case 'home-go-adventure':
+      RUI.view = 'areaSelect';
+      return runRender();
+    case 'go-home':
+      return enterHome();
     case 'go-start': {
       const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
       /* 訪問回数を先に加算してからランを作る。案内の「初回3つ／2回目以降1つ」の
@@ -1947,8 +2049,7 @@ function runAct(act, id, idx) {
           runRender();
         }, 'リタイヤする');
     case 'back-home':
-      RUI.run = null; RUI.view = 'areaSelect';
-      return runRender();
+      return enterHome();
     /* M6.6 WP2：確認用の開発機能（エリア選択画面右下）。誤爆防止のため確認ダイアログを1段挟む。
      * 記録を消したら必ずリロードする（cq_meta が無い状態から runInit → loadMeta が既定デッキで
      * 作り直すのに任せる。中途半端に RUI を作り替えるより確実）。 */

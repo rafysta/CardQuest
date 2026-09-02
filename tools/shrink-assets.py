@@ -33,6 +33,8 @@ TARGETS = [
     # 背景は画面幅ちょうど（1280）まで。マップは1280×800固定なのでこれ以上は絶対に見えない
     ('assets/map/bg_grassland.png', 1280, 'マップ背景（表示 1280px幅）'),
     ('assets/map/bg_forest.png',    1280, 'マップ背景（表示 1280px幅）'),
+    # M7 WP5：assets/ui/ の背景もここに含める（『作業パッケージ』WP5で申し送り済み）
+    ('assets/ui/home_jailtown.png', 1280, 'ホーム画面背景（表示 1280px幅）'),
 ]
 
 def main():

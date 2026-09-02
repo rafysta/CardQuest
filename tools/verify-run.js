@@ -53,7 +53,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   });
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('response', (r) => {
-    if (r.status() >= 400 && !/assets\/(cards|map|masters)\/[^/]+\.(png|jpg)/.test(r.url())) {
+    if (r.status() >= 400 && !/assets\/(cards|map|masters|ui)\/[^/]+\.(png|jpg)/.test(r.url())) {
       errors.push('HTTP ' + r.status() + ' ' + r.url());
     }
   });
@@ -89,6 +89,15 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.screenshot({ path: file });
     shots.push(file);
   };
+  /* ホーム画面（M7 WP5）を抜けてエリア選択へ進む。ホームは訪れるたびアンバーの吹き出しが
+   * 必ず1つ出る（初回3つ／通常ランダム1つ／節目）ので、スキップしてから「冒険に出る」を押す。 */
+  const passHomeToAreaSelect = async () => {
+    await wait(() => page.$('.home-scene'));
+    if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
+    await wait(() => page.$('[data-act="home-go-adventure"]:not([disabled])'));
+    await page.click('[data-act="home-go-adventure"]');
+    await wait(() => page.$('.area-grid'));
+  };
 
   await page.waitForTimeout(400);
 
@@ -99,7 +108,11 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.waitForTimeout(2200);         // 背景・肖像のフェードインが終わってから撮る
     await shot('opening');
     await page.click('[data-act="opening-skip"]');
-    await wait(() => page.$('.area-grid'));
+    // M7 WP5：オープニングの次はホーム（§2.1・初回3つ）に着地する
+    await wait(() => page.$('.home-scene'));
+    await page.waitForTimeout(300);
+    await shot('home-first');
+    ok('オープニングの次はホームに着地する（M7 WP5）', !!(await page.$('.home-scene')));
   }
 
   /* スターターを「本」に入れた初回状態から始める（持ち出し画面をここで実際に操作する）。
@@ -120,8 +133,9 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await wait(() => page.$('.tab[data-screen="screen-run"]').catch(() => null));
   await page.waitForTimeout(500);
 
-  // --- 1) ラン画面が最初から開く。エリア選択 ---
+  // --- 1) ラン画面が最初から開く。ホーム→エリア選択 ---
   ok('「ラン」タブが最初から開いている', await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
+  await passHomeToAreaSelect();
   const tiles = await page.$$('.area-tile');
   ok('エリアが2つ出る（草原・森）', tiles.length === 2, String(tiles.length));
   const forestLocked = await page.$('.area-tile.locked');
@@ -1092,8 +1106,12 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     /今回の探検を終える/.test(await page.$eval('[data-act="back-home"]', (el) => el.textContent)));
   await shot('result');
   await page.click('[data-act="back-home"]');
-  await wait(() => page.$('.area-grid'));
-  ok('結果画面からエリア選択に戻れる', !!(await page.$('.area-grid')));
+  // M7 WP5：「今回の探検を終える」の戻り先はホーム（受け入れ基準）
+  await wait(() => page.$('.home-scene'));
+  ok('結果画面の「今回の探検を終える」でホームに戻る（M7 WP5）', !!(await page.$('.home-scene')));
+  await shot('home-after-result');
+  await passHomeToAreaSelect();
+  ok('ホームから「冒険に出る」でエリア選択に戻れる', !!(await page.$('.area-grid')));
 
   // --- 7) 霧の出た森のマップ（M6.5b） ---
   /* 森を解放した状態にして、霧が出るまでランを引き直す（森の霧は50%なので数回で当たる）。
@@ -1111,7 +1129,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     localStorage.removeItem('cq_run');
   }, STARTER);
   await page.reload();
-  await wait(() => page.$('.area-grid'));
+  await passHomeToAreaSelect();
 
   let foggy = false;
   for (let attempt = 0; attempt < 12 && !foggy; attempt++) {
@@ -1124,7 +1142,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
        * 中断中のランを消して読み込み直すのがいちばん確実。 */
       await page.evaluate(() => localStorage.removeItem('cq_run'));
       await page.reload();
-      await wait(() => page.$('.area-grid'));
+      await passHomeToAreaSelect();
       continue;
     }
     /* 開始マスの新フロー（WP4）を通り抜ける：案内をスキップ → 持ち出しを終える →

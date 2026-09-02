@@ -5784,6 +5784,59 @@ t('後方互換：areas.js のショップ品揃えは shopPool と同じもの�
   });
 });
 
+/* ================= M7 WP5: ホーム画面（ジェイルタウン） ================= */
+section('M7 WP5: ホーム画面（ジェイルタウン）');
+
+t('台本§2：lore.js に home セクションが揃っている', () => {
+  const home = CQLore.LORE.home;
+  eq(home.first.length, 3, '初回（§2.1）は3つ');
+  eq(home.idle.length, 5, '通常（§2.2）の候補は5つ');
+  home.idle.forEach((g) => eq(Array.isArray(g), true, 'idle の各候補は吹き出し配列（pickOne前提）'));
+  eq(home.onLevelUp[0].lines[0].indexOf('{n}') >= 0, true, 'onLevelUp に {n} プレースホルダ');
+  eq(home.onAreaOpen[0].lines[0].indexOf('{area}') >= 0, true, 'onAreaOpen に {area} プレースホルダ');
+  eq(home.onFirstKey.length, 2, '§2.3 鍵の初取得は2吹き出し');
+  eq(home.onAllKeys.length, 1, '§2.3 鍵7つは1吹き出し');
+  eq(home.onExeCard.length, 2, '§2.3 エグゼデグゼス入手は2吹き出し');
+});
+
+t('CQLore.fill：ホームの節目プレースホルダを実際に置換できる', () => {
+  const lv = CQLore.fill(CQLore.LORE.home.onLevelUp, { n: 20 });
+  eq(lv[0].lines[0], '20種。お前の格が上がった。', '{n}が20に置換される');
+  const ao = CQLore.fill(CQLore.LORE.home.onAreaOpen, { area: '森' });
+  eq(ao[0].lines[0], '森へ行けるようになった。', '{area}が森に置換される');
+});
+
+t('CQSave.checkLevelUp：初回は基準を記録するだけで知らせない。次に上がった回だけ知らせる', () => {
+  const meta = { known: [] };
+  eq(CQSave.checkLevelUp(meta, 1), false, '初回呼び出しは false（基準を1に設定）');
+  eq(meta.homeSeenLevel, 1);
+  eq(CQSave.checkLevelUp(meta, 1), false, '変わっていなければ false');
+  eq(CQSave.checkLevelUp(meta, 2), true, '2に上がった回は true');
+  eq(meta.homeSeenLevel, 2, '基準が2に更新される');
+  eq(CQSave.checkLevelUp(meta, 2), false, '同じ2のままなら二度と true にならない');
+});
+
+t('CQSave.checkAreaOpen：初回は今の解放状況を基準にするだけで知らせない。新規解放分だけ返す', () => {
+  const meta = {};
+  eq(CQSave.checkAreaOpen(meta, ['grassland']), [], '初回は空配列（草原は最初から解放されているので節目ではない）');
+  eq(meta.homeSeenAreas, ['grassland']);
+  eq(CQSave.checkAreaOpen(meta, ['grassland']), [], '変化が無ければ空配列');
+  eq(CQSave.checkAreaOpen(meta, ['grassland', 'forest']), ['forest'], '森が新規解放分として返る');
+  eq(CQSave.checkAreaOpen(meta, ['grassland', 'forest']), [], '一度知らせた分は二度と返らない');
+});
+
+t('CQSave.markHomeVisited：最初の1回だけ true（§2.1 と §2.2 の出し分けに使う）', () => {
+  const meta = { homeVisited: false };
+  eq(CQSave.markHomeVisited(meta), true, '初回は true');
+  eq(meta.homeVisited, true);
+  eq(CQSave.markHomeVisited(meta), false, '2回目以降は false');
+});
+
+t('CQSave.loadMeta：ensureFields で homeVisited が既定 false になる（旧セーブ互換）', () => {
+  const meta = CQSave.loadMeta(mockStorage(), [8, 8, 101]);
+  eq(meta.homeVisited, false, '新規メタは未訪問から始まる');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }
