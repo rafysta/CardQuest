@@ -5837,6 +5837,42 @@ t('CQSave.loadMeta：ensureFields で homeVisited が既定 false になる（�
   eq(meta.homeVisited, false, '新規メタは未訪問から始まる');
 });
 
+/* ================= M7 WP6: コレクション図鑑 ================= */
+section('M7 WP6: コレクション図鑑');
+
+t('収集対象（U/M/S、空白180を除く）は169種（ゲーム仕様書§6.3）。run-ui.jsのCOLLECTION_TOTALの根拠になる数', () => {
+  const collectible = CARDS.filter((c) => (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK);
+  eq(collectible.length, 169, '合計169種');
+  eq(collectible.filter((c) => c.t === 'U').length, 73, 'モンスター73種');
+  eq(collectible.filter((c) => c.t === 'M').length, 48, '魔法48種');
+  eq(collectible.filter((c) => c.t === 'S').length, 48, '技能48種（空白180はデッキ枠埋め用の見張り値であり収集対象ではない）');
+});
+
+t('収集対象の全カードに入手方法（data.jsのgフィールド）がある（図鑑の情報パネルが空にならない保証）', () => {
+  const collectible = CARDS.filter((c) => (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK);
+  const missing = collectible.filter((c) => !c.g || !String(c.g).trim());
+  eq(missing.map((c) => c.n), [], 'gフィールドが空のカードは無い');
+});
+
+t('カースやおじゃま虫は収集対象に含まれない（図鑑のタブ絞り込みU/M/Sの前提）', () => {
+  const others = CARDS.filter((c) => c.t !== 'U' && c.t !== 'M' && c.t !== 'S');
+  eq(others.every((c) => c.t === 'X' || c.t === 'C'), true, 'X（おじゃま虫）かC（カース）のみ');
+});
+
+t('記憶データ数から段階・次の段階までの残りが正しく出る（図鑑ヘッダの表示に使う値）', () => {
+  const meta = { known: [] };
+  eq(CQCollection.masterLevelOf(meta), 1, '0種は段階1');
+  eq(CQCollection.nextStageNeed(0), 20, '次の段階（20種）まであと20');
+  for (let i = 1; i <= 20; i++) meta.known.push(i);
+  eq(CQCollection.masterLevelOf(meta), 2, '20種で段階2');
+  eq(CQCollection.nextStageNeed(20), 32, '次（52種）まであと32');
+  for (let i = 21; i <= 168; i++) meta.known.push(i);
+  eq(CQCollection.masterLevelOf(meta), 5, '168種で最終段階5（STAGE_MAXと一致）');
+  eq(CQCollection.nextStageNeed(168), 0, '168種＝STAGE_STEPSの最後の刻みに到達済みでもう残りは無い');
+  meta.known.push(169);
+  eq(CQCollection.nextStageNeed(169), 0, '169種（コンプリート）でも残りは無い');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

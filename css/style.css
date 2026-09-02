@@ -1681,6 +1681,16 @@ td.nm{font-weight:800}
 .cg-note{color:var(--dim);font-size:13px;text-align:center;margin:0}
 .cg-foot{text-align:center;flex:none;margin-top:8px}
 
+/* ---- コレクション図鑑（M7 WP6） ----
+ * cg-gridは元々40枚（8×5）固定だが、図鑑はU73種まであるのでスクロールする専用の並びにする
+ * （cg-grid-btnと同じ「grid-auto-rows + overflow」のやり方）。未入手は霧の中の敵と同じ
+ * フィルタ（brightness(0) saturate(0)）で「形だけ分かって正体は分からない」シルエットにする。 */
+.cg-grid.col-grid{grid-template-rows:none;grid-auto-rows:max-content;align-content:start;overflow-y:auto}
+.cg-grid.col-grid .cg-tile{aspect-ratio:110/135}
+.cg-tile.col-unknown img{filter:brightness(0) saturate(0) opacity(.55)}
+.big.col-unknown .bigart img{filter:brightness(0) saturate(0) opacity(.55)}
+.big.col-unknown .bn{color:var(--dim)}
+
 /* カードのタイル直下にボタンを添える版（ショップ・換金所・戦利品振り分けの3画面で共用・
  * 2026-08-29本人指摘：ボタンは情報パネルではなく各カードのそばに置く）。.cg-grid本来の
  * イラストのみのタイルと違い、ボタン込みで縦に伸びるので専用のgrid-auto-rowsにする。 */

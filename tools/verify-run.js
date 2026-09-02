@@ -133,8 +133,37 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await wait(() => page.$('.tab[data-screen="screen-run"]').catch(() => null));
   await page.waitForTimeout(500);
 
-  // --- 1) ラン画面が最初から開く。ホーム→エリア選択 ---
+  // --- 1) ラン画面が最初から開く。ホーム→コレクション→エリア選択 ---
   ok('「ラン」タブが最初から開いている', await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
+
+  // --- 1a) ホームの「コレクション」（M7 WP6） ---
+  await wait(() => page.$('.home-scene'));
+  if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
+  await wait(() => page.$('[data-act="home-collection"]:not([disabled])'));
+  await page.click('[data-act="home-collection"]');
+  await wait(() => page.$('.cg-grid'));
+  ok('ホームの「コレクション」で図鑑が開く（M7 WP6）', !!(await page.$('.cg-grid')));
+  const colKnown = (await page.$$('.cg-tile:not(.col-unknown)')).length;
+  const colUnknown = (await page.$$('.cg-tile.col-unknown')).length;
+  ok('モンスタータブに入手済み・未入手（シルエット）が両方出る',
+    colKnown > 0 && colUnknown > 0, `known=${colKnown} unknown=${colUnknown}`);
+  const colHeader = await page.$eval('.cg-stats', (el) => el.textContent);
+  ok('記憶データ数・マスターレベルが出る', /記憶データ/.test(colHeader) && /マスターレベル/.test(colHeader), colHeader);
+  const unkTile = await page.$('.cg-tile.col-unknown');
+  if (unkTile) await unkTile.click();
+  await page.waitForTimeout(150);
+  const colName = await page.$eval('.bn', (el) => el.textContent.trim()).catch(() => '');
+  const colObtain = await page.$eval('.obtain', (el) => el.textContent.trim()).catch(() => '');
+  ok('未入手カードは名前が伏せられ、入手方法（gフィールド）が読める',
+    colName === '？？？' && colObtain.length > 0, `name=${colName} obtain=${colObtain.slice(0, 20)}`);
+  await shot('collection');
+  await page.click('[data-act="col-tab"][data-id="M"]');
+  await page.waitForTimeout(150);
+  ok('タブ切り替えで魔法のカードが出る', (await page.$$('.cg-tile')).length > 0);
+  await page.click('[data-act="collection-leave"]');
+  await wait(() => page.$('.home-scene'));
+  ok('コレクションから「ホームへ戻る」でホームに戻れる', !!(await page.$('.home-scene')));
+
   await passHomeToAreaSelect();
   const tiles = await page.$$('.area-tile');
   ok('エリアが2つ出る（草原・森）', tiles.length === 2, String(tiles.length));

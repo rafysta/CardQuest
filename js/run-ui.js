@@ -63,7 +63,9 @@ const RUI = {
    * gridSelIdx は「押した1タイル」を指す表示専用の添字（本人指摘：同じカードが複数あると
    * 全部のタイルが黄色く光り、どの1枚を選んでいるか分からなかった。ゲーム内の判定は今まで
    * どおり gridSel（カードid）で行い、光らせる先だけ gridSelIdx に絞る）。 */
-  gridSel: null, gridCtx: null, gridSelIdx: null
+  gridSel: null, gridCtx: null, gridSelIdx: null,
+  /* コレクション図鑑（M7 WP6）のタブ（U/M/S）。cq_runには保存しない＝画面を開くたび既定に戻る。 */
+  colTab: 'U'
 };
 
 function runRoot() { return document.getElementById('run-root'); }
@@ -225,7 +227,7 @@ if (typeof window !== 'undefined') window.previewOpening = previewOpening;
 const HOME_FACILITIES = [
   { id: 'adventure', label: '冒険に出る', act: 'home-go-adventure', ready: true },
   { id: 'shop', label: 'ログショップ', ready: false },
-  { id: 'collection', label: 'コレクション', ready: false },
+  { id: 'collection', label: 'コレクション', act: 'home-collection', ready: true },
   { id: 'deck', label: 'デッキ編集', ready: false },
   { id: 'record', label: '記録', ready: false },
   { id: 'settings', label: '設定', ready: false }
@@ -1534,6 +1536,94 @@ function renderDeckView() {
     </div>`;
 }
 
+/* ================= コレクション図鑑（M7 WP6） =================
+ *
+ * ホームの「コレクション」施設。cq_meta.known（記憶データ＝一度でも入手した種類）を
+ * 元に、全169種（U73／M48／S48）を種別タブで一覧する。未入手はシルエット（形だけ分かって
+ * 正体は分からない——霧の中の敵と同じCSSフィルタ・マップ仕様書§5）にし、名前は「？？？」に
+ * 伏せるが、入手方法（data.jsの`g`フィールド）は既読・未読どちらも出す＝『作業パッケージ』
+ * WP6の「未入手カードには入手経路のヒントを出す」に沿う。カードグリッド＋情報パネルは
+ * WP9の共通部品（cgGridHTML等）ではなく専用のcolXxx系を使う——cgTileHTML/cgDetailHTMLは
+ * 「持っている枚数」前提の作りで、未入手（0枚だが存在は分かっている）を表せないため。 */
+
+/* コレクション対象＝U／M／S の3種別（カースやおじゃま虫は収集対象外）。169種（ゲーム仕様書§6.3）。
+ * id180「空白」はt:'S'だがデッキ枠埋め用の見張り値（CQRun.BLANK）で実在のカードではないため除く。 */
+const COLLECTION_TOTAL = CARDS.filter(function (c) {
+  return (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK;
+}).length;
+
+function colTileHTML(id, known, idx) {
+  const c = CARD_BY_ID[id];
+  return `<div class="cg-tile ${known ? '' : 'col-unknown'} ${RUI.gridSelIdx === idx ? 'on' : ''}"
+      data-act="grid-pick" data-id="${id}" data-idx="${idx}">
+      <div class="cg-tile-art">${artInner(c, 3)}</div>
+    </div>`;
+}
+
+function colGridHTML(items) {
+  if (!items.length) return '<div class="cg-empty">カードがありません</div>';
+  return `<div class="cg-grid col-grid">${items.map(function (it, idx) {
+    return colTileHTML(it.id, it.known, idx);
+  }).join('')}</div>`;
+}
+
+function colDetailHTML() {
+  const c = CARD_BY_ID[RUI.gridSel];
+  if (!c) return '<div class="carry-detail-empty">カードを選ぶと、ここに絵と詳細が出ます。</div>';
+  const known = (RUI.meta.known || []).indexOf(c.id) >= 0;
+  const obtHTML = `<div class="obt"><h4>入手方法</h4><div class="obtain">${esc(c.g || '（未設定）')}</div></div>`;
+  if (!known) {
+    return `
+      <div class="big ${c.t} col-unknown">
+        <div class="bigart">${artInner(c)}</div>
+        <div class="bn">？？？</div>
+      </div>
+      ${obtHTML}`;
+  }
+  const stat = c.t === 'U'
+    ? `<span>攻撃力 ${c.a}</span><span>防御力 ${c.d}</span>
+       <span>ＣＨ ${c.ch}</span><span>召還Ｌｖ ${c.lv}</span><span>${c.p} G</span>`
+    : `<span>${TYPE_NAME[c.t]}</span>${c.t === 'M' ? `<span>詠唱Ｌｖ ${c.lv}</span>` : ''}<span>${c.p} G</span>`;
+  return `
+    <div class="big ${c.t}">
+      <div class="bigart">${artInner(c)}</div>
+      <div class="bn">${esc(c.n)}</div>
+      <div class="bstat">${stat}</div>
+      <div class="btext">${esc(c.e || '')}</div>
+    </div>
+    ${obtHTML}`;
+}
+
+function renderCollection() {
+  const meta = RUI.meta;
+  const tab = RUI.colTab || 'U';
+  gridEnter('collection:' + tab);
+  const known = meta.known || [];
+  const items = CARDS.filter(function (c) { return c.t === tab && c.id !== CQRun.BLANK; })
+    .sort(function (a, b) { return a.id - b.id; })
+    .map(function (c) { return { id: c.id, known: known.indexOf(c.id) >= 0 }; });
+  const lv = CQCollection.masterLevelOf(meta);
+  const need = CQCollection.nextStageNeed(known.length);
+  const tabsHTML = CARRY_TABS.map(function (t) {
+    return `<button class="dtab ${t.t} ${tab === t.t ? 'on' : ''}" data-act="col-tab" data-id="${t.t}">${t.label}</button>`;
+  }).join('');
+  runRoot().innerHTML = `
+    <div class="cg-head">
+      <div class="cg-title">コレクション</div>
+      <div class="cg-stats">
+        <span>記憶データ <b>${known.length}</b>／${COLLECTION_TOTAL}</span>
+        <span>マスターレベル <b>${lv}</b>／${CQCollection.STAGE_MAX}</span>
+        ${need ? `<span>次の段階まであと <b>${need}</b>種</span>` : '<span>最終段階</span>'}
+      </div>
+      <button class="btn ok cg-done" data-act="collection-leave">ホームへ戻る</button>
+    </div>
+    <div class="carry-tabs">${tabsHTML}</div>
+    <div class="cg-wrap">
+      <div class="cg-main">${colGridHTML(items)}</div>
+      <div class="detail cg-detail">${colDetailHTML()}</div>
+    </div>`;
+}
+
 function renderQuestionNode(run, n) {
   if (!n.resolved) {
     CQRun.resolveQuestion(run, n);
@@ -1781,6 +1871,7 @@ function runRender() {
   else if (RUI.view === 'event-intro') renderEventIntro();
   else if (RUI.view === 'loot') renderLoot();
   else if (RUI.view === 'deckview') renderDeckView();
+  else if (RUI.view === 'collection') renderCollection();
   else if (RUI.view === 'result') renderResult();
 }
 
@@ -1882,6 +1973,15 @@ function runAct(act, id, idx) {
     case 'home-go-adventure':
       RUI.view = 'areaSelect';
       return runRender();
+    case 'home-collection':
+      RUI.view = 'collection';
+      return runRender();
+    case 'col-tab':
+      if (RUI.colTab === id) return;
+      RUI.colTab = id;
+      return runRender();
+    case 'collection-leave':
+      return enterHome();
     case 'go-home':
       return enterHome();
     case 'go-start': {
