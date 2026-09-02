@@ -274,9 +274,13 @@ function renderHome() {
       ${f.ready ? '' : '<span class="home-tile-soon">準備中</span>'}
     </button>`;
   }).join('');
+  /* 2026-09-02 本人指摘：吹き出しをそのまま重ねると「所持Ｇ」「ジェイルタウン」の文字と
+   * アンバーの肖像がぶつかって読めない（他画面のamber-overlayはHUDと重ならない位置に置ける
+   * が、ホームはHUD・タイトルが上部に固定なので、ここだけ吹き出しを下げて避ける＝§4の
+   * cls オプションで .home-amber を付け、CSS側（padding-top）でずらす）。 */
   const overlay = guiding
     ? amberBubbleHTML(RUI.homeGuide[Math.min(RUI.homeGuideStep || 0, RUI.homeGuide.length - 1)],
-        { nextAct: 'home-guide-next', skipAct: 'home-guide-skip' })
+        { nextAct: 'home-guide-next', skipAct: 'home-guide-skip', cls: 'home-amber' })
     : '';
   runRoot().innerHTML = `
     <div class="home-scene">
@@ -367,7 +371,7 @@ function amberBubbleHTML(bubble, opts) {
   const o = opts || {};
   const portrait = bubble.face === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
   const lines = bubble.lines.map(esc).join('<br>');
-  return `<div class="amber-overlay" ${o.nextAct ? `data-act="${o.nextAct}"` : ''}>
+  return `<div class="amber-overlay${o.cls ? ' ' + o.cls : ''}" ${o.nextAct ? `data-act="${o.nextAct}"` : ''}>
     ${o.skipAct ? `<button class="amber-skip" data-act="${o.skipAct}">スキップ</button>` : ''}
     <div class="amber-row">
       <img class="amber-face" src="${portrait}" alt="" draggable="false" onerror="this.remove()">

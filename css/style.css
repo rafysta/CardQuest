@@ -875,6 +875,10 @@ td.nm{font-weight:800}
 }
 .area-back-btn:hover{color:#fff;border-color:var(--accent)}
 
+/* ホームの吹き出しは「所持Ｇ」「ジェイルタウン」の見出しの下まで下げる（2026-09-02 本人指摘：
+ * 肖像とタイトル文字が重なって読めなかった）。他画面のamber-overlayには影響しない。 */
+.amber-overlay.home-amber{padding-top:112px}
+
 /* ---- 開始マス：案内・おまかせドラフト（§1.1〜1.2） ---- */
 .bubble{
   background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px 18px;
