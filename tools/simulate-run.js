@@ -96,6 +96,17 @@ function trackGoldDelta(before, after) {
   else if (d < 0) GOLDFLOW_STAT.shopSpend += -d;
 }
 
+/* M7 WP4（第1段の効果測定）：宝箱を開けた回数・カードが出た回数・0回だったランの割合。
+ * WP1の「魔法・技能0枚ランの割合」はWP3後も77%台までしか下がらなかった（宝箱のカード率を
+ * 0.6→1.0まで上げても67%止まり）。宝箱の抽選確率そのものより「そもそも宝箱に何回
+ * たどり着けているか」がボトルネックかもしれない、という仮説を確かめるための計測。 */
+const CHEST_STAT = { runs: 0, opened: 0, cardGiven: 0, zeroChestRuns: 0 };
+
+/* M7 WP4：ショップでの購入試行のうち、Ｇ不足で失敗した回数（品揃えは見えているのに買えない）。
+ * WP1実測の「ショップ支出7Ｇ/ラン」が低すぎる原因（立寄り率が低いだけなのか、
+ * 立ち寄っても買えていないのか）を切り分けるための計測。 */
+const SHOPBUY_STAT = { attempts: 0, failedGold: 0 };
+
 /* キャリア（1本のmeta＝草原→森）通算のダブり枚数：各カードについて所持数（本＋デッキ）が
  * 1枚を超えた分の合計。経済追補§4-2bの一括換金がどれだけの量を処理することになるかの目安。 */
 const DUPE_STAT = { careers: 0, total: 0 };
@@ -232,6 +243,7 @@ function playRun(areaId, seed, meta, rng) {
 
   let steps = 0, battles = 0, totalTurns = 0;
   let shopVisited = false;   /* M7 WP1：このランでショップに1度でも立ち寄ったか */
+  let chestOpened = 0;       /* M7 WP4：このランで宝箱を開けた回数 */
   while (!run.outcome && steps++ < 60) {
     const n = CQRun.currentNode(run);
     if (!n.cleared) {
@@ -275,8 +287,12 @@ function playRun(areaId, seed, meta, rng) {
         if (n.type === 'boss' && M.winner === 'self') run.outcome = 'win';
       } else if (n.type === 'chest') {
         const beforeG = run.gold;
+        const cardsBefore = (run.gainedCards || []).length;
         CQRun.openChest(run, n);
         trackGoldDelta(beforeG, run.gold);
+        chestOpened++;
+        CHEST_STAT.opened++;
+        if ((run.gainedCards || []).length > cardsBefore) CHEST_STAT.cardGiven++;
       } else if (n.type === 'rest') {
         CQRun.rest(run, n);
       } else if (n.type === 'shop') {
@@ -284,8 +300,10 @@ function playRun(areaId, seed, meta, rng) {
         if (n.stock.length && rng.next() < 0.6) {
           const id = n.stock[rng.int(0, n.stock.length - 1)];
           const beforeG = run.gold;
-          CQRun.shopBuy(run, CARD_BY_ID, n, id);
+          const r = CQRun.shopBuy(run, CARD_BY_ID, n, id);
           trackGoldDelta(beforeG, run.gold);
+          SHOPBUY_STAT.attempts++;
+          if (!r.ok) SHOPBUY_STAT.failedGold++;
         }
         if (run.lp < run.maxLp && rng.next() < 0.4) {
           const beforeG = run.gold;
@@ -342,6 +360,8 @@ function playRun(areaId, seed, meta, rng) {
   }
   SHOPVISIT_STAT.runs++;
   if (shopVisited) SHOPVISIT_STAT.visited++;
+  CHEST_STAT.runs++;
+  if (chestOpened === 0) CHEST_STAT.zeroChestRuns++;
   /* M6.6 WP11：清算で「今日の獲得ぶん」が終わり方に応じて削られる（リタイヤ▲50%・
    * ゲームオーバー▲75%）。ランの大半は敗北なので、ここが経済に一番効く数字になった。
    * settleGold は副作用が無いので、settle の前に呼んで内訳だけ先に集計してよい。 */
@@ -435,6 +455,17 @@ console.log(`  1ランのＧ収支：獲得 ${(GOLDFLOW_STAT.income / Math.max(1
   + ` / 清算後Ｇ（再掲） ${(ESTAT.goldKept / Math.max(1, ESTAT.runs)).toFixed(0)}`);
 console.log(`  キャリア通算のダブり枚数：平均 ${(DUPE_STAT.total / Math.max(1, DUPE_STAT.careers)).toFixed(1)} 枚`
   + `（${DUPE_STAT.careers} キャリア）`);
+
+/* M7 WP4（第1段の効果測定）：追加した診断指標。 */
+console.log('');
+console.log('--- M7 WP4 診断（宝箱到達率・ショップ購入の成否） ---');
+console.log(`  1ランあたりの宝箱を開けた回数：平均 ${(CHEST_STAT.opened / Math.max(1, CHEST_STAT.runs)).toFixed(2)} 回`
+  + ` / 1回も開けられなかったランの割合 ${pct(CHEST_STAT.zeroChestRuns, CHEST_STAT.runs)}`
+  + `（${CHEST_STAT.zeroChestRuns} / ${CHEST_STAT.runs} 回）`);
+console.log(`  宝箱を開けてカードが出た割合：${pct(CHEST_STAT.cardGiven, CHEST_STAT.opened)}`
+  + `（${CHEST_STAT.cardGiven} / ${CHEST_STAT.opened} 回。抽選確率60%＋rareチェストは必中ぶん）`);
+console.log(`  ショップ購入の試行 ${SHOPBUY_STAT.attempts} 回のうちＧ不足で失敗：${pct(SHOPBUY_STAT.failedGold, SHOPBUY_STAT.attempts)}`
+  + `（${SHOPBUY_STAT.failedGold} / ${SHOPBUY_STAT.attempts} 回）`);
 
 if (stat.errors.length) {
   console.log(`\n例外 ${stat.errors.length} 件:`);
