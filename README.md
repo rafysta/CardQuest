@@ -20,3 +20,9 @@ SOUL GATE ver1.16（2003年・RPGツクール2000製フリーゲーム）のカ�
 ## ローカル環境でのプレイの仕方
 1. ターミナルで、`python3 -m http.server 8321`を実行
 2. ブラウザで `http://127.0.0.1:8321/index.html` を開く
+
+## プレイ画面のスクリーンショット
+<img width="640" height="405" alt="image" src="https://github.com/user-attachments/assets/11d9a12b-bf25-4edd-b52e-3669b296cb00" />
+<img width="641" height="405" alt="image" src="https://github.com/user-attachments/assets/00766a08-085c-496e-9630-098581724695" />
+<img width="641" height="405" alt="image" src="https://github.com/user-attachments/assets/68864a90-df80-4e56-96a2-74eee7978ff1" />
+
