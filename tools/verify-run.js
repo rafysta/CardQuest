@@ -96,6 +96,18 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
     await wait(() => page.$('[data-act="home-go-adventure"]:not([disabled])'));
     await page.click('[data-act="home-go-adventure"]');
+    /* M7 WP9：本にまだデッキへ入るカードが残っていると、出発は止められてデッキ編集が開く。
+     * 人がやるのと同じように「おまかせで選ぶ→ホームへ戻る」で片付けてから出直す
+     * （ランで拾ったカードがあると、次に出かけるとき毎回ここを通る）。 */
+    if (await page.$('.carry-scroll')) {
+      if (await page.$('[data-act="deck-guide-skip"]')) await page.click('[data-act="deck-guide-skip"]');
+      await page.click('[data-act="carry-auto"]');
+      await page.waitForTimeout(250);
+      await page.click('[data-act="carry-done"]');
+      await wait(() => page.$('.home-scene'));
+      if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
+      await page.click('[data-act="home-go-adventure"]');
+    }
     await wait(() => page.$('.area-grid'));
   };
 
@@ -240,6 +252,70 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     CQSave.saveMeta(localStorage, RUI.meta);
   }, metaSnapshot);
 
+
+  // --- 1c) ホームの「デッキ編集」（M7 WP9：開始マスの持ち出し画面から移設） ---
+  if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
+  /* デッキが未完成のうちは、ホームの時点でそれが分かる（押す前に気付ける） */
+  ok('★デッキが未完成だとホームに警告が出る（M7 WP9）', (await page.$$('.home-tile-warn')).length > 0);
+  /* 出発しようとすると止められ、そのままデッキ編集が開く */
+  await page.click('[data-act="home-go-adventure"]');
+  await wait(() => page.$('.carry-scroll'));
+  ok('★デッキが未完成のまま出発しようとすると止められ、デッキ編集が開く',
+    !!(await page.$('.carry-scroll')) && !(await page.$('.area-tile')));
+  ok('デッキ編集の見出しが「デッキ編集」になっている',
+    (await page.$eval('.carry-title', (e) => e.textContent.trim())) === 'デッキ編集');
+  /* 初回だけアンバーの説明（台本§5-3）が出る＝持ち出し画面から一緒に引っ越してきた */
+  ok('初めて開いたときはアンバーの説明が出る（台本§5-3）', !!(await page.$('.amber-overlay')));
+  await page.click('[data-act="deck-guide-skip"]');
+  await page.waitForTimeout(150);
+  ok('デッキ編集に本のカードが並ぶ', (await page.$$('.carry-table tbody tr')).length > 0);
+  const startCounts = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
+  }));
+  ok('初回は本28枚・デッキ0枚から始まる（§2-2）',
+    startCounts.book === 28 && startCounts.deck === 0, JSON.stringify(startCounts));
+  await shot('deckedit');
+  /* ▶で本が減りデッキが増える（移動モデル）／◀で戻せる */
+  const toDeck = await page.$('[data-act="carry-to-deck"]:not([disabled])');
+  await toDeck.click();
+  await page.waitForTimeout(150);
+  const afterOne = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
+  }));
+  ok('▶で本が1枚減りデッキが1枚増える（複製ではなく移動）',
+    afterOne.book === startCounts.book - 1 && afterOne.deck === startCounts.deck + 1,
+    JSON.stringify(startCounts) + '→' + JSON.stringify(afterOne));
+  await (await page.$('[data-act="carry-to-book"]:not([disabled])')).click();
+  await page.waitForTimeout(150);
+  const backAgain = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
+  }));
+  ok('◀でデッキから本へ戻せる',
+    backAgain.book === startCounts.book && backAgain.deck === startCounts.deck, JSON.stringify(backAgain));
+  await page.click('.carry-table tbody tr');
+  await page.waitForTimeout(150);
+  ok('カードを選ぶと右に詳細が出る', !!(await page.$('.carry-detail .bigart img')));
+  ok('見出しに並べ替えが付いている', (await page.$$('.carry-table thead th.sortable')).length > 0);
+  ok('絞り込み欄がある', (await page.$$('.carry-table .filters input')).length > 0);
+  ok('表示する列を切り替えられる', (await page.$$('[data-act="carry-col"]')).length > 0);
+  /* 「おまかせで選ぶ」で本を全部デッキへ（案Bで38枚→40枚まで詰めるように変えた） */
+  await page.click('[data-act="carry-auto"]');
+  await page.waitForTimeout(300);
+  const filled = await page.evaluate(() => ({
+    book: CQCollection.countsTotal(RUI.meta.book),
+    deck: CQCollection.deckTotal(RUI.meta),
+    depart: CQCollection.canDepart(RUI.meta)
+  }));
+  ok('★おまかせで本の28枚が全部デッキに入る', filled.book === 0 && filled.deck === 28,
+    JSON.stringify(filled));
+  ok('★本が空なら40枚に届かなくても出発できる（スターター28枚で詰まない）',
+    filled.depart.ok === true && filled.depart.short === 12, JSON.stringify(filled.depart));
+  await shot('deckedit-filled');
+  await page.click('[data-act="carry-done"]');
+  await wait(() => page.$('.home-scene'));
+  ok('デッキ編集から「ホームへ戻る」でホームに戻れる', !!(await page.$('.home-scene')));
+  if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
+  ok('デッキがそろうとホームの警告が消える', (await page.$$('.home-tile-warn')).length === 0);
   await passHomeToAreaSelect();
   const tiles = await page.$$('.area-tile');
   ok('エリアが2つ出る（草原・森）', tiles.length === 2, String(tiles.length));
@@ -259,69 +335,15 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await shot('start-guide');
   await page.click('[data-act="guide-skip"]');
 
-  await wait(() => page.$('.carry-scroll'));
-  ok('案内のあとに持ち出し（デッキ編集）が出る（WP4）', !!(await page.$('.carry-scroll')));
-  /* 既知のカードだけ・所持0でも出る、という表示規則をざっと確かめる */
-  ok('持ち出し画面に既知のカードが並ぶ', (await page.$$('.carry-table tbody tr')).length > 0);
-  await shot('start-carry');
-  const startCounts = await page.evaluate(() => ({
-    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
-  }));
-  ok('初回は本28枚・デッキ0枚から始まる（§2-2）',
-    startCounts.book === 28 && startCounts.deck === 0, JSON.stringify(startCounts));
-  /* ▶を1回押して「本が減りデッキが増える」＝移動モデルであることを確かめ、
-   * ◀で元に戻ることも見る（2026-08-28 本人指定で −＋ から ◀▶ に変更） */
-  const toDeck = await page.$('[data-act="carry-to-deck"]:not([disabled])');
-  await toDeck.click();
-  await page.waitForTimeout(150);
-  const afterOne = await page.evaluate(() => ({
-    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
-  }));
-  ok('▶で本が1枚減りデッキが1枚増える（複製ではなく移動）',
-    afterOne.book === startCounts.book - 1 && afterOne.deck === startCounts.deck + 1,
-    JSON.stringify(startCounts) + '→' + JSON.stringify(afterOne));
-  const toBook = await page.$('[data-act="carry-to-book"]:not([disabled])');
-  await toBook.click();
-  await page.waitForTimeout(150);
-  const backAgain = await page.evaluate(() => ({
-    book: CQCollection.countsTotal(RUI.meta.book), deck: CQCollection.deckTotal(RUI.meta)
-  }));
-  ok('◀でデッキから本へ戻せる',
-    backAgain.book === startCounts.book && backAgain.deck === startCounts.deck,
-    JSON.stringify(backAgain));
-  /* カードを選ぶと右の詳細ペインに絵と詳細が出る（2026-08-28 本人指定） */
-  await page.click('.carry-table tbody tr');
-  await page.waitForTimeout(150);
-  ok('カードを選ぶと右に詳細が出る', !!(await page.$('.carry-detail .bigart img')));
-  /* 見出しクリックで並べ替え・絞り込み欄が使えること */
-  ok('見出しに並べ替えが付いている', (await page.$$('.carry-table thead th.sortable')).length > 0);
-  ok('絞り込み欄がある', (await page.$$('.carry-table .filters input')).length > 0);
-  ok('表示する列を切り替えられる', (await page.$$('[data-act="carry-col"]')).length > 0);
-  /* 残りも全部持ち出す（各タブを回る）。本が空になり、デッキが28枚になるはず */
-  for (const tab of ['U', 'M', 'S']) {
-    await page.click(`[data-act="carry-tab"][data-id="${tab}"]`);
-    await page.waitForTimeout(80);
-    for (let guard = 0; guard < 60; guard++) {
-      const b = await page.$('[data-act="carry-to-deck"]:not([disabled])');
-      if (!b) break;
-      await b.click();
-      await page.waitForTimeout(25);
-    }
-  }
-  const filled = await page.evaluate(() => ({
-    book: CQCollection.countsTotal(RUI.meta.book),
-    deck: CQCollection.deckTotal(RUI.meta),
-    blank: CQCollection.blankCount(RUI.meta)
-  }));
-  ok('本の28枚を全部持ち出せる（残り12枠は空白）',
-    filled.book === 0 && filled.deck === 28 && filled.blank === 12, JSON.stringify(filled));
-  await shot('start-carry-filled');
-  await page.click('[data-act="carry-done"]');
+  /* M7 WP9：案内のあとは持ち出し画面ではなく、そのままおまかせドラフトへ
+   * （デッキ編集はホームへ移した。上の 1c) で検証済み）。 */
+  ok('★案内のあとに持ち出し画面が出ない（デッキ編集はホームへ移設・M7 WP9）',
+    !(await page.$('.carry-scroll')));
 
   // --- 3) おまかせドラフト（最大2回・空白がある時だけ）→ 暗転明けでマップへ ---
   await wait(() => page.$('.draft-row') || page.$('.run-map'));
   if (await page.$('.draft-row')) {
-    ok('持ち出しのあとにおまかせドラフトが出る（WP4）', true);
+    ok('案内のあとにおまかせドラフトが出る（WP4／M7 WP9で持ち出しを挟まなくなった）', true);
     ok('候補3枚＋「変更しない」の4枚が並ぶ', (await page.$$('.draft-card')).length === 4,
       String((await page.$$('.draft-card')).length));
     ok('「変更しない」枠が区別して描かれる', !!(await page.$('.draft-card.keep')));
@@ -1257,13 +1279,12 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
       await passHomeToAreaSelect();
       continue;
     }
-    /* 開始マスの新フロー（WP4）を通り抜ける：案内をスキップ → 持ち出しを終える →
-     * （空白が無いのでドラフトは発生せず）そのままマップへ */
+    /* 開始マスの新フロー（M7 WP9）を通り抜ける：案内をスキップ → そのままドラフト／マップへ
+     * （デッキ編集はホームへ移したので、ここに持ち出し画面はもう無い） */
     if (await page.$('[data-act="guide-skip"]')) {
       await page.click('[data-act="guide-skip"]');
-      await wait(() => page.$('.carry-scroll'));
+      await page.waitForTimeout(300);
     }
-    if (await page.$('[data-act="carry-done"]')) await page.click('[data-act="carry-done"]');
     for (let i = 0; i < CQ_DRAFT_ROUNDS && (await page.$('.draft-row')); i++) {
       const cards = await page.$$('.draft-card');
       if (!cards.length) break;

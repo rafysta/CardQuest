@@ -60,6 +60,37 @@
   function deckTotal(meta) { return countsTotal(ensure(meta).deck); }
   function blankCount(meta) { return Math.max(0, DECK_MAX - deckTotal(meta)); }
 
+  /** 本にあるカードを、いまのデッキ規則（合計40・同種3枚・ピッグマンは無制限）で
+   * **あと何枚入れられるか**（M7 WP9）。0なら「これ以上は入れようがない」＝
+   * デッキが40枚に届かなくても、それがその人の精一杯ということ。 */
+  function deckFillable(meta) {
+    ensure(meta);
+    const room = blankCount(meta);
+    if (room <= 0) return 0;
+    let n = 0;
+    Object.keys(meta.book).forEach(function (k) {
+      const id = +k;
+      if (id === BLANK) return;
+      const have = meta.book[k] || 0;
+      if (have <= 0) return;
+      const cap = (id === PIG) ? have : Math.max(0, KIND_MAX - (meta.deck[k] || 0));
+      n += Math.min(have, cap);
+    });
+    return Math.min(n, room);
+  }
+
+  /** 出発してよいか（M7 WP9・『作業パッケージ』WP9の出発ガード）。
+   *
+   * ★「40枚ちょうど」を条件にはできない——**スターターは本に28枚しかない**ので、
+   * 全部入れても40には届かず、初回プレイが1歩も進めなくなる（実装中に気付いた）。
+   * 止めたいのは「入れられるのに入れていない」状態（極端には**デッキ0枚のまま出発**）なので、
+   * 条件は「**本にまだ入れられるカードが残っていないこと**」にしてある。
+   * 足りない分は戦闘デッキで空白に補填される＝その人の手持ちの限界であって、事故ではない。 */
+  function canDepart(meta) {
+    const fillable = deckFillable(meta);
+    return { ok: fillable === 0, short: blankCount(meta), fillable: fillable };
+  }
+
   /** 本→デッキ（持ち出し）。移した分だけ本が減る。 */
   function moveToDeck(meta, id, n) {
     ensure(meta);
@@ -369,7 +400,7 @@
   const api = {
     DECK_MAX, KIND_MAX, PIG, BLANK,
     countsTotal, canAddToDeck, ensure, registerKnown,
-    deckTotal, blankCount, moveToDeck, moveToBook, addCard, sellFromDeck, sellFromBook,
+    deckTotal, blankCount, deckFillable, canDepart, moveToDeck, moveToBook, addCard, sellFromDeck, sellFromBook,
     /* M7 WP2 */
     STAGE_STEPS, STAGE_MAX, LP_BASE, LP_CAP, RARE_THRESHOLD_HOME,
     masterLevel, stage, masterLevelOf, stageOf, nextStageNeed,

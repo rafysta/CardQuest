@@ -6143,6 +6143,83 @@ t('買い取り所は立ち去ると解決済みになる（他の非戦闘マ�
   eq(n.cleared, true, '立ち去ると解決済み');
 });
 
+/* ================= M7 WP9: デッキ編集の機能化 ================= */
+section('M7 WP9: デッキ編集');
+
+t('★出発ガード：本にまだ入れられるカードが残っているうちは出発できない', () => {
+  /* 画面（ホームの「冒険に出る」）は canDepart() だけを見て出発を止める。 */
+  const m = { book: { 8: 50 }, deck: {}, known: [8], gold: 0 };
+  eq(CQCollection.canDepart(m).ok, false, 'デッキ0枚では出発できない（空白40枚のまま始まるのを防ぐ）');
+  eq(CQCollection.canDepart(m).fillable, 40, 'あと40枚入る');
+  CQCollection.moveToDeck(m, 8, 39);
+  eq(CQCollection.canDepart(m).ok, false, '39枚でもまだ1枚入るので出発できない');
+  CQCollection.moveToDeck(m, 8, 1);
+  eq(CQCollection.canDepart(m).ok, true, '40枚そろえば出発できる');
+  eq(CQCollection.deckTotal(m), CQCollection.DECK_MAX, 'デッキは40枚');
+  eq(CQCollection.moveToDeck(m, 8, 1).ok, false, '40枚を超えては入れられない（41枚にならない）');
+});
+
+t('★出発ガード：本が空なら40枚に届かなくても出発できる（スターター28枚で詰まない）', () => {
+  /* ★これが無いと初回プレイが1歩も進めない——スターターは本に28枚しかないので、
+   * 全部入れてもデッキは28枚にしかならない。止めたいのは「入れられるのに入れていない」だけ。 */
+  /* js/run-ui.js の STARTER_BOOK と同じ8種28枚（上の「スターターセット」テストと同じ値） */
+  const starter = { 8: 10, 101: 3, 108: 2, 113: 2, 153: 3, 165: 2, 193: 3, 194: 3 };
+  const m = { book: Object.assign({}, starter), deck: {}, known: Object.keys(starter).map(Number), gold: 0 };
+  eq(CQCollection.countsTotal(m.book), 28, 'スターターは本に28枚（§2-2）');
+  eq(CQCollection.canDepart(m).ok, false, '本に入れっぱなしでは出発できない');
+  /* 入れられるだけ入れる（同種3枚の上限・ピッグマンは例外） */
+  let guard = 0;
+  while (CQCollection.deckFillable(m) > 0 && guard++ < 60) {
+    const id = Object.keys(m.book).filter((k) => CQCollection.canAddToDeck(m.deck, +k).ok)[0];
+    if (!id) break;
+    CQCollection.moveToDeck(m, +id, 1);
+  }
+  eq(CQCollection.countsTotal(m.book), 0, '本は空になった');
+  eq(CQCollection.deckTotal(m), 28, 'デッキは28枚（40には届かない）');
+  eq(CQCollection.canDepart(m).ok, true, '★それでも出発できる（これ以上入れようがないため）');
+  eq(CQCollection.canDepart(m).short, 12, '足りない12枠は戦闘デッキで空白に補填される');
+});
+
+t('出発ガード：同種3枚の上限で入らないカードしか残っていなければ出発できる', () => {
+  /* 本に4枚目の101が残っていても、デッキに既に3枚あれば入れようがない＝止めない。 */
+  const m = { book: { 101: 4 }, deck: {}, known: [101], gold: 0 };
+  CQCollection.moveToDeck(m, 101, 3);
+  eq(m.book[101], 1, '本に1枚余っている');
+  eq(CQCollection.deckFillable(m), 0, '同種3枚の上限で、その1枚はもう入らない');
+  eq(CQCollection.canDepart(m).ok, true, '入れようがないので出発できる');
+});
+
+t('★ランは常に「いまのデッキ」で始まる（編集はホームだけ・持ち出し画面は廃止）', () => {
+  /* M6.6 WP4では開始マスで編集していたので、run.deck を meta.deck に同期し直す処理が要った。
+   * M7 WP9でデッキ編集がホーム（＝ラン開始前）へ移ったので、CQRun.start() の複製だけで
+   * 常に最新になる。ここが崩れると「古いデッキで始まる」という気づきにくい不具合になる。 */
+  const meta = { book: { 8: 50 }, deck: {}, known: [8], gold: 0, cleared: [] };
+  CQCollection.moveToDeck(meta, 8, 40);
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 33, meta);
+  eq(CQCollection.countsTotal(run.deck), 40, '出発時のデッキが40枚そのまま入っている');
+  eq(run.deck[8], 40, '中身も一致する');
+  const battle = CQRun.buildPlayerDeck(run);
+  eq(battle.length, CQRun.DECK_SIZE, '戦闘デッキも40枚');
+  eq(battle.indexOf(CQRun.BLANK), -1, '空白は1枚も混ざらない（40枚そろえた効果）');
+});
+
+t('40枚に満たないまま始めると戦闘デッキが空白で埋まる（＝ガードが要る理由）', () => {
+  const meta = { book: { 8: 50 }, deck: {}, known: [8], gold: 0, cleared: [] };
+  CQCollection.moveToDeck(meta, 8, 30);
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 34, meta);
+  const battle = CQRun.buildPlayerDeck(run);
+  eq(battle.length, CQRun.DECK_SIZE, '戦闘デッキは常に40枚');
+  eq(battle.filter((x) => x === CQRun.BLANK).length, 10, '足りない10枚は空白（何もできない札）で埋まる');
+});
+
+t('デッキ編集で扱えるのは本にある実物だけ（デバッグ用の全169種編集とは別物）', () => {
+  const m = { book: { 101: 1 }, deck: {}, known: [101, 102], gold: 0 };
+  eq(CQCollection.moveToDeck(m, 102, 1).ok, false, '記憶データにあっても本に無ければ入れられない');
+  eq(CQCollection.moveToDeck(m, 101, 1).ok, true, '本にある1枚は入れられる');
+  eq(CQCollection.moveToBook(m, 101, 1).ok, true, '本へ戻せる');
+  eq(m.book[101], 1, '戻すと本が元どおりになる（複製ではなく移動）');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

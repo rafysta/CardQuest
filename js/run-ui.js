@@ -70,6 +70,8 @@ const RUI = {
    * どれも cq_meta には保存しない＝画面を開き直せば既定に戻る（在庫整理の途中状態を
    * セーブに持ち込まない）。 */
   shopTab: 'buy', shopBulk: false, bulkExclude: [],
+  /* デッキ編集（M7 WP9）を初めて開いたときのアンバーの説明（台本§5-3・一度きり）。 */
+  deckGuide: null, deckGuideStep: 0,
   /* タブごとのスクロール位置（2026-09-02 本人指摘：カード選択で画面を描き直すたびに
    * スクロールが0へ戻っていた。tab名をキーに最後の位置を覚えておく）。 */
   colScroll: {}
@@ -107,10 +109,12 @@ function enterStartNode(fresh) {
   carryResetTable();
   if (fresh) {
     RUI.guide = buildGuideBefore(run, RUI.meta);
-    RUI.startStage = RUI.guide.length ? 'guide' : 'carry';
+    /* M7 WP9：持ち出し（デッキ編集）はホームへ移した。開始マスに残るのは
+     * 案内・おまかせドラフト・出発の3つだけ（マップ仕様書§1.1）。 */
+    RUI.startStage = RUI.guide.length ? 'guide' : 'draft';
   } else {
     RUI.guide = null;
-    RUI.startStage = (run.draftDone > 0 || run.draftPending) ? 'draft' : 'carry';
+    RUI.startStage = 'draft';
   }
 }
 
@@ -235,7 +239,7 @@ const HOME_FACILITIES = [
   { id: 'adventure', label: '冒険に出る', act: 'home-go-adventure', ready: true },
   { id: 'shop', label: 'ログショップ', act: 'home-shop', ready: true },
   { id: 'collection', label: 'コレクション', act: 'home-collection', ready: true },
-  { id: 'deck', label: 'デッキ編集', ready: false },
+  { id: 'deck', label: 'デッキ編集', act: 'home-deck', ready: true },
   { id: 'record', label: '記録', ready: false },
   { id: 'settings', label: '設定', ready: false }
 ];
@@ -276,11 +280,18 @@ function finishHomeGuide() {
 function renderHome() {
   const meta = RUI.meta;
   const guiding = !!(RUI.homeGuide && RUI.homeGuide.length);
+  /* デッキが40枚に足りないと出発できない（WP9）ので、ホームの時点で不足を見せておく
+   * ——「冒険に出る」を押してから止められるより、押す前に分かるほうがよい。 */
+  const dep = CQCollection.canDepart(meta);
   const tiles = HOME_FACILITIES.map(function (f) {
+    const note = (dep.ok) ? ''
+      : (f.id === 'deck') ? `<span class="home-tile-warn">あと${dep.fillable}枚入ります</span>`
+      : (f.id === 'adventure') ? '<span class="home-tile-warn">デッキが未完成</span>'
+      : '';
     return `<button class="home-tile${f.ready ? '' : ' home-tile-disabled'}"
         ${f.ready && !guiding ? `data-act="${f.act}"` : 'disabled'}>
       <span class="home-tile-label">${esc(f.label)}</span>
-      ${f.ready ? '' : '<span class="home-tile-soon">準備中</span>'}
+      ${f.ready ? note : '<span class="home-tile-soon">準備中</span>'}
     </button>`;
   }).join('');
   /* 2026-09-02 本人指摘：アンバーの位置はそのまま（左上）にし、代わりに「所持Ｇ」と
@@ -355,8 +366,8 @@ function buildGuideBefore(run, meta) {
   if (rules.length) {
     out = out.concat(rules.indexOf('pestCard') >= 0 ? L.common.pest : L.common.fieldRule);
   }
-  /* 持ち出しの説明は一度だけ（§5-3）。この直後がデッキ編集なので最後に置く */
-  if (!CQSave.hintSeen(meta, 'carryOut')) out = out.concat(L.hints.carryOut);
+  /* M7 WP9：持ち出しの説明（§5-3）はここから外した——デッキ編集がホームへ移り、
+   * この直後はもうデッキ編集ではないため。ホームのデッキ編集を初めて開いたときに出す。 */
   return out;
 }
 
@@ -407,9 +418,7 @@ function renderStartGuide() {
 function finishStartGuide() {
   RUI.guide = null; RUI.guideStep = 0;
   if (RUI.startStage === 'guide2') return departToMap();
-  CQSave.markHint(RUI.meta, 'carryOut');
-  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
-  RUI.startStage = 'carry';
+  RUI.startStage = 'draft';
   runRender();
 }
 
@@ -581,7 +590,7 @@ function carryRefreshBody() {
   const tb = root.querySelector('.carry-table tbody');
   const detail = root.querySelector('.carry-detail');
   const counts = root.querySelector('.carry-counts');
-  if (!tb) return renderCarryOut();
+  if (!tb) return renderDeckEdit();
   const cols = carryCols();
   const rows = carryRows();
   tb.innerHTML = rows.length
@@ -589,13 +598,28 @@ function carryRefreshBody() {
     : `<tr><td colspan="${cols.length}" class="carry-empty">条件に合うカードがありません。</td></tr>`;
   if (detail) detail.innerHTML = carryDetailHTML();
   if (counts) {
+    const dep = CQCollection.canDepart(RUI.meta);
     counts.innerHTML = `<span>${rows.length} 種を表示</span>
       <span>デッキ <b>${CQCollection.deckTotal(RUI.meta)}</b>／${CQCollection.DECK_MAX}</span>
-      <span class="carry-blank">空白カード <b>${CQCollection.blankCount(RUI.meta)}</b>枚</span>`;
+      ${dep.ok
+        ? `<span class="carry-ready">出発できます${dep.short ? `（残り${dep.short}枠は空白）` : ''}</span>`
+        : `<span class="carry-short">本のカードがあと <b>${dep.fillable}</b>枚入ります（入れないと出発できません）</span>`}`;
   }
 }
 
-function renderCarryOut() {
+/* ================= デッキ編集（ホーム・M7 WP9） =================
+ *
+ * 『作業パッケージ』WP9。**開始マスの持ち出し画面（M6.6 WP4）をホームへ移したもの**で、
+ * 表・絞り込み・並べ替え・◀▶・おまかせはそのまま流用している（作りが同じなので、
+ * 変わったのは入口と出口・見出し・40枚のガードだけ）。
+ *
+ * ★デバッグ用のデッキ編集（`screen-deck`・M6.6 WP13）は**別物として残す**。あちらは
+ * アンロックに関係なく全169種から組めるフリーバトル用で、`cq_debug_deck` に保存する。
+ * こちらは本（`cq_meta.book`）にある実物だけを動かす正式版。
+ *
+ * ★複数デッキは作らない（2026-09-01 本人確認）。移動モデル（実体は本かデッキの一方）と
+ * 両立しないため。デッキは1つだけ。 */
+function renderDeckEdit() {
   const meta = RUI.meta;
   const g = carryGrp();
   const cols = carryCols();
@@ -635,23 +659,33 @@ function renderCarryOut() {
     ? rows.map(function (c) { return carryRowHTML(c, cols); }).join('')
     : `<tr><td colspan="${cols.length}" class="carry-empty">条件に合うカードがありません。</td></tr>`;
 
+  /* 40枚に満たないと出発できない（下の home-go-adventure のガード）ので、
+   * あと何枚要るのかをこの画面で常に見せておく。 */
+  const dep = CQCollection.canDepart(meta);
+  const guiding = !!(RUI.deckGuide && RUI.deckGuide.length);
+  const overlay = guiding
+    ? amberBubbleHTML(RUI.deckGuide[Math.min(RUI.deckGuideStep || 0, RUI.deckGuide.length - 1)],
+        { nextAct: 'deck-guide-next', skipAct: 'deck-guide-skip' })
+    : '';
   runRoot().innerHTML = `
     <div class="carry-head">
-      <div class="carry-title">持ち出すカードを選ぶ</div>
+      <div class="carry-title">デッキ編集</div>
       <div class="carry-counts">
         <span>${rows.length} 種を表示</span>
         <span>デッキ <b>${CQCollection.deckTotal(meta)}</b>／${CQCollection.DECK_MAX}</span>
-        <span class="carry-blank">空白カード <b>${CQCollection.blankCount(meta)}</b>枚</span>
+        ${dep.ok
+          ? `<span class="carry-ready">出発できます${dep.short ? `（残り${dep.short}枠は空白）` : ''}</span>`
+          : `<span class="carry-short">本のカードがあと <b>${dep.fillable}</b>枚入ります（入れないと出発できません）</span>`}
       </div>
       <button class="carry-auto" data-act="carry-auto">おまかせで選ぶ</button>
-      <button class="btn ok carry-done" data-act="carry-done">デッキの編集を終える</button>
+      <button class="btn ok carry-done" data-act="carry-done">ホームへ戻る</button>
     </div>
     <div class="carry-wrap">
       <div class="carry-main">
         <div class="carry-tabs">
           ${tabs}
           <button class="only-btn ${RUI.carryOnly ? 'on' : ''}" data-act="carry-only">デッキ入りのみ</button>
-          <span class="carry-hint">「本」＝街に置いてある残り。▶で持ち出し、◀で置いていく。</span>
+          <span class="carry-hint">「本」＝街に置いてある残り。▶でデッキへ、◀で本へ戻す。</span>
         </div>
         <div class="colbar carry-colbar">${colbar}</div>
         <div class="carry-scroll">
@@ -662,14 +696,17 @@ function renderCarryOut() {
         </div>
       </div>
       <div class="detail carry-detail">${carryDetailHTML()}</div>
-    </div>`;
+    </div>
+    ${overlay}`;
 }
 
 /* おまかせで選ぶ（2026-08-29 本人指定）。スターターだけで28枚あり、1枚ずつ▶を押すのは手間なので、
- * 本から自動でデッキを組む。**38枚まで**にするのがポイントで、残り2枠は空白として置いておく——
- * おまかせドラフト（最大2回）は「デッキに空白があるときだけ」発生するので、満杯にすると
- * レンタルが1回も引けなくなる（M6.6 §2-4）。本が38枚未満のときは全部持ち出す。 */
-const CARRY_AUTO_MAX = 38;
+ * 本から自動でデッキを組む。**40枚（満杯）まで**。
+ * ★以前は38枚で止めて2枠を空白のまま残していた——おまかせドラフトが「デッキに空白がある
+ * ときだけ」発生する仕様だったため（M6.6 §2-4）。**M7 WP3.5の案Bでレンタルがデッキ40枚の
+ * 枠外になり、ドラフトはデッキの空きと無関係に発生する**ようになったので、この配慮は不要に
+ * なった。むしろ38枚で止めると、40枚未満では出発できないガード（WP9）に引っかかる。 */
+const CARRY_AUTO_MAX = CQCollection.DECK_MAX;
 /* 種類の配分。原作のスターター（ピッグマン10＋魔法7＋技能11）に近い比率を既定にしてある。
  * 実際には本の中身に偏りがあるので、足りない種類の枠は他の種類に回す。 */
 const CARRY_AUTO_MIX = { U: 0.40, M: 0.25, S: 0.35 };
@@ -723,16 +760,35 @@ function carryAutoFill() {
   runRender();
 }
 
-/** 持ち出しを終えてドラフトへ。ここで run.deck を meta.deck に同期するのが要点：
- * run.deck は CQRun.start() の時点で meta.deck を複製したものなので、そのあと編集した分を
- * 反映しないとランが古いデッキで始まってしまう（ラン中の増減はランに閉じ、
- * 最後に settle() が run.deck をメタへ書き戻す、という流れは従来どおり）。 */
-function finishCarryOut() {
-  RUI.run.deck = Object.assign({}, RUI.meta.deck);
-  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
-  RUI.startStage = 'draft';
-  runSave();
+/** デッキ編集を終えてホームへ（M7 WP9）。
+ * ラン中の同期はもう要らない——編集は出発前（ホーム）にしかできず、`CQRun.start()` が
+ * そのときの meta.deck を複製するので、ランは必ず最新のデッキで始まる。 */
+/** ホームからデッキ編集へ。初めて開いたときだけ、持ち出しの説明（台本§5-3）を出す。
+ * ——この説明はM6.6 WP4で開始マスの案内の最後に出していたもので、デッキ編集がホームへ
+ * 移ったので、実際に編集する場所へ一緒に引っ越してきた（`seenHints.carryOut` は同じキーを
+ * 使い続ける＝すでに読んだ人には二度と出ない）。 */
+function enterDeckEdit() {
+  RUI.view = 'deckedit';
+  carryResetTable();
+  if (!CQSave.hintSeen(RUI.meta, 'carryOut')) {
+    RUI.deckGuide = CQLore.LORE.hints.carryOut.slice();
+    RUI.deckGuideStep = 0;
+  } else {
+    RUI.deckGuide = null;
+  }
   runRender();
+}
+
+function finishDeckGuide() {
+  RUI.deckGuide = null; RUI.deckGuideStep = 0;
+  CQSave.markHint(RUI.meta, 'carryOut');
+  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+  runRender();
+}
+
+function finishDeckEdit() {
+  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+  return enterHome();
 }
 
 /* ---- ③ おまかせドラフト ---- */
@@ -807,7 +863,6 @@ function departToMap() {
 function renderStart() {
   const run = RUI.run;
   if (RUI.startStage === 'guide' || RUI.startStage === 'guide2') return renderStartGuide();
-  if (RUI.startStage === 'carry') return renderCarryOut();
   /* 'draft'：次の回を用意する。空白が無ければ null が返り、出発前の案内②へ進む */
   if (!run.draftPending) {
     const dp = CQRun.beginDraftRound(run, CARD_BY_ID);
@@ -2063,6 +2118,7 @@ function runRender() {
   else if (RUI.view === 'deckview') renderDeckView();
   else if (RUI.view === 'collection') renderCollection();
   else if (RUI.view === 'logshop') renderLogShop();
+  else if (RUI.view === 'deckedit') renderDeckEdit();
   else if (RUI.view === 'result') renderResult();
 }
 
@@ -2161,9 +2217,18 @@ function runAct(act, id, idx) {
     }
     case 'home-guide-skip':
       return finishHomeGuide();
-    case 'home-go-adventure':
+    case 'home-go-adventure': {
+      /* ★40枚に満たないデッキでは出発させない（『作業パッケージ』WP9）。
+       * 足りないぶんは戦闘中に「空白」で埋まる＝手札事故になるだけなので、出発前に止める。
+       * 止めるだけだと何をすればいいか分からないので、そのままデッキ編集を開く。 */
+      const dep = CQCollection.canDepart(RUI.meta);
+      if (!dep.ok) {
+        runFlash('本のカードがあと' + dep.fillable + '枚デッキに入ります。入れてから出かけよう。');
+        return enterDeckEdit();
+      }
       RUI.view = 'areaSelect';
       return runRender();
+    }
     case 'home-collection':
       RUI.view = 'collection';
       return runRender();
@@ -2173,6 +2238,18 @@ function runAct(act, id, idx) {
       return runRender();
     case 'collection-leave':
       return enterHome();
+
+    /* ---- デッキ編集（M7 WP9） ---- */
+    case 'home-deck':
+      return enterDeckEdit();
+    case 'deck-guide-next': {
+      const next = (RUI.deckGuideStep || 0) + 1;
+      if (next >= (RUI.deckGuide || []).length) return finishDeckGuide();
+      RUI.deckGuideStep = next;
+      return runRender();
+    }
+    case 'deck-guide-skip':
+      return finishDeckGuide();
 
     /* ---- ログショップ（M7 WP7） ---- */
     case 'home-shop':
@@ -2292,7 +2369,7 @@ function runAct(act, id, idx) {
     case 'carry-auto':
       return carryAutoFill();
     case 'carry-done':
-      return finishCarryOut();
+      return finishDeckEdit();
     case 'pick-draft':
       CQRun.applyDraft(run, +id, CARD_BY_ID);
       runSave();
