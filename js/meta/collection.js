@@ -116,6 +116,20 @@
     return { ok: true, gold: price || 0 };
   }
 
+  /** 売却：**本**から1枚消してＧを加算する（M7 WP7・ホームのログショップ）。
+   * ラン中の換金所（sellFromDeck）と違い、ホームで売るのは本の在庫だけ——
+   * **デッキに入っている分は絶対に売らない**（経済追補§4-2b の最低条件）ので、
+   * 「デッキを守る」判定をここに1本化しておく。known からは消えない（§4-2）。 */
+  function sellFromBook(meta, id, price) {
+    ensure(meta);
+    if (+id === BLANK) return { ok: false, reason: '空白は売れません' };
+    if ((meta.book[id] || 0) <= 0) return { ok: false, reason: '本にありません' };
+    meta.book[id] -= 1;
+    if (meta.book[id] === 0) delete meta.book[id];
+    meta.gold = (meta.gold || 0) + (price || 0);
+    return { ok: true, gold: price || 0 };
+  }
+
   /* ==== コレクション段階・マスターレベル・ショップ母集団（M7 WP2） ==============
    *
    * 『CardQuest 実装計画追補_M7_カード入手経路の再配分.md』§2-1・§3 と
@@ -226,14 +240,143 @@
     return res;
   }
 
+  /* ==== ホームのログショップ（M7 WP7） ======================================
+   *
+   * 『実装計画追補M7 作業パッケージ』WP7 と『経済追補』§4-2・§4-2b の実装。
+   * 画面（js/run-ui.js の renderLogShop）は数字を一切自前で計算せず、この4関数だけを見る
+   * ——率や閾値を2箇所に持つと「表示と実額がズレる」（M6.6 WP9 で一度踏んだ事故）。 */
+
+  /* 貴重カードの割増率（マップ仕様書§7）。ホームの限定枠・複製の両方に同じ率が掛かる。 */
+  const RARE_MARKUP = 1.5;
+
+  /** ホームでの購入価格。貴重（一律閾値以上）なら定価×1.5、それ以外は定価そのまま。 */
+  function homeBuyPrice(card) {
+    if (!card || typeof card.p !== 'number') return 0;
+    return isRare(card) ? Math.round(card.p * RARE_MARKUP) : card.p;
+  }
+
+  /** ホームの品揃え（貴重の限定枠を除く本体）。返り値 [{id, price, dup}] の価格昇順。
+   *
+   *   ①**新規販売＝段階制**：いまのコレクション段階で解禁された魔法・技能（貴重は除く）
+   *   ②**複製＝いつでも可**：一度でも入手した（known）魔法・技能は段階に関係なく買える
+   *      （ゲーム仕様書§7・原作準拠）。貴重カードの複製も同じ割増率が掛かる。
+   *
+   * ②で貴重が混ざりうるのは意図どおり——「複製はいつでも」が原作の規則で、
+   * 限定枠が縛るのは**まだ持っていない**貴重カードの新規販売のほうだから。
+   * dup:true は「複製（＝所持済み）」の印で、画面のバッジにだけ使う。 */
+  function homeStock(cards, meta) {
+    ensure(meta);
+    const lv = masterLevelOf(meta);
+    const seen = {};
+    const res = [];
+    function push(id, dup) {
+      if (seen[id]) return;
+      seen[id] = true;
+      res.push({ id: +id, price: homeBuyPrice(cards[id]), dup: !!dup });
+    }
+    shopPool(cards, lv, { rare: 'exclude' }).forEach(function (it) { push(it.id, false); });
+    (meta.known || []).forEach(function (id) {
+      const c = cards[id];
+      if (!c) return;
+      if (c.t !== 'M' && c.t !== 'S') return;          /* ショップは魔法・技能のみ（§2-1） */
+      if (+c.id === BLANK) return;
+      if (typeof c.p !== 'number' || c.p <= 0) return; /* 非売品は複製もできない */
+      push(c.id, true);
+    });
+    res.sort(function (a, b) { return a.price - b.price || a.id - b.id; });
+    return res;
+  }
+
+  /** 貴重カードの**限定枠（1枠・入れ替わり）**。まだ持っていない貴重カードが対象で、
+   * 一度買えば以後は homeStock の「複製」側に現れる（＝限定枠は次の品に入れ替わる）。
+   *
+   * ★入れ替わりの周期は**通算日数（meta.day＝終えたランの数）**にした。乱数を使わないので
+   * 再描画のたびに品が変わることがなく（＝買おうとした札が消えない）、探索を1回終えるごとに
+   * 必ず入れ替わる。「日替わりの限定品」として説明もつく。 */
+  function rareSlot(cards, meta) {
+    ensure(meta);
+    const known = meta.known || [];
+    const pool = shopPool(cards, masterLevelOf(meta), { rare: 'only' })
+      .filter(function (it) { return known.indexOf(+it.id) < 0; });
+    if (!pool.length) return null;
+    const day = Math.max(0, (meta.day || 0)) % pool.length;
+    const id = pool[day].id;
+    return { id: id, price: homeBuyPrice(cards[id]), rare: true };
+  }
+
+  /* ---- ダブりの一括換金（経済追補§4-2b） ---------------------------------- */
+
+  /* 残す枚数（保護枚数）＝**デッキと本の合計で最低3枚**（2026-09-02 本人確定）。
+   * デッキに入れられる同種の上限（KIND_MAX＝3）と同じ数にしてあるので、
+   * 「一括換金しても、デッキを組み直したくなったときの3枚は必ず残っている」が保証される。
+   * 売るのは本の在庫だけなので、**デッキ投入分が売られることは構造上ありえない**。 */
+  const KEEP_MIN = 3;
+
+  /** 一括換金の対象を数える（**副作用なし**）。確定前に必ずこれを見せる（§4-2b）。
+   *
+   *   priceOf(id) … 1枚あたりの売値を返す関数。**CQRun.sellPrice を渡すこと**
+   *                 ——一括専用の計算式を作らない（§4-2b）。
+   *   opts.exclude … 個別に除外したカードidの配列（画面の「除外」ボタン）
+   *   opts.keepMin … 残す枚数（既定 KEEP_MIN）
+   *
+   * 返り値 { items:[{id, n, unit, sub}], total, cards, sheets, keepMin }（id昇順）。
+   *   n … 売る枚数＝min(本の在庫, デッキ＋本の合計 − keepMin)
+   *   cards … 対象の種類数／sheets … 対象の合計枚数 */
+  function bulkSellPlan(meta, priceOf, opts) {
+    ensure(meta);
+    const o = opts || {};
+    const keepMin = o.keepMin == null ? KEEP_MIN : o.keepMin;
+    const excl = (o.exclude || []).map(Number);
+    const items = [];
+    let total = 0, sheets = 0;
+    Object.keys(meta.book).forEach(function (k) {
+      const id = +k;
+      if (id === BLANK) return;
+      if (excl.indexOf(id) >= 0) return;
+      const inBook = meta.book[k] || 0;
+      const owned = inBook + (meta.deck[k] || 0);
+      const n = Math.min(inBook, owned - keepMin);
+      if (n <= 0) return;
+      const unit = priceOf(id) || 0;
+      items.push({ id: id, n: n, unit: unit, sub: unit * n });
+      total += unit * n;
+      sheets += n;
+    });
+    items.sort(function (a, b) { return a.id - b.id; });
+    return { items: items, total: total, cards: items.length, sheets: sheets, keepMin: keepMin };
+  }
+
+  /** 一括換金の実行。plan（bulkSellPlan の返り値）のとおり本から減らしてＧを足す。
+   * **known は減らさない**＝図鑑からカードが消えることはない（§4-2b）。
+   * 実額は plan.total と必ず一致する（同じ items を足すだけで、ここで再計算しない）。 */
+  function bulkSell(meta, plan) {
+    ensure(meta);
+    if (!plan || !plan.items.length) return { ok: false, reason: '換金できるダブりがありません' };
+    let gold = 0, sheets = 0;
+    plan.items.forEach(function (it) {
+      const have = meta.book[it.id] || 0;
+      const n = Math.min(it.n, have);          /* 念のための下限クランプ（在庫を割らない） */
+      if (n <= 0) return;
+      meta.book[it.id] = have - n;
+      if (meta.book[it.id] === 0) delete meta.book[it.id];
+      gold += it.unit * n;
+      sheets += n;
+    });
+    meta.gold = (meta.gold || 0) + gold;
+    return { ok: true, gold: gold, sheets: sheets };
+  }
+
   const api = {
     DECK_MAX, KIND_MAX, PIG, BLANK,
     countsTotal, canAddToDeck, ensure, registerKnown,
-    deckTotal, blankCount, moveToDeck, moveToBook, addCard, sellFromDeck,
+    deckTotal, blankCount, moveToDeck, moveToBook, addCard, sellFromDeck, sellFromBook,
     /* M7 WP2 */
     STAGE_STEPS, STAGE_MAX, LP_BASE, LP_CAP, RARE_THRESHOLD_HOME,
     masterLevel, stage, masterLevelOf, stageOf, nextStageNeed,
-    startLp, startLpOf, isRare, shopStageOf, shopPool
+    startLp, startLpOf, isRare, shopStageOf, shopPool,
+    /* M7 WP7 */
+    RARE_MARKUP, KEEP_MIN,
+    homeBuyPrice, homeStock, rareSlot, bulkSellPlan, bulkSell
   };
   global.CQCollection = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

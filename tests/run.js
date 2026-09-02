@@ -3267,15 +3267,16 @@ t('換金：所持カードだけ売れる。空白は売れない', () => {
   eq(run.deck[8], before - 1, '1枚減る');
 });
 
-t('換金：売却価格は定価の50%（M6.6 WP9・40%→50%に変更）', () => {
-  /* 実装計画追補§4 WP9-b「SELL_RATEを0.4→0.5に変更」。js/run-ui.jsの換金所グリッドも
+t('換金：売却価格は定価の25%（M7 WP7・50%→25%に変更）', () => {
+  /* 経済追補§4-2「売却レートは定価の25%」。js/run-ui.jsの売却画面も
    * CQRun.sellPrice() を経由して同じ式を出す（画面側で率を再計算しない）ので、
-   * ここでエンジン側の式だけ固定しておけば表示側の金額もズレない。 */
+   * ここでエンジン側の式だけ固定しておけば表示側の金額もズレない。
+   * ホームの一括換金（CQCollection.bulkSellPlan）もこの関数を渡して使う。 */
   const meta = { book: {}, deck: { 101: 1 }, known: [101], gold: 0, cleared: [] };
   const run = CQRun.start(CARD_BY_ID, 'grassland', 27, meta);
   const c = CARD_BY_ID[101];
-  const expected = Math.max(10, Math.round(c.p * 0.5));
-  eq(CQRun.sellPrice(CARD_BY_ID, 101), expected, 'sellPrice()は定価の50%（10G未満は10G）');
+  const expected = Math.max(10, Math.round(c.p * 0.25));
+  eq(CQRun.sellPrice(CARD_BY_ID, 101), expected, 'sellPrice()は定価の25%（10G未満は10G）');
   const r = CQRun.sell(run, CARD_BY_ID, 101);
   eq(r.gold, expected, 'sell()の実際の売却額もsellPrice()と一致する');
 });
@@ -5871,6 +5872,135 @@ t('記憶データ数から段階・次の段階までの残りが正しく出�
   eq(CQCollection.nextStageNeed(168), 0, '168種＝STAGE_STEPSの最後の刻みに到達済みでもう残りは無い');
   meta.known.push(169);
   eq(CQCollection.nextStageNeed(169), 0, '169種（コンプリート）でも残りは無い');
+});
+
+/* ================= M7 WP7: ログショップ（購入・売却・一括換金） ================= */
+section('M7 WP7: ログショップ');
+
+const priceOf = (id) => CQRun.sellPrice(CARD_BY_ID, id);
+
+t('品揃え：モンスターは1枚も並ばない（魔法・技能のみ／経済追補§2-1）', () => {
+  const meta = { book: {}, deck: {}, known: CARDS.map((c) => c.id), gold: 0 };
+  const stock = CQCollection.homeStock(CARD_BY_ID, meta);
+  const mon = stock.filter((it) => CARD_BY_ID[it.id].t === 'U');
+  eq(mon.length, 0, '記憶データに全カードがあってもモンスターは並ばない');
+  eq(stock.every((it) => CARD_BY_ID[it.id].t === 'M' || CARD_BY_ID[it.id].t === 'S'), true, '魔法・技能だけ');
+  eq(stock.some((it) => it.id === CQRun.BLANK), false, '空白(180)は並ばない');
+});
+
+t('複製：一度でも入手したカードは段階に関係なくいつでも買える（ゲーム仕様書§7）', () => {
+  /* 段階1（記憶データ0種）では新規販売の母集団は狭いが、known にあるカードは
+   * 段階を無視して並ぶ——これが原作の「複製はいつでも可」。 */
+  const late = CARDS.filter((c) => (c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK
+    && CQCollection.shopStageOf(c) === 5)[0];
+  eq(!!late, true, '段階5で解禁される魔法・技能が存在する（テストの前提）');
+  const meta = { book: {}, deck: {}, known: [], gold: 0 };
+  const before = CQCollection.homeStock(CARD_BY_ID, meta);
+  eq(before.some((it) => it.id === late.id), false, '未入手なら段階5のカードは段階1の品揃えに出ない');
+  meta.known = [late.id];
+  const after = CQCollection.homeStock(CARD_BY_ID, meta);
+  const found = after.filter((it) => it.id === late.id)[0];
+  eq(!!found, true, '一度入手していれば段階1でも並ぶ');
+  eq(found.dup, true, '複製の印が付く');
+});
+
+t('貴重カードは限定枠（1枠）で、価格は定価×1.5（マップ仕様書§7）', () => {
+  const meta = { book: {}, deck: {}, known: [], gold: 0, day: 0 };
+  const slot = CQCollection.rareSlot(CARD_BY_ID, meta);
+  if (slot) {
+    const c = CARD_BY_ID[slot.id];
+    eq(CQCollection.isRare(c), true, '限定枠に出るのは貴重カード');
+    eq(slot.price, Math.round(c.p * 1.5), '価格は定価×1.5');
+    eq(CQCollection.homeBuyPrice(c), slot.price, 'homeBuyPrice()と一致する（式を2箇所に持たない）');
+  }
+  /* 本体の品揃えには貴重が混ざらない（未入手のうちは限定枠だけが入口） */
+  const stock = CQCollection.homeStock(CARD_BY_ID, meta);
+  eq(stock.some((it) => CQCollection.isRare(CARD_BY_ID[it.id])), false, '未入手の貴重は本体の品揃えに出ない');
+  /* 汎用カードは定価そのまま */
+  const plain = CARDS.filter((c) => (c.t === 'M' || c.t === 'S') && !CQCollection.isRare(c) && c.p > 0)[0];
+  eq(CQCollection.homeBuyPrice(plain), plain.p, '汎用カードは定価のまま');
+});
+
+t('限定枠は探索を終えるごとに入れ替わり、買った貴重カードはもう限定枠に出ない', () => {
+  const meta = { book: {}, deck: {}, known: [], gold: 0, day: 0 };
+  const a = CQCollection.rareSlot(CARD_BY_ID, meta);
+  if (!a) return;                     /* 段階1に貴重が無いデータなら検査対象外 */
+  eq(CQCollection.rareSlot(CARD_BY_ID, meta).id, a.id, '同じ日なら何度見ても同じ品（描画のたびに変わらない）');
+  meta.known = [a.id];                /* ＝買った */
+  const b = CQCollection.rareSlot(CARD_BY_ID, meta);
+  eq(b == null || b.id !== a.id, true, '入手済みの貴重カードは限定枠に出ない');
+  const dup = CQCollection.homeStock(CARD_BY_ID, meta).filter((it) => it.id === a.id)[0];
+  eq(!!dup, true, '入手済みになった貴重カードは複製として買えるようになる');
+  eq(dup.price, Math.round(CARD_BY_ID[a.id].p * 1.5), '貴重カードの複製にも同じ割増率が掛かる');
+});
+
+t('★一括換金：デッキに入っているカードは1枚も対象に含まれない（§4-2b の最低条件）', () => {
+  /* デッキに3枚・本に0枚 → 売る余地は無い。デッキ側は絶対に減らない。 */
+  const meta = { book: {}, deck: { 8: 3 }, known: [8], gold: 0 };
+  const plan = CQCollection.bulkSellPlan(meta, priceOf);
+  eq(plan.items.length, 0, 'デッキだけのカードは対象にならない');
+  /* デッキ3枚＋本5枚 → 合計8枚。最低3枚残す＝5枚売れるが、売るのは本の5枚だけ */
+  meta.book = { 8: 5 };
+  const p2 = CQCollection.bulkSellPlan(meta, priceOf);
+  eq(p2.items[0].n, 5, '本の5枚が対象（デッキの3枚が保護枚数を満たしている）');
+  CQCollection.bulkSell(meta, p2);
+  eq(meta.deck[8], 3, 'デッキは1枚も減っていない');
+  eq(meta.book[8], undefined, '本の在庫だけが減った');
+});
+
+t('★一括換金：残すのはデッキと本の合計で最低3枚（2026-09-02 本人確定）', () => {
+  const meta = { book: { 101: 5, 102: 3, 103: 2 }, deck: { 101: 1 }, known: [101, 102, 103], gold: 0 };
+  const plan = CQCollection.bulkSellPlan(meta, priceOf);
+  const byId = {}; plan.items.forEach((it) => { byId[it.id] = it.n; });
+  eq(byId[101], 3, '101は本5＋デッキ1＝6枚 → 3枚残して3枚売る');
+  eq(byId[102], undefined, '102は3枚ちょうど＝ぴったり保護枚数なので対象に入らない');
+  eq(byId[103], undefined, '103は2枚しかないので売らない');
+  eq(CQCollection.KEEP_MIN, 3, '保護枚数の既定は3（デッキの同種上限KIND_MAXと同じ数）');
+  CQCollection.bulkSell(meta, plan);
+  eq((meta.book[101] || 0) + (meta.deck[101] || 0), 3, '換金後もデッキと本の合計で3枚残っている');
+});
+
+t('★一括換金：一覧の合計額と実際の増加額が一致する（ひっ算を見せてから確定する）', () => {
+  const meta = { book: { 101: 6, 8: 12, 151: 4 }, deck: {}, known: [101, 8, 151], gold: 100 };
+  const plan = CQCollection.bulkSellPlan(meta, priceOf);
+  /* 合計は1枚ずつ sellPrice() を通した値の和（一括専用の計算式を作らない・§4-2b） */
+  let manual = 0;
+  plan.items.forEach((it) => { manual += CQRun.sellPrice(CARD_BY_ID, it.id) * it.n; });
+  eq(plan.total, manual, '合計額＝sellPrice()×枚数の総和');
+  eq(plan.sheets, plan.items.reduce((s, it) => s + it.n, 0), '対象枚数の集計が合っている');
+  const before = meta.gold;
+  const r = CQCollection.bulkSell(meta, plan);
+  eq(r.gold, plan.total, '実際の入金額は見せた合計額と同じ');
+  eq(meta.gold, before + plan.total, '所持Ｇの増加額も一致する');
+});
+
+t('★一括換金：個別に除外したカードは売られない（§4-2b「個別に除外できること」）', () => {
+  const meta = { book: { 101: 6, 8: 12 }, deck: {}, known: [101, 8], gold: 0 };
+  const plan = CQCollection.bulkSellPlan(meta, priceOf, { exclude: [8] });
+  eq(plan.items.some((it) => it.id === 8), false, '除外したカードは対象一覧から消える');
+  eq(plan.items.length, 1, '残るのは除外しなかったカードだけ');
+  CQCollection.bulkSell(meta, plan);
+  eq(meta.book[8], 12, '除外したカードは1枚も減っていない');
+  eq(meta.book[101], 3, '除外しなかったカードは保護枚数まで減る');
+});
+
+t('★一括換金：記憶データ（種類）は減らない＝図鑑からカードが消えない（§4-2）', () => {
+  const meta = { book: { 101: 9 }, deck: {}, known: [101, 8, 151], gold: 0 };
+  const plan = CQCollection.bulkSellPlan(meta, priceOf);
+  CQCollection.bulkSell(meta, plan);
+  eq(meta.known.length, 3, '記憶データの種類数は変わらない');
+  eq(meta.known.indexOf(101) >= 0, true, '売ったカードも記憶データには残る');
+});
+
+t('売却：ホームで売るのは本の在庫だけ（デッキからは売れない）', () => {
+  const meta = { book: { 101: 1 }, deck: { 102: 1 }, known: [101, 102], gold: 0 };
+  const price = CQRun.sellPrice(CARD_BY_ID, 101);
+  const r = CQCollection.sellFromBook(meta, 101, price);
+  eq(r.ok, true, '本のカードは売れる');
+  eq(meta.gold, price, '売値ぶんＧが増える');
+  eq(CQCollection.sellFromBook(meta, 102, 999).ok, false, 'デッキにしか無いカードは売れない');
+  eq(meta.deck[102], 1, 'デッキは減っていない');
+  eq(CQCollection.sellFromBook(meta, CQRun.BLANK, 10).ok, false, '空白は売れない');
 });
 
 /* ================= 結果 ================= */

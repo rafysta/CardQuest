@@ -1696,10 +1696,32 @@ td.nm{font-weight:800}
 .big.col-unknown .col-unknown-mark{font-size:64px}
 .big.col-unknown .bn{color:var(--dim)}
 
+/* ---- ログショップ（M7 WP7） ----
+ * 一括換金の帯は「タブのすぐ下・グリッドの上」に置く。ここに合計額を出しておくと、
+ * 売り場を見ながら「まとめて処理するといくらになるか」が常に見えている状態になる。 */
+.shop-bulkbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin:0 0 8px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#141b2c}
+.shop-bulkbar .btn{flex:0 0 auto;height:44px;font-size:16px;padding:0 22px}
+.shop-bulk-note{font-size:13px;color:var(--dim)}
+.shop-bulk-note b{color:#fff}
+.shop-bulk-sub{font-size:12px;text-align:center;color:var(--dim)}
+.shop-bulk-sub.off{text-decoration:line-through;opacity:.55}
+/* 除外したカードは一覧に残す（消すと戻し方が分からなくなる）ので、薄くして区別する */
+.cg-card .cg-tile.on{outline-offset:-2px}
+.bulk-sheet{padding:4px 2px 10px}
+.bulk-sheet h4{margin:0 0 8px;font-size:14px}
+.bulk-sheet .cg-note{text-align:left;margin-top:8px;line-height:1.5}
+.bulk-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;
+  border-bottom:1px dashed var(--line);font-size:14px}
+.bulk-row b{color:#fff}
+/* 確認は「やめる」と「換金する」の2択。取り消せない操作なので、やめる側も
+ * 押せる見た目にしておく（文字だけだと押せると分からない）。 */
+.bulk-acts{display:flex;flex-direction:column;gap:8px}
+
 /* カードのタイル直下にボタンを添える版（ショップ・換金所・戦利品振り分けの3画面で共用・
  * 2026-08-29本人指摘：ボタンは情報パネルではなく各カードのそばに置く）。.cg-grid本来の
  * イラストのみのタイルと違い、ボタン込みで縦に伸びるので専用のgrid-auto-rowsにする。 */
-.cg-grid-btn{grid-template-rows:none;grid-auto-rows:max-content;align-content:start;overflow:auto}
+.cg-grid-btn{grid-template-rows:none;grid-auto-rows:max-content;align-content:start;overflow:auto;padding-right:14px}
 .cg-card{display:flex;flex-direction:column;gap:6px}
 .cg-card .cg-tile{aspect-ratio:110/135}
 .cg-card-btns{display:flex;flex-direction:column;gap:4px}

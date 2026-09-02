@@ -465,10 +465,14 @@
   }
   function shopLeave(run, n) { n.cleared = true; }
 
-  /* M6.6 WP9：換金所の売却率は定価の40%→50%に変更（実装計画追補§4 WP9-b）。
-   * 表示側（js/run-ui.js の換金所グリッド）も同じ式を使えるよう sellPrice() として公開する
-   * ——以前は画面側で 0.4 を再計算しており、率を変えるときに2箇所直す必要があった。 */
-  const SELL_RATE = 0.5;
+  /* 売却率。表示側（js/run-ui.js）も同じ式を使えるよう sellPrice() として公開する
+   * ——以前は画面側で率を再計算しており、変えるときに2箇所直す必要があった。
+   * M6.6 WP9：40%→50%（実装計画追補§4 WP9-b）。
+   * **M7 WP7：50%→25%**（経済追補§4-2・ゲーム仕様書§7に実装を合わせた）。
+   * 売却の場所がラン中の換金所からホームのログショップへ移り、ラン中の換金所は
+   * 買い取り所（WP8）になるので、レート差で棲み分ける必要がもう無い。
+   * **ホームの売却・一括換金もこの関数を通す**（CQCollection.bulkSellPlan に渡す）。 */
+  const SELL_RATE = 0.25;
   function sellPrice(cards, cardId) {
     const c = cards[cardId];
     return c ? Math.max(10, Math.round(c.p * SELL_RATE)) : 0;

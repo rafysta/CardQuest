@@ -66,6 +66,10 @@ const RUI = {
   gridSel: null, gridCtx: null, gridSelIdx: null,
   /* コレクション図鑑（M7 WP6）のタブ（U/M/S）。cq_runには保存しない＝画面を開くたび既定に戻る。 */
   colTab: 'U',
+  /* ログショップ（M7 WP7）：タブ（buy/sell）・一括換金の確認中か・そこで除外したカードid。
+   * どれも cq_meta には保存しない＝画面を開き直せば既定に戻る（在庫整理の途中状態を
+   * セーブに持ち込まない）。 */
+  shopTab: 'buy', shopBulk: false, bulkExclude: [],
   /* タブごとのスクロール位置（2026-09-02 本人指摘：カード選択で画面を描き直すたびに
    * スクロールが0へ戻っていた。tab名をキーに最後の位置を覚えておく）。 */
   colScroll: {}
@@ -229,7 +233,7 @@ if (typeof window !== 'undefined') window.previewOpening = previewOpening;
 
 const HOME_FACILITIES = [
   { id: 'adventure', label: '冒険に出る', act: 'home-go-adventure', ready: true },
-  { id: 'shop', label: 'ログショップ', ready: false },
+  { id: 'shop', label: 'ログショップ', act: 'home-shop', ready: true },
   { id: 'collection', label: 'コレクション', act: 'home-collection', ready: true },
   { id: 'deck', label: 'デッキ編集', ready: false },
   { id: 'record', label: '記録', ready: false },
@@ -1384,6 +1388,21 @@ function leaveEventIntro() {
  * 持っていればタイルも3枚）。§7-3の寸法（940×620・8列×5行）はスクロールが要らない前提の
  * 目安で、実際の格子は CSS の grid で可変（fr）にしてあるので画面の余白に合わせて伸縮する。 */
 
+/** スクロールする一覧のための位置保存（2026-09-02 本人指摘・M7 WP6で判明）。
+ *
+ * この画面群はカードを1枚選ぶたびに `runRoot().innerHTML` を丸ごと作り直すので、
+ * 何もしなければ `.cg-grid` のスクロール位置が毎回0へ戻る＝下の方のカードを選んだ瞬間に
+ * 一覧が先頭へ飛んでしまう。**描き直す直前に save、直後に restore** の2行を置くだけで済むよう
+ * 部品にしてある。key は画面＋タブごとに分ける（別のタブへ移ったときは0から始まってよい）。 */
+function keepScrollSave(key) {
+  const el = runRoot() && runRoot().querySelector('.cg-grid');
+  if (el) RUI.colScroll[key] = el.scrollTop;
+}
+function keepScrollRestore(key) {
+  const el = runRoot() && runRoot().querySelector('.cg-grid');
+  if (el) el.scrollTop = RUI.colScroll[key] || 0;
+}
+
 /** 画面が切り替わった（＝別のgridCtx）ときだけ選択中カードをリセットする。
  * 同じ画面内での再描画（購入・売却のたび）では選択を保つ——さもないと1枚ずつしか
  * 連続購入・連続売却できない。 */
@@ -1392,12 +1411,14 @@ function gridEnter(ctx) {
 }
 
 /** グリッドのタイル1枚（イラストのみ・9-a「カードをイラストのみで敷き詰める」）。
- * レンタルには「借」バッジを付ける（換金所・デッキ確認の両方で使う）。 */
-function cgTileHTML(id, rental, idx) {
+ * 第2引数はバッジ：`true` なら「借」（レンタル。換金所・デッキ確認）、文字列ならその字を出す
+ * （M7 WP7 のログショップが「限」＝貴重の限定枠・「複」＝複製に使う）。 */
+function cgTileHTML(id, badge, idx) {
   const c = CARD_BY_ID[id];
+  const label = badge === true ? '借' : badge;
   return `<div class="cg-tile ${RUI.gridSelIdx === idx ? 'on' : ''}" data-act="grid-pick" data-id="${id}" data-idx="${idx}">
       <div class="cg-tile-art">${artInner(c, 3)}</div>
-      ${rental ? '<span class="cg-badge">借</span>' : ''}
+      ${label ? `<span class="cg-badge">${esc(label)}</span>` : ''}
     </div>`;
 }
 
@@ -1412,7 +1433,7 @@ function cgGridHTML(items, emptyMsg) {
  * HTMLを返す——空文字なら見た目はcgGridHTMLのタイルと同じになる）。 */
 function cgCardHTML(item, idx, btnsHTML) {
   return `<div class="cg-card">
-      ${cgTileHTML(item.id, item.rental, idx)}
+      ${cgTileHTML(item.id, item.badge != null ? item.badge : item.rental, idx)}
       ${btnsHTML ? `<div class="cg-card-btns">${btnsHTML}</div>` : ''}
     </div>`;
 }
@@ -1608,15 +1629,7 @@ function colDetailHTML() {
 function renderCollection() {
   const meta = RUI.meta;
   const tab = RUI.colTab || 'U';
-  /* 2026-09-02 本人指摘：カードを選ぶたび画面を丸ごと描き直す（innerHTML差し替え）ので、
-   * 何もしなければ .cg-grid のスクロール位置が毎回0に戻ってしまう。タブごとに最後の
-   * スクロール位置を RUI.colScroll に覚えておき、描き直した直後に同じ位置へ戻す。
-   * （タブを切り替えたときは別のタブの記録を読むので、自然に0から始まる＝この動きでよい）。 */
-  const prevCtx = RUI.gridCtx;
-  const prevGridEl = runRoot() && runRoot().querySelector('.cg-grid');
-  if (prevGridEl && prevCtx && prevCtx.indexOf('collection:') === 0) {
-    RUI.colScroll[prevCtx.slice('collection:'.length)] = prevGridEl.scrollTop;
-  }
+  keepScrollSave('collection:' + tab);
   gridEnter('collection:' + tab);
   const known = meta.known || [];
   const items = CARDS.filter(function (c) { return c.t === tab && c.id !== CQRun.BLANK; })
@@ -1642,8 +1655,155 @@ function renderCollection() {
       <div class="cg-main">${colGridHTML(items)}</div>
       <div class="detail cg-detail">${colDetailHTML()}</div>
     </div>`;
-  const newGridEl = runRoot().querySelector('.cg-grid');
-  if (newGridEl) newGridEl.scrollTop = RUI.colScroll[tab] || 0;
+  keepScrollRestore('collection:' + tab);
+}
+
+/* ================= ログショップ（ホーム・M7 WP7） =================
+ *
+ * 『作業パッケージ』WP7 と『経済追補』§4-2・§4-2b の画面側。3つの機能が1画面に同居する：
+ *
+ *   買う … ①段階で解禁された新規（魔法・技能・貴重は除く）②所持済みの複製（いつでも可）
+ *          ③貴重カードの限定枠1枠（定価×1.5・通算日数で入れ替わる）
+ *   売る … 本の在庫を1枚ずつ（定価25%）。**デッキの分は出さない**＝売れない
+ *   一括 … ダブり（デッキと本の合計で3枚を超えた分）をまとめて換金。
+ *          確定前に必ず対象一覧と合計額を見せ、個別に除外できる（§4-2b）
+ *
+ * ★金額・対象の判断はすべて CQCollection / CQRun.sellPrice に委ねてある。
+ * この画面は数字を1つも自前で計算しない——率や保護枚数を2箇所に持つと必ずズレる
+ * （M6.6 WP9 の売値で一度踏んだ事故）。 */
+
+function shopStockItems(meta) {
+  const items = [];
+  const slot = CQCollection.rareSlot(CARD_BY_ID, meta);
+  if (slot) items.push({ id: slot.id, price: slot.price, badge: '限', rare: true });
+  CQCollection.homeStock(CARD_BY_ID, meta).forEach(function (it) {
+    items.push({ id: it.id, price: it.price, badge: it.dup ? '複' : '' });
+  });
+  return items;
+}
+
+/** 売り場に並べる本の在庫（1枚ずつタイルに展開）。デッキの分は**そもそも並べない**。 */
+function shopBookItems(meta) {
+  const items = [];
+  Object.keys(meta.book || {}).sort(function (a, b) { return +a - +b; }).forEach(function (k) {
+    const id = +k;
+    if (id === CQRun.BLANK) return;
+    for (let i = 0; i < meta.book[k]; i++) items.push({ id: id, badge: '' });
+  });
+  return items;
+}
+
+function shopHeadHTML(meta, title) {
+  const lv = CQCollection.masterLevelOf(meta);
+  return `<div class="cg-head">
+      <div class="cg-title">${esc(title)}</div>
+      <div class="cg-stats">
+        <span>所持Ｇ <b>${meta.gold}</b></span>
+        <span>品揃え 段階 <b>${lv}</b>／${CQCollection.STAGE_MAX}</span>
+      </div>
+      <button class="btn ok cg-done" data-act="logshop-leave">ホームへ戻る</button>
+    </div>`;
+}
+
+function renderLogShop() {
+  const meta = RUI.meta;
+  if (RUI.shopBulk) return renderBulkSell();
+  const tab = RUI.shopTab || 'buy';
+  const key = 'logshop:' + tab;
+  keepScrollSave(key);
+  gridEnter(key);
+  const items = (tab === 'buy') ? shopStockItems(meta) : shopBookItems(meta);
+  const gridHTML = (tab === 'buy')
+    ? cgCardGridHTML(items, '売り物がありません', function (it) {
+        return `<button class="tiny" data-act="logshop-buy" data-id="${it.id}"
+          ${meta.gold < it.price ? 'disabled' : ''}>Ｇ${it.price}で買う</button>`;
+      })
+    : cgCardGridHTML(items, '本に売れるカードがありません', function (it) {
+        const price = CQRun.sellPrice(CARD_BY_ID, it.id);
+        return `<button class="tiny" data-act="logshop-sell" data-id="${it.id}">Ｇ${price}で売る</button>`;
+      });
+  const plan = CQCollection.bulkSellPlan(meta, function (id) { return CQRun.sellPrice(CARD_BY_ID, id); });
+  const bulkBar = (tab === 'sell')
+    ? `<div class="shop-bulkbar">
+         <span class="shop-bulk-note">ダブり（デッキと本の合計で${CQCollection.KEEP_MIN}枚を超えた分）
+           <b>${plan.cards}</b>種 <b>${plan.sheets}</b>枚 ＝ <b>${plan.total}</b>Ｇ</span>
+         <button class="btn ok" data-act="logshop-bulk" ${plan.items.length ? '' : 'disabled'}>
+           ダブりを一括で換金する</button>
+       </div>`
+    : '';
+  runRoot().innerHTML = `
+    ${shopHeadHTML(meta, 'ログショップ')}
+    <div class="carry-tabs">
+      <button class="dtab ${tab === 'buy' ? 'on' : ''}" data-act="shop-tab" data-id="buy">買う</button>
+      <button class="dtab ${tab === 'sell' ? 'on' : ''}" data-act="shop-tab" data-id="sell">売る</button>
+    </div>
+    ${bulkBar}
+    <div class="cg-wrap">
+      <div class="cg-main">${gridHTML}</div>
+      <div class="detail cg-detail">${cgDetailHTML(shopDetailNote(tab))}</div>
+    </div>`;
+  keepScrollRestore(key);
+}
+
+/** 情報パネル下部の一言。ボタンはタイル直下に置く流儀（M6.6 WP9）なので、
+ * ここには「そのカードが何者か」の補足だけを出す。 */
+function shopDetailNote(tab) {
+  const id = RUI.gridSel;
+  if (id == null) return '';
+  const c = CARD_BY_ID[id];
+  if (!c) return '';
+  if (tab === 'buy') {
+    return CQCollection.isRare(c)
+      ? `<p class="cg-note">貴重なログ。値は定価の1.5倍（${c.p}Ｇ→${CQCollection.homeBuyPrice(c)}Ｇ）。</p>`
+      : '';
+  }
+  const meta = RUI.meta;
+  const owned = (meta.book[id] || 0) + (meta.deck[id] || 0);
+  return `<p class="cg-note">本に${meta.book[id] || 0}枚・デッキに${meta.deck[id] || 0}枚（合計${owned}枚）。
+    売っても記憶データ（図鑑）からは消えません。</p>`;
+}
+
+/** 一括換金の確認画面（§4-2b「確定前に一覧と合計額を必ず見せ、個別に除外できること」）。
+ * M6.6 WP11 の清算のひっ算と同じ流儀で、**見せた数字がそのまま実額になる**
+ * （表示も実行も同じ plan を使う）。取り消せない操作なので確認はこの1段だけ。 */
+function renderBulkSell() {
+  const meta = RUI.meta;
+  keepScrollSave('logshop:bulk');
+  gridEnter('logshop:bulk');
+  const priceOf = function (id) { return CQRun.sellPrice(CARD_BY_ID, id); };
+  const excl = RUI.bulkExclude || [];
+  const plan = CQCollection.bulkSellPlan(meta, priceOf, { exclude: excl });
+  /* 除外したカードも「戻せる」よう一覧には残す（消えると戻し方が分からなくなる） */
+  const all = CQCollection.bulkSellPlan(meta, priceOf);
+  const items = all.items.map(function (it) {
+    const off = excl.indexOf(it.id) >= 0;
+    return { id: it.id, n: it.n, unit: it.unit, sub: it.sub, off: off, badge: off ? '除' : '' };
+  });
+  runRoot().innerHTML = `
+    ${shopHeadHTML(meta, 'ダブりの一括換金')}
+    <div class="cg-wrap">
+      <div class="cg-main">${cgCardGridHTML(items, '換金できるダブりがありません', function (it) {
+        return `<div class="shop-bulk-sub ${it.off ? 'off' : ''}">${it.n}枚 ${it.sub}Ｇ</div>
+          <button class="tiny" data-act="bulk-toggle" data-id="${it.id}">${it.off ? '戻す' : '除外'}</button>`;
+      })}</div>
+      <div class="detail cg-detail">
+        <div class="bulk-sheet">
+          <h4>換金の内訳</h4>
+          <div class="bulk-row"><span>対象</span><b>${plan.cards}種 ${plan.sheets}枚</b></div>
+          <div class="bulk-row"><span>合計</span><b>＋${plan.total}Ｇ</b></div>
+          <div class="bulk-row"><span>所持Ｇ</span><b>${meta.gold} → ${meta.gold + plan.total}</b></div>
+          <p class="cg-note">各カードは<b>デッキと本の合計で${plan.keepMin}枚</b>残します。
+            デッキに入っている分は売りません。記憶データ（図鑑）も減りません。</p>
+          <p class="cg-note">取り消しはできません。</p>
+        </div>
+        <div class="cg-actions bulk-acts">
+          <button class="btn ng" data-act="bulk-cancel">やめる</button>
+          <button class="btn ok" data-act="bulk-confirm" ${plan.items.length ? '' : 'disabled'}>
+            この内容で換金する</button>
+        </div>
+      </div>
+    </div>`;
+  keepScrollRestore('logshop:bulk');
 }
 
 function renderQuestionNode(run, n) {
@@ -1894,6 +2054,7 @@ function runRender() {
   else if (RUI.view === 'loot') renderLoot();
   else if (RUI.view === 'deckview') renderDeckView();
   else if (RUI.view === 'collection') renderCollection();
+  else if (RUI.view === 'logshop') renderLogShop();
   else if (RUI.view === 'result') renderResult();
 }
 
@@ -2004,6 +2165,63 @@ function runAct(act, id, idx) {
       return runRender();
     case 'collection-leave':
       return enterHome();
+
+    /* ---- ログショップ（M7 WP7） ---- */
+    case 'home-shop':
+      RUI.view = 'logshop';
+      RUI.shopTab = 'buy'; RUI.shopBulk = false; RUI.bulkExclude = [];
+      return runRender();
+    case 'shop-tab':
+      if (RUI.shopTab === id) return;
+      RUI.shopTab = id;
+      return runRender();
+    case 'logshop-buy': {
+      const c = CARD_BY_ID[id];
+      const price = CQCollection.homeBuyPrice(c);
+      if (!c || !price) return runFlash('買えません');
+      if (RUI.meta.gold < price) return runFlash('Ｇが足りません');
+      RUI.meta.gold -= price;
+      /* 買ったカードは本へ入る（デッキに入れるのはデッキ編集の仕事＝移動モデル・WP3）。
+       * addCard が記憶データにも登録するので、貴重カードは以後「複製」で買えるようになる。 */
+      CQCollection.addCard(RUI.meta, +id, 'book');
+      CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+      runFlash(c.n + ' を買った（-' + price + 'Ｇ）');
+      return runRender();
+    }
+    case 'logshop-sell': {
+      const price = CQRun.sellPrice(CARD_BY_ID, id);
+      const r = CQCollection.sellFromBook(RUI.meta, +id, price);
+      if (!r.ok) return runFlash(r.reason);
+      CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+      runFlash((CARD_BY_ID[id] ? CARD_BY_ID[id].n : id) + ' を売った（+' + price + 'Ｇ）');
+      return runRender();
+    }
+    case 'logshop-bulk':
+      RUI.shopBulk = true; RUI.bulkExclude = [];
+      return runRender();
+    case 'bulk-toggle': {
+      const at = RUI.bulkExclude.indexOf(+id);
+      if (at >= 0) RUI.bulkExclude.splice(at, 1); else RUI.bulkExclude.push(+id);
+      return runRender();
+    }
+    case 'bulk-cancel':
+      RUI.shopBulk = false; RUI.bulkExclude = [];
+      return runRender();
+    case 'bulk-confirm': {
+      /* 見せた内容と同じ plan をそのまま実行する（ここで作り直すと表示とズレる） */
+      const plan = CQCollection.bulkSellPlan(RUI.meta,
+        function (cid) { return CQRun.sellPrice(CARD_BY_ID, cid); },
+        { exclude: RUI.bulkExclude });
+      const r = CQCollection.bulkSell(RUI.meta, plan);
+      if (!r.ok) return runFlash(r.reason);
+      CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+      RUI.shopBulk = false; RUI.bulkExclude = [];
+      runFlash('ダブり' + r.sheets + '枚を換金した（+' + r.gold + 'Ｇ）');
+      return runRender();
+    }
+    case 'logshop-leave':
+      return enterHome();
+
     case 'go-home':
       return enterHome();
     case 'go-start': {

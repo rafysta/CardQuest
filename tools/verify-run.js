@@ -145,7 +145,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('ホームの「コレクション」で図鑑が開く（M7 WP6）', !!(await page.$('.cg-grid')));
   const colKnown = (await page.$$('.cg-tile:not(.col-unknown)')).length;
   const colUnknown = (await page.$$('.cg-tile.col-unknown')).length;
-  ok('モンスタータブに入手済み・未入手（シルエット）が両方出る',
+  ok('モンスタータブに入手済み・未入手（「？」の伏せ札）が両方出る',
     colKnown > 0 && colUnknown > 0, `known=${colKnown} unknown=${colUnknown}`);
   const colHeader = await page.$eval('.cg-stats', (el) => el.textContent);
   ok('記憶データ数・マスターレベルが出る', /記憶データ/.test(colHeader) && /マスターレベル/.test(colHeader), colHeader);
@@ -163,6 +163,82 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await page.click('[data-act="collection-leave"]');
   await wait(() => page.$('.home-scene'));
   ok('コレクションから「ホームへ戻る」でホームに戻れる', !!(await page.$('.home-scene')));
+
+  // --- 1b) ホームの「ログショップ」（M7 WP7） ---
+  /* ホームへ戻るたびにアンバーの吹き出しが出る（案内中は施設が押せない）ので先に閉じる */
+  if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
+  await wait(() => page.$('[data-act="home-shop"]'));
+  /* ★この節は実際に売買してセーブを変える（買値・売値・一括換金の実額を検査するため）。
+   * 以降の検査は「初回は本28枚」を前提にしているので、終わったらここで取った控えに戻す。 */
+  const metaSnapshot = await page.evaluate(() => JSON.stringify(RUI.meta));
+  await page.click('[data-act="home-shop"]');
+  await wait(() => page.$('.cg-grid'));
+  ok('ホームの「ログショップ」が開く（M7 WP7）',
+    (await page.$eval('.cg-title', (e) => e.textContent.trim())) === 'ログショップ');
+  const buyIds = await page.$$eval('[data-act="logshop-buy"]', (els) => els.map((e) => +e.dataset.id));
+  ok('品揃えが並ぶ', buyIds.length > 0, String(buyIds.length));
+  const monInStock = await page.evaluate((ids) => ids.filter((id) => CARD_BY_ID[id].t === 'U'), buyIds);
+  ok('★品揃えにモンスターが1枚も出ない（魔法・技能のみ）', monInStock.length === 0, JSON.stringify(monInStock));
+  const rareBadge = await page.$$eval('.cg-badge', (els) => els.map((e) => e.textContent));
+  ok('貴重の限定枠「限」／複製「複」のバッジが出る', rareBadge.indexOf('限') >= 0 || rareBadge.indexOf('複') >= 0,
+    JSON.stringify([...new Set(rareBadge)]));
+  const rarePrice = await page.evaluate(() => {
+    const s = CQCollection.rareSlot(CARD_BY_ID, RUI.meta);
+    return s ? { id: s.id, price: s.price, base: CARD_BY_ID[s.id].p } : null;
+  });
+  if (rarePrice) {
+    ok('★限定枠の貴重カードは定価×1.5', rarePrice.price === Math.round(rarePrice.base * 1.5),
+      `${rarePrice.base}→${rarePrice.price}`);
+  }
+  await shot('logshop-buy');
+
+  // 売る側：スターターはピッグマン10枚＝ダブり7枚（各カード3枚は残す）
+  await page.click('[data-act="shop-tab"][data-id="sell"]');
+  await wait(() => page.$('.shop-bulk-note'));
+  const sellCheck = await page.evaluate(() => ({
+    price: CQRun.sellPrice(CARD_BY_ID, 8),
+    expect: Math.max(10, Math.round(CARD_BY_ID[8].p * 0.25))
+  }));
+  ok('★売値は定価の25%（M7 WP7）', sellCheck.price === sellCheck.expect,
+    `${sellCheck.price}（期待 ${sellCheck.expect}）`);
+  const bulkNote = await page.$eval('.shop-bulk-note', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+  ok('ダブりの種類・枚数・合計額が売り場に出る', /1種 7枚/.test(bulkNote), bulkNote);
+  await shot('logshop-sell');
+
+  await page.click('[data-act="logshop-bulk"]');
+  await wait(() => page.$('.bulk-sheet'));
+  const bulkRows = await page.$$eval('.bulk-row', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+  ok('確定前に対象と合計額のひっ算が出る（§4-2b）', bulkRows.length === 3, JSON.stringify(bulkRows));
+  const planTotal = await page.evaluate(() => CQCollection.bulkSellPlan(RUI.meta,
+    (id) => CQRun.sellPrice(CARD_BY_ID, id), { exclude: RUI.bulkExclude }).total);
+  const bulkGoldBefore = await page.evaluate(() => RUI.meta.gold);
+  await shot('logshop-bulk');
+  /* 個別に除外できる → 除外すると対象が0になる（対象はピッグマン1種だけなので） */
+  await page.click('[data-act="bulk-toggle"][data-id="8"]');
+  await page.waitForTimeout(150);
+  const afterExcl = await page.$eval('.bulk-row', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+  ok('★対象カードを個別に除外できる', /0種 0枚/.test(afterExcl), afterExcl);
+  await page.click('[data-act="bulk-toggle"][data-id="8"]');   /* 戻す */
+  await page.waitForTimeout(150);
+  await page.click('[data-act="bulk-confirm"]');
+  await wait(() => page.$('.shop-bulk-note'));
+  const after = await page.evaluate(() => ({
+    gold: RUI.meta.gold, book8: RUI.meta.book[8] || 0, deck8: RUI.meta.deck[8] || 0,
+    known: (RUI.meta.known || []).length
+  }));
+  ok('★見せた合計額と実際の増加額が一致する', after.gold - bulkGoldBefore === planTotal,
+    `${bulkGoldBefore}→${after.gold}（一覧の合計 ${planTotal}）`);
+  ok('★換金後もデッキと本の合計で3枚残る', after.book8 + after.deck8 === 3,
+    `本${after.book8}＋デッキ${after.deck8}`);
+  ok('★記憶データ（種類）は減らない', after.known >= 8, String(after.known));
+  await page.click('[data-act="logshop-leave"]');
+  await wait(() => page.$('.home-scene'));
+  ok('ログショップから「ホームへ戻る」でホームに戻れる', !!(await page.$('.home-scene')));
+  /* 売買した内容を元に戻す（上の控え。以降の検査への影響を断つ） */
+  await page.evaluate((json) => {
+    RUI.meta = JSON.parse(json);
+    CQSave.saveMeta(localStorage, RUI.meta);
+  }, metaSnapshot);
 
   await passHomeToAreaSelect();
   const tiles = await page.$$('.area-tile');
@@ -556,7 +632,8 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
   ok('🛠 でデバッグメニューが開く', !!(await page.$('.dbg-menu')));
-  ok('デバッグメニューに7つの道具が並ぶ（フリーバトル・デッキ編集・盤面セットアップを追加）', (await page.$$('.dbg-item')).length === 7,
+  /* 2026-09-02：道具は8つ（盤面を報告の追加ぶん。7のままだった検査を実装に合わせて更新） */
+  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
     String((await page.$$('.dbg-item')).length) + '個');
   await shot('debug-menu');
   /* ルーラー：80px方眼と座標番号が #app に重なる。もう一度押すと消える */
@@ -592,7 +669,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   /* --- 2026-08-29：デッキ編集とフリーバトルをデバッグメニューへ移した --- */
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
-  ok('デバッグメニューに7つの道具が並ぶ', (await page.$$('.dbg-item')).length === 7,
+  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
     String((await page.$$('.dbg-item')).length) + '個');
   /* 🃏 デッキ編集：アンロックに関係なく全169種から組めること・組んだ内容が残ること */
   await dbgClick('デッキ編集');
