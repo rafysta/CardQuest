@@ -470,7 +470,13 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
         !!(await page.$('.cg-head')), t);
       await shot('node-' + t);
       if (t === 'shop') { await page.click('[data-act="shop-leave"]'); }
-      else { await page.click('[data-act="exchange-leave"]'); }
+      else {
+        /* M7 WP8：換金所は買い取り所になった。売る導線が消えていることも見ておく */
+        const title = await page.$eval('.cg-title', (e) => e.textContent.trim());
+        ok('★換金所は「買い取り」になっている（M7 WP8）', title === '買い取り', title);
+        ok('★売る導線が無い', !(await page.$('[data-act="sell"]')));
+        await page.click('[data-act="buyout-leave"]');
+      }
     } else {
       await wait(() => page.$('.node-panel'));
       ok('非戦闘マス(' + t + ')の解決パネルが出る', !!(await page.$('.node-panel')), t);
@@ -1285,6 +1291,61 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.waitForTimeout(1200);
     ok('霧払い後は霧のベールが消える（M6.5b）', !(await page.$('.fog-layer')) || await page.$eval('.fog-layer', (e) => +getComputedStyle(e).opacity < 0.05));
     await shot('map-fog-cleared');
+  }
+
+  // --- 買い取り所（M7 WP8）：レンタルを持った盤面を直接作って確かめる ---
+  /* 買い取り所のマスはテンプレート次第で出ないランがあるので、上の巡回に頼らず
+   * ここで決定的に検証する（verify-reload.js と同じ「盤面を直接セットする」流儀）。 */
+  {
+    const st = await page.evaluate(() => {
+      RUI.meta.gold = 99999;
+      RUI.run = CQRun.start(CARD_BY_ID, 'grassland', 31, RUI.meta);
+      RUI.run.gold = 99999;
+      RUI.run.rentals.push(101, 151);
+      /* マップに実在するマスを1つ買い取り所に付け替える（存在しないマスIDを足すと
+       * マップの道の描画が壊れる＝グラフの一員でないため。実際に踏んだ）。 */
+      const ids = Object.keys(RUI.run.map.nodes);
+      const id = ids.filter((k) => {
+        const t = RUI.run.map.nodes[k].type;
+        return t !== 'battle' && t !== 'start' && t !== 'boss';
+      })[0] || ids[1];
+      RUI.run.map.nodes[id].type = 'exchange';   /* マスの型だけ差し替える（オブジェクトごと
+        入れ替えると connectsTo 等が消えて道の描画が壊れる。実際に踏んだ） */
+      RUI.run.map.nodes[id].cleared = false;
+      RUI.nodeId = id;
+      RUI.view = 'node';
+      runRender();
+      return { gold: RUI.run.gold, rentals: RUI.run.rentals.slice(),
+        deck101: CQRun.buildPlayerDeck(RUI.run).filter((x) => x === 101).length };
+    });
+    await wait(() => page.$('.cg-head'));
+    ok('買い取り所が開く（M7 WP8）',
+      (await page.$eval('.cg-title', (e) => e.textContent.trim())) === '買い取り');
+    const tiles = await page.$$('[data-act="buyout"]');
+    ok('借りているカードが並ぶ', tiles.length === 2, String(tiles.length) + '枚');
+    ok('「借」バッジが付く', (await page.$$('.cg-badge')).length === 2);
+    const priceLabel = await page.$eval('[data-act="buyout"]', (e) => e.textContent.trim());
+    const expect = await page.evaluate(() => 'Ｇ' + CQRun.buyoutPrice(CARD_BY_ID, 101, 'grassland') + 'で買い取る');
+    ok('★買い取り価格がエンジンの計算と一致する', priceLabel === expect, `${priceLabel} / ${expect}`);
+    await shot('buyout');
+    await page.click('[data-act="buyout"]');
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(() => ({
+      gold: RUI.run.gold, rentals: RUI.run.rentals.slice(),
+      gained: RUI.run.gainedCards.slice(),
+      deck: CQRun.buildPlayerDeck(RUI.run).filter((x) => x === 101).length,
+      saved: JSON.parse(localStorage.getItem('cq_run') || '{}')
+    }));
+    ok('★買い取るとレンタルから外れ、獲得カードになる',
+      after.rentals.indexOf(101) < 0 && after.gained.indexOf(101) >= 0, JSON.stringify(after.rentals));
+    ok('★Ｇが価格ぶん減る', st.gold - after.gold > 0, `${st.gold}→${after.gold}`);
+    ok('★買ったカードはそのランの戦闘デッキに残る（買った瞬間に使えなくならない）',
+      after.deck === st.deck101, `買う前 ${st.deck101}枚 → 買った後 ${after.deck}枚`);
+    ok('★中断・再開のセーブ（cq_run）に買い取り済みが載る',
+      (after.saved.rentals || []).indexOf(101) < 0 && (after.saved.gainedCards || []).indexOf(101) >= 0,
+      JSON.stringify(after.saved.rentals || null));
+    await page.click('[data-act="buyout-leave"]');
+    await page.waitForTimeout(300);
   }
 
   ok('コンソールエラーなし', errors.length === 0, errors.slice(0, 5).join(' / '));

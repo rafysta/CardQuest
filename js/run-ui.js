@@ -787,8 +787,8 @@ function renderStartDraft() {
     <div class="draft-row">${opts}${draftKeepCardHTML(dp.targetId)}</div>
     <p class="draft-note">選んだカードは<b>このラン限定のレンタル</b>です。無料で借りられますが、
       記憶データには入らず、探索が終わると返却されます。<b>デッキ40枚とは別枠</b>で持てるので、
-      デッキの中身は変わりません。<b>レンタルしたカードは売ることができません</b>
-      （換金所には出せません。買い取り所で買い取れば手元に残せます）。</p>`;
+      デッキの中身は変わりません。使ってみて気に入ったら、道中の<b>💰買い取りのマス</b>で
+      買い取れば、そのまま自分のものになります（記憶データにも残ります）。</p>`;
 }
 
 /* ---- ④ 出発（暗転→明転） ---- */
@@ -819,7 +819,7 @@ function renderStart() {
 /* ================= マップ画面 ================= */
 
 const NODE_ICON = { chest: '🎁', shop: '🛒', rest: '☕', exchange: '💰', question: '❓', start: '🏠', boss: '👑' };
-const NODE_LABEL = { chest: '宝箱', shop: 'ショップ', rest: '休憩', exchange: '換金', question: '？', start: '開始', boss: 'ボス' };
+const NODE_LABEL = { chest: '宝箱', shop: 'ショップ', rest: '休憩', exchange: '買い取り', question: '？', start: '開始', boss: 'ボス' };
 /* マップ演出仕様（2026-08-26確定・マップ仕様書§4.1〜4.2）：戦闘マス／ボスは枠付きカード絵ではなく
  * 背景除去済みの切り抜き（tools/make-cutouts.py で事前生成・assets/cutouts/・assets/masters/*_cut.png）を
  * 台座タイルの上に立たせる。切り抜きが無いカード／エリア追加直後は自動でフォールバックする。 */
@@ -1168,7 +1168,7 @@ function renderNode() {
     return renderEventIntro();
   }
   if (n.type === 'shop') return renderShopNode(run, n);
-  if (n.type === 'exchange') return renderExchangeNode(run, n);
+  if (n.type === 'exchange') return renderBuyoutNode(run, n);   /* M7 WP8：中身は買い取り所（マスの型名は互換のため据え置き） */
   if (n.type === 'question') return renderQuestionNode(run, n);
 }
 
@@ -1505,31 +1505,39 @@ function renderShopNode(run, n) {
     </div>`;
 }
 
-/* 2026-08-29 本人指摘（再修正）：換金所はカード枚数が多いとボタン込みタイルで
- * 縦スクロールが必要になり見にくかったため、ショップ・戦利品とは違い、この画面だけ
- * 「カード一覧＋情報パネルに売るボタン」という以前の形に戻す。 */
-function renderExchangeNode(run, n) {
-  gridEnter('exchange:' + RUI.nodeId);
-  const items = runCarryItems(run);
-  let actions = '';
-  if (RUI.gridSel != null) {
-    const sellable = (run.deck[RUI.gridSel] || 0) > 0;
-    if (sellable) {
-      const price = CQRun.sellPrice(CARD_BY_ID, RUI.gridSel);
-      actions = `<button class="btn ok" data-act="sell" data-id="${RUI.gridSel}">Ｇ${price}で売る</button>`;
-    } else {
-      actions = '<p class="cg-note">レンタルは売れません（換金所には出せません）。</p>';
-    }
-  }
+/* ================= 買い取り所（M7 WP8） =================
+ *
+ * 旧・換金所（売却）を置き換えた画面。経済追補§4-3〜§4-6。
+ * **いま借りているレンタルカードをＧで買い取る**＝レンタル属性が外れて自分のものになり、
+ * 記憶データに登録され、ラン終了後も手元に残る（どの終わり方でも失わない）。
+ *
+ * ショップが「抽選された品揃えから選ぶ＝運」なのに対し、ここは「使ってみて良いと分かって
+ * いるものを狙って買う＝確定」で、開始マスのドラフトがラン後半の判断に繋がる（§4-3）。
+ * 売る機能はもう無い（ダブり札の売却はホームのログショップ＝WP7へ移った）。
+ *
+ * ボタンはタイルの直下に置く（ショップと同じ流儀）。旧・換金所だけは「一覧＋情報パネルに
+ * ボタン」という別の形にしていたが、それは**持ち出した40枚が全部並んで縦に長かった**ため。
+ * 買い取り所に並ぶのはレンタルの最大2枚だけなので、その理由はもう当てはまらない。 */
+function renderBuyoutNode(run, n) {
+  gridEnter('buyout:' + RUI.nodeId);
+  const items = (run.rentals || []).map(function (id) { return { id: id, rental: true }; });
   runRoot().innerHTML = `
     <div class="cg-head">
-      <div class="cg-title">換金</div>
+      <div class="cg-title">買い取り</div>
       <div class="cg-stats"><span>所持Ｇ <b>${run.gold}</b></span></div>
-      <button class="btn ok cg-done" data-act="exchange-leave">立ち去る</button>
+      <button class="btn ok cg-done" data-act="buyout-leave">立ち去る</button>
     </div>
+    <p class="cg-note buyout-note">借りているカードを買い取ると、あなたのものになります。
+      記憶データに残り、探索が終わっても返さなくてよくなります。</p>
     <div class="cg-wrap">
-      <div class="cg-main">${cgGridHTML(items, '売れるカードがありません')}</div>
-      <div class="detail cg-detail">${cgDetailHTML(actions)}</div>
+      <div class="cg-main">${cgCardGridHTML(items, 'いま借りているカードはありません', function (it, idx) {
+        const price = CQRun.buyoutPrice(CARD_BY_ID, it.id, run.areaId);
+        const rare = CQCollection.isRare(CARD_BY_ID[it.id], CQAreas.rareThreshold(run.areaId));
+        return `<button class="tiny" data-act="buyout" data-idx="${idx}" ${run.gold < price ? 'disabled' : ''}>
+            Ｇ${price}で買い取る</button>
+          ${rare ? '<div class="buyout-rare">貴重（定価×1.5）</div>' : ''}`;
+      })}</div>
+      <div class="detail cg-detail">${cgDetailHTML('')}</div>
     </div>`;
 }
 
@@ -2358,14 +2366,17 @@ function runAct(act, id, idx) {
       CQRun.shopLeave(run, run.map.nodes[RUI.nodeId]);
       RUI.view = 'map'; runSave();
       return runRender();
-    case 'sell': {
-      const r = CQRun.sell(run, CARD_BY_ID, +id);
-      if (!r.ok) runFlash(r.reason);
+    /* ---- 買い取り所（M7 WP8） ---- */
+    case 'buyout': {
+      /* 同じカードを2枚借りていることがあるので、カードidではなく並びの位置で指定する */
+      const r = CQRun.buyout(run, CARD_BY_ID, +idx);
+      if (!r.ok) return runFlash(r.reason);
       runSave();
+      runFlash((CARD_BY_ID[r.id] ? CARD_BY_ID[r.id].n : r.id) + ' を買い取った（-' + r.price + 'Ｇ）');
       return runRender();
     }
-    case 'exchange-leave':
-      CQRun.exchangeLeave(run, run.map.nodes[RUI.nodeId]);
+    case 'buyout-leave':
+      CQRun.buyoutLeave(run, run.map.nodes[RUI.nodeId]);
       RUI.view = 'map'; runSave();
       return runRender();
     /* M6.6 WP9：カードグリッド＋情報パネルの共通操作。タイルを押すと選ぶだけ（4画面共通）。 */

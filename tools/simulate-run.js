@@ -102,6 +102,10 @@ function trackGoldDelta(before, after) {
  * たどり着けているか」がボトルネックかもしれない、という仮説を確かめるための計測。 */
 const CHEST_STAT = { runs: 0, opened: 0, cardGiven: 0, zeroChestRuns: 0 };
 
+/* M7 WP8：買い取り所でレンタルを買い取った回数と、そのランでレンタルを持っていた率。
+ * 経済追補§4-5の「空振り（欲しい物が無い／そもそもレンタルが0枚）」がどれくらい起きるかを見る。 */
+const BUYOUT_STAT = { runs: 0, bought: 0, gold: 0, runsWithRental: 0, visits: 0, attempts: 0, failedGold: 0 };
+
 /* M7 WP4：ショップでの購入試行のうち、Ｇ不足で失敗した回数（品揃えは見えているのに買えない）。
  * WP1実測の「ショップ支出7Ｇ/ラン」が低すぎる原因（立寄り率が低いだけなのか、
  * 立ち寄っても買えていないのか）を切り分けるための計測。 */
@@ -240,10 +244,13 @@ function playRun(areaId, seed, meta, rng) {
     CQRun.applyDraft(run, pool[rng.int(0, pool.length - 1)]);
   }
   CQRun.depart(run);
+  const rentalCountAtStart = (run.rentals || []).length;   /* M7 WP8：空振り率の分母 */
 
   let steps = 0, battles = 0, totalTurns = 0;
   let shopVisited = false;   /* M7 WP1：このランでショップに1度でも立ち寄ったか */
   let chestOpened = 0;       /* M7 WP4：このランで宝箱を開けた回数 */
+  let boughtCards = 0;       /* M7 WP8：このランで買い取ったレンタルの枚数 */
+  let buyoutVisits = 0;      /* 同：買い取り所のマスを踏んだ回数 */
   while (!run.outcome && steps++ < 60) {
     const n = CQRun.currentNode(run);
     if (!n.cleared) {
@@ -317,13 +324,19 @@ function playRun(areaId, seed, meta, rng) {
         }
         CQRun.shopLeave(run, n);
       } else if (n.type === 'exchange') {
-        const ids = Object.keys(run.deck).filter((k) => run.deck[k] > 0 && +k !== CQRun.BLANK);
-        if (ids.length && rng.next() < 0.5) {
+        buyoutVisits += 1;
+        /* M7 WP8：換金所は買い取り所になった（売却はホームのログショップへ移動）。
+         * 借りているレンタルを半々で買い取る＝買い取りの経路も毎回のファズで通す。 */
+        if ((run.rentals || []).length && rng.next() < 0.5) {
           const beforeG = run.gold;
-          CQRun.sell(run, CARD_BY_ID, +ids[rng.int(0, ids.length - 1)]);
+          const idx = rng.int(0, run.rentals.length - 1);
+          const r = CQRun.buyout(run, CARD_BY_ID, idx);
+          BUYOUT_STAT.attempts += 1;
+          if (r.ok) { boughtCards += 1; BUYOUT_STAT.gold += r.price; }
+          else if (r.reason === 'Ｇが足りません') BUYOUT_STAT.failedGold += 1;
           trackGoldDelta(beforeG, run.gold);
         }
-        CQRun.exchangeLeave(run, n);
+        CQRun.buyoutLeave(run, n);
       } else if (n.type === 'question') {
         const beforeG = run.gold;
         CQRun.resolveQuestion(run, n);
@@ -362,6 +375,10 @@ function playRun(areaId, seed, meta, rng) {
   if (shopVisited) SHOPVISIT_STAT.visited++;
   CHEST_STAT.runs++;
   if (chestOpened === 0) CHEST_STAT.zeroChestRuns++;
+  BUYOUT_STAT.runs++;
+  BUYOUT_STAT.bought += boughtCards;
+  BUYOUT_STAT.visits += buyoutVisits;
+  if (rentalCountAtStart > 0) BUYOUT_STAT.runsWithRental++;
   /* M6.6 WP11：清算で「今日の獲得ぶん」が終わり方に応じて削られる（リタイヤ▲50%・
    * ゲームオーバー▲75%）。ランの大半は敗北なので、ここが経済に一番効く数字になった。
    * settleGold は副作用が無いので、settle の前に呼んで内訳だけ先に集計してよい。 */
@@ -466,6 +483,17 @@ console.log(`  宝箱を開けてカードが出た割合：${pct(CHEST_STAT.car
   + `（${CHEST_STAT.cardGiven} / ${CHEST_STAT.opened} 回。抽選確率80%＋rareチェストは必中ぶん。WP4で60%→80%に調整）`);
 console.log(`  ショップ購入の試行 ${SHOPBUY_STAT.attempts} 回のうちＧ不足で失敗：${pct(SHOPBUY_STAT.failedGold, SHOPBUY_STAT.attempts)}`
   + `（${SHOPBUY_STAT.failedGold} / ${SHOPBUY_STAT.attempts} 回）`);
+
+/* M7 WP8：買い取り所の実効性（経済追補§4-5の「空振り」がどれだけ起きるか）。
+ * レンタルを1枚も持たずに出発したランでは、買い取り所は必ず空振りになる。 */
+console.log('\n--- M7 WP8 診断（買い取り所） ---');
+console.log(`  レンタルを持って出発したランの割合：${pct(BUYOUT_STAT.runsWithRental, BUYOUT_STAT.runs)}`
+  + `（${BUYOUT_STAT.runsWithRental} / ${BUYOUT_STAT.runs} 回）`);
+console.log(`  買い取り所のマスを踏んだ回数：${BUYOUT_STAT.visits} 回`
+  + ` / 買い取りを試した ${BUYOUT_STAT.attempts} 回のうちＧ不足で失敗：`
+  + `${pct(BUYOUT_STAT.failedGold, BUYOUT_STAT.attempts)}（${BUYOUT_STAT.failedGold} / ${BUYOUT_STAT.attempts} 回）`);
+console.log(`  実際に買い取った枚数：${BUYOUT_STAT.bought} 枚 / 支出 ${BUYOUT_STAT.gold} Ｇ`
+  + `（ファズは踏むたび50%で買おうとする）`);
 
 if (stat.errors.length) {
   console.log(`\n例外 ${stat.errors.length} 件:`);

@@ -1696,6 +1696,11 @@ td.nm{font-weight:800}
 .big.col-unknown .col-unknown-mark{font-size:64px}
 .big.col-unknown .bn{color:var(--dim)}
 
+/* ---- 買い取り所（M7 WP8） ---- */
+.buyout-note{text-align:left;margin:0 0 10px;padding:8px 12px;border:1px solid var(--line);
+  border-radius:10px;background:#141b2c;line-height:1.5}
+.buyout-rare{font-size:12px;text-align:center;color:var(--accent)}
+
 /* ---- ログショップ（M7 WP7） ----
  * 一括換金の帯は「タブのすぐ下・グリッドの上」に置く。ここに合計額を出しておくと、
  * 売り場を見ながら「まとめて処理するといくらになるか」が常に見えている状態になる。 */

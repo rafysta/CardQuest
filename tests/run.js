@@ -3257,14 +3257,12 @@ t('ショップ：購入・回復・霧払いはＧが無いと断られる', ()
   eq(n.stock.indexOf(41), -1, '品揃えから消える');
 });
 
-t('換金：所持カードだけ売れる。空白は売れない', () => {
-  const run = CQRun.start(CARD_BY_ID, 'grassland', 13, freshMeta());
-  eq(CQRun.sell(run, CARD_BY_ID, 180).ok, false, '空白は売れない');
-  eq(CQRun.sell(run, CARD_BY_ID, 99999).ok, false, '持っていないカードは売れない');
-  const before = run.deck[8];
-  const r = CQRun.sell(run, CARD_BY_ID, 8);
-  eq(r.ok, true, '所持カードは売れる');
-  eq(run.deck[8], before - 1, '1枚減る');
+t('★ラン中の売却は無くなった（M7 WP8：換金所→買い取り所）', () => {
+  /* 経済追補§4-2でダブり札の売却はホームのログショップへ移った。ラン中にカードが減る
+   * 経路がもう無いことを、APIの不在で固定しておく（画面から呼ぶ先が消えたことの保証）。 */
+  eq(typeof CQRun.sell, 'undefined', 'CQRun.sell は削除されている');
+  eq(typeof CQRun.buyout, 'function', '代わりに買い取りがある');
+  eq(typeof CQRun.sellPrice, 'function', '売値の式はホームの売却が使うので残っている');
 });
 
 t('換金：売却価格は定価の25%（M7 WP7・50%→25%に変更）', () => {
@@ -3277,8 +3275,10 @@ t('換金：売却価格は定価の25%（M7 WP7・50%→25%に変更）', () =>
   const c = CARD_BY_ID[101];
   const expected = Math.max(10, Math.round(c.p * 0.25));
   eq(CQRun.sellPrice(CARD_BY_ID, 101), expected, 'sellPrice()は定価の25%（10G未満は10G）');
-  const r = CQRun.sell(run, CARD_BY_ID, 101);
-  eq(r.gold, expected, 'sell()の実際の売却額もsellPrice()と一致する');
+  /* ホームの売却・一括換金はこの sellPrice() をそのまま通す（M7 WP7の節でも検査している） */
+  const meta2 = { book: { 101: 1 }, deck: {}, known: [101], gold: 0 };
+  CQCollection.sellFromBook(meta2, 101, CQRun.sellPrice(CARD_BY_ID, 101));
+  eq(meta2.gold, expected, '実際の売却額もsellPrice()と一致する');
 });
 
 t('？イベント：一度解決したら再解決しない', () => {
@@ -3487,18 +3487,16 @@ t('清算（settle）：bookAddがbookへ・gainedCardsがknownへ・レンタ�
   eq(meta.known.indexOf(70), -1, 'レンタルはknownに登録されない（返却）');
 });
 
-t('清算（settle）：ラン中の売却は本に戻らない（カードが世界から消える）', () => {
-  /* WP9（換金所リメイク）の注意事項の先取り回帰テスト：初版の誤解（売ると本からも減る／
-   * 売った分が本に戻る）を防ぐ。売却はrun.deckから減らすだけ→settleでmeta.deckに複製→
-   * meta.bookは終始不変、が正しい。 */
+t('清算（settle）：ラン中にデッキが減ることはもう無い（M7 WP8で売却が消えた）', () => {
+  /* WP9（換金所リメイク）の注意事項だった「売ると本からも減るのでは」という誤解の回帰テストは、
+   * M7 WP8でラン中の売却そのものが無くなったので、**持ち出したデッキが丸ごと戻る**ことの
+   * 確認に置き換えた（ラン中にカードが減る経路が1つも無いことの保証）。 */
   const meta = { book: { 101: 2 }, deck: { 101: 3 }, known: [101], gold: 0, cleared: [] };
   const run = CQRun.start(CARD_BY_ID, 'grassland', 23, meta);
-  const r = CQRun.sell(run, CARD_BY_ID, 101);
-  eq(r.ok, true, '売れる');
   CQRun.settle(run, meta);
-  eq(meta.deck[101], 2, '売った1枚はデッキから消えたまま');
-  eq(meta.book[101], 2, '本には戻らない・本からも減らない');
-  eq(meta.known.indexOf(101) >= 0, true, '売ってもknownには残る');
+  eq(meta.deck[101], 3, '持ち出した3枚はそのまま戻る');
+  eq(meta.book[101], 2, '本は終始不変');
+  eq(meta.known.indexOf(101) >= 0, true, 'knownも不変');
 });
 
 t('清算（settle）：旧セーブ由来の実体の空白(180)はmeta.deckに残さない', () => {
@@ -6001,6 +5999,148 @@ t('売却：ホームで売るのは本の在庫だけ（デッキからは売�
   eq(CQCollection.sellFromBook(meta, 102, 999).ok, false, 'デッキにしか無いカードは売れない');
   eq(meta.deck[102], 1, 'デッキは減っていない');
   eq(CQCollection.sellFromBook(meta, CQRun.BLANK, 10).ok, false, '空白は売れない');
+});
+
+/* ================= M7 WP8: 買い取り所 ================= */
+section('M7 WP8: 買い取り所');
+
+/** レンタルを持ったランを作る（買い取りの検査用）。gold は潤沢にしておく。 */
+function runWithRentals(ids, opts) {
+  const o = opts || {};
+  /* 既定はピッグマン40枚のデッキ＝満杯だが、検査に使う魔法・技能は1枚も持っていない状態
+   * （スターターのfreshMeta()には101や151が入っており、「買ったぶんだけ増えた」が見えない）。
+   * ピッグマン(8)は同種3枚の上限の例外なので40枚のデッキが作れる。 */
+  const meta = o.meta || { book: {}, deck: { 8: 40 }, known: [8], gold: 500, cleared: [], openingSeen: true };
+  const run = CQRun.start(CARD_BY_ID, o.areaId || 'grassland', o.seed || 31, meta);
+  run.gold = o.gold == null ? 99999 : o.gold;
+  ids.forEach((id) => run.rentals.push(id));
+  return { run, meta };
+}
+
+t('買い取り価格：汎用は定価ちょうど・貴重は定価×1.5（経済追補§4-4）', () => {
+  const plain = CARDS.filter((c) => (c.t === 'M' || c.t === 'S')
+    && c.p > 0 && !CQCollection.isRare(c, CQAreas.rareThreshold('grassland')))[0];
+  const rare = CARDS.filter((c) => (c.t === 'M' || c.t === 'S')
+    && CQCollection.isRare(c, CQAreas.rareThreshold('grassland')))[0];
+  eq(CQRun.buyoutPrice(CARD_BY_ID, plain.id, 'grassland'), plain.p, '汎用は定価ちょうど（割増しない）');
+  eq(CQRun.buyoutPrice(CARD_BY_ID, rare.id, 'grassland'), Math.round(rare.p * 1.5), '貴重は定価×1.5');
+  eq(Math.round(rare.p * CQCollection.RARE_MARKUP), Math.round(rare.p * 1.5),
+    '割増率はホームの貴重限定枠と同じ定数を使っている（規則を1本に保つ）');
+});
+
+t('買い取り価格の「貴重」はそのランのエリアの閾値で決まる（§3-4・同じランで定義が2つにならない）', () => {
+  /* 草原と森で閾値が違うカードがあれば、同じカードでも価格が変わる。
+   * 閾値が同じエリアしか無いデータなら、この検査は「同額」で通る（構造の確認は下の式で担保）。 */
+  const thG = CQAreas.rareThreshold('grassland');
+  const thF = CQAreas.rareThreshold('forest');
+  const between = CARDS.filter((c) => (c.t === 'M' || c.t === 'S') && c.p > 0
+    && c.p >= Math.min(thG, thF) && c.p < Math.max(thG, thF))[0];
+  if (between) {
+    const cheapArea = thG < thF ? 'grassland' : 'forest';
+    const pricyArea = thG < thF ? 'forest' : 'grassland';
+    eq(CQRun.buyoutPrice(CARD_BY_ID, between.id, cheapArea), Math.round(between.p * 1.5),
+      '閾値の低いエリアでは貴重扱い＝×1.5');
+    eq(CQRun.buyoutPrice(CARD_BY_ID, between.id, pricyArea), between.p,
+      '閾値の高いエリアでは汎用扱い＝定価');
+  }
+});
+
+t('★買い取り：レンタル属性が外れて自分のものになり、記憶データに登録される', () => {
+  const { run, meta } = runWithRentals([101]);
+  const before = run.gold;
+  const r = CQRun.buyout(run, CARD_BY_ID, 0);
+  eq(r.ok, true, '買い取れる');
+  eq(run.gold, before - CQRun.buyoutPrice(CARD_BY_ID, 101, 'grassland'), '価格ぶんＧが減る');
+  eq(run.rentals.length, 0, 'レンタルの一覧から外れる');
+  eq(run.gainedCards.indexOf(101) >= 0, true, '獲得カードとして扱われる（記憶データの経路）');
+  CQRun.settle(run, meta);
+  eq(meta.known.indexOf(101) >= 0, true, '記憶データに登録される（レンタル規則の唯一の例外）');
+});
+
+t('★買い取ったカードは、そのランの間そのまま使い続けられる（戦闘デッキから消えない）', () => {
+  /* デッキ40枚ちょうど＝空きが無いので買い取ったカードは本行きになるが、
+   * ランの間は枠外（run.bought）で場に残る。「買った瞬間に使えなくなる」を防ぐ。 */
+  const { run } = runWithRentals([101]);
+  eq(CQCollection.countsTotal(run.deck), CQRun.DECK_SIZE, 'デッキは40枚（スターター）');
+  const before = CQRun.buildPlayerDeck(run);
+  eq(before.filter((x) => x === 101).length, 1, '買う前：レンタルとして戦闘デッキに1枚ある');
+  const r = CQRun.buyout(run, CARD_BY_ID, 0);
+  eq(r.dest, 'book', 'デッキが満杯なので所持は本行きになる');
+  const after = CQRun.buildPlayerDeck(run);
+  eq(after.filter((x) => x === 101).length, 1, '買った後：枠外のまま戦闘デッキに残っている（増えも減りもしない）');
+  eq(after.length, before.length, '戦闘デッキの総枚数は変わらない');
+});
+
+t('買い取り：デッキに空きがあればデッキに入る（他の入手と同じ gainCard の経路）', () => {
+  const meta = { book: {}, deck: { 8: 30 }, known: [8], gold: 0, cleared: [] };
+  const { run } = runWithRentals([101], { meta });
+  const r = CQRun.buyout(run, CARD_BY_ID, 0);
+  eq(r.dest, 'deck', 'デッキに空きがあるのでデッキへ');
+  eq(run.deck[101], 1, 'デッキに入っている');
+  eq((run.bought || []).length, 0, '枠外の一時置き場は使わない（二重に場へ出さないため）');
+  eq(CQRun.buildPlayerDeck(run).filter((x) => x === 101).length, 1, '戦闘デッキにあるのは1枚だけ');
+});
+
+t('買い取り：同じカードを2枚借りていても、選んだ1枚だけが買われる', () => {
+  const { run } = runWithRentals([101, 101, 151]);
+  CQRun.buyout(run, CARD_BY_ID, 0);
+  eq(run.rentals.length, 2, '1枚だけ減る');
+  eq(run.rentals.filter((x) => x === 101).length, 1, '同名のもう1枚はレンタルのまま残る');
+});
+
+t('買い取り：Ｇが足りなければ買えない（所持Ｇもレンタルも動かない）', () => {
+  const { run } = runWithRentals([101], { gold: 0 });
+  const r = CQRun.buyout(run, CARD_BY_ID, 0);
+  eq(r.ok, false, '買えない');
+  eq(r.reason, 'Ｇが足りません', '理由が返る');
+  eq(run.gold, 0, 'Ｇは動かない');
+  eq(run.rentals.length, 1, 'レンタルも動かない');
+  eq(CQRun.buyout(run, CARD_BY_ID, 5).ok, false, '無い位置を指定しても落ちない');
+});
+
+t('★買い取ったカードは、どの終わり方でも失わない（クリア／リタイヤ／ゲームオーバー）', () => {
+  ['win', 'retire', 'lose'].forEach((outcome) => {
+    const { run, meta } = runWithRentals([101, 151]);
+    CQRun.buyout(run, CARD_BY_ID, 0);           /* 101を買い取る。151は借りたまま */
+    run.outcome = outcome;
+    CQRun.settle(run, meta);
+    eq((meta.book[101] || 0) + (meta.deck[101] || 0), 1,
+      outcome + '：買い取ったカードは手元に残る');
+    eq(meta.known.indexOf(101) >= 0, true, outcome + '：記憶データにも残る');
+    eq((meta.book[151] || 0) + (meta.deck[151] || 0), 0,
+      outcome + '：買わなかったレンタルは返却され、手元に残らない');
+    eq(meta.known.indexOf(151), -1, outcome + '：買わなかったレンタルは記憶データにも入らない');
+  });
+});
+
+t('★リザルトの「返却するカード」に買い取ったカードは出ない（獲得側に出る）', () => {
+  /* 画面（renderResult）は run.rentals を返却一覧に、run.gainedCards を獲得一覧に出す。
+   * 買い取りが rentals から gainedCards へ移すので、表示は自然に入れ替わる。 */
+  const { run } = runWithRentals([101, 151]);
+  CQRun.buyout(run, CARD_BY_ID, 0);
+  eq(run.rentals.indexOf(101), -1, '買ったカードは返却一覧に出ない');
+  eq(run.rentals.indexOf(151) >= 0, true, '買わなかったレンタルは返却一覧に残る');
+  eq(run.gainedCards.indexOf(101) >= 0, true, '買ったカードは獲得一覧に出る');
+});
+
+t('★中断・再開（cq_run）で買い取り済みが保たれる', () => {
+  const { run } = runWithRentals([101]);
+  CQRun.buyout(run, CARD_BY_ID, 0);
+  const store = mockStorage();
+  CQSave.saveRun(store, run);
+  const back = CQSave.loadRun(store);
+  eq(back.rentals.length, 0, '再開してもレンタルには戻っていない');
+  eq(back.gainedCards.indexOf(101) >= 0, true, '獲得カードとして保たれている');
+  eq((back.bookAdd || {})[101], 1, '所持（本行きぶん）も保たれている');
+  eq((back.bought || []).indexOf(101) >= 0, true, '枠外で使い続ける印も保たれている');
+  eq(CQRun.buildPlayerDeck(back).filter((x) => x === 101).length, 1, '再開後の戦闘デッキにも入る');
+});
+
+t('買い取り所は立ち去ると解決済みになる（他の非戦闘マスと同じ）', () => {
+  const { run } = runWithRentals([]);
+  const n = { type: 'exchange', cleared: false };
+  CQRun.buyoutLeave(run, n);
+  eq(n.cleared, true, '立ち去ると解決済み');
 });
 
 /* ================= 結果 ================= */

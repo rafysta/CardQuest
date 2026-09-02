@@ -103,6 +103,10 @@
     while (ids.length < DECK_SIZE) ids.push(BLANK);
     const deck = ids.slice(0, DECK_SIZE);
     (run.rentals || []).forEach(function (id) { deck.push(id); });
+    /* M7 WP8：買い取ったカードのうち**本行きになったぶん**（デッキ40枚に空きが無かった場合）は、
+     * そのランの間はレンタルと同じく枠外のまま使い続けられる。買った瞬間に場から消えると
+     * 「気に入ったから買ったのに使えなくなる」という逆の体験になるため。 */
+    (run.bought || []).forEach(function (id) { deck.push(id); });
     return deck;
   }
 
@@ -138,6 +142,9 @@
       deck: Object.assign({}, meta.deck),
       bookAdd: {},
       rentals: [],
+      /* M7 WP8：買い取り所で買ったが、デッキ40枚に空きが無く本行きになったカード。
+       * ランの間だけ枠外で使い続けるための一時的な入れ物（所持そのものは bookAdd 側が持つ）。 */
+      bought: [],
       gainedCards: [],
       lootPending: [],
       draftDone: 0, draftPending: null,
@@ -465,6 +472,52 @@
   }
   function shopLeave(run, n) { n.cleared = true; }
 
+  /* ---- 買い取り所（M7 WP8・経済追補§4-3〜§4-6） ---------------------------
+   *
+   * 旧・換金所を置き換えた。**Ｇを払って、いま借りているレンタルカードを買い取る**＝
+   * レンタル属性が外れて自分のものになり、記憶データにも登録され、ラン終了後も手元に残る。
+   * ショップ（抽選された品揃えから選ぶ＝運）の弱点を、
+   * 「使ってみて良いと分かっているものを狙って買う＝確定」で埋めるのが狙い（§4-3）。
+   *
+   * 旧・換金所の売却（`sell()`）は**削除した**（§4-2でホームのログショップへ移った）。
+   * ラン中に持ち出したカードを売る手段はもう無い＝ラン中にデッキが減ることはない。 */
+
+  /** 買い取り価格（§4-4）：汎用は**定価ちょうど**、貴重は**定価×1.5**。
+   * 貴重かどうかの閾値は**そのランのエリアの値**（§3-4）を使う——ラン中ショップの品揃え判定と
+   * 同じ値でなければ、同じランの中で「貴重」の定義が2つできて事故る。
+   * 割増率はホームの貴重限定枠と同じ `CQCollection.RARE_MARKUP`（規則を1本に保つ）。 */
+  function buyoutPrice(cards, cardId, areaId) {
+    const c = cards[cardId];
+    if (!c || typeof c.p !== 'number') return 0;
+    const th = CQAreas.rareThreshold(areaId);
+    return CQCollection.isRare(c, th) ? Math.round(c.p * CQCollection.RARE_MARKUP) : c.p;
+  }
+
+  /** レンタルの idx 番目を買い取る。**同じカードを2枚借りていることがある**ので、
+   * カードidではなく並びの位置で指定する（idで消すとどちらが消えたか曖昧になる）。
+   *
+   * 買い取ったカードは `gainCard()` を通す＝他の入手（戦利品・宝箱・購入）と同じ経路で
+   * デッキか本に入り、`run.gainedCards` に載って記憶データに登録される。
+   * 本行きになった場合だけ `run.bought` にも積み、ランの間は枠外で使い続けられるようにする。 */
+  function buyout(run, cards, idx) {
+    if (!run.rentals || idx < 0 || idx >= run.rentals.length) {
+      return { ok: false, reason: '借りているカードがありません' };
+    }
+    const id = run.rentals[idx];
+    const price = buyoutPrice(cards, id, run.areaId);
+    if (!price) return { ok: false, reason: 'このカードは買い取れません' };
+    if (run.gold < price) return { ok: false, reason: 'Ｇが足りません' };
+    if (!run.bought) run.bought = [];     /* 旧形式の cq_run（中断中のラン）を再開した場合の保険 */
+    run.gold -= price;
+    run.rentals.splice(idx, 1);
+    const dest = gainCard(run, id);
+    if (dest === 'book') run.bought.push(id);
+    run.log.push('買い取り：' + (cards[id] ? cards[id].n : id) + '（-' + price + 'Ｇ）');
+    return { ok: true, id: id, price: price, dest: dest };
+  }
+
+  function buyoutLeave(run, n) { n.cleared = true; }
+
   /* 売却率。表示側（js/run-ui.js）も同じ式を使えるよう sellPrice() として公開する
    * ——以前は画面側で率を再計算しており、変えるときに2箇所直す必要があった。
    * M6.6 WP9：40%→50%（実装計画追補§4 WP9-b）。
@@ -477,16 +530,8 @@
     const c = cards[cardId];
     return c ? Math.max(10, Math.round(c.p * SELL_RATE)) : 0;
   }
-  function sell(run, cards, cardId) {
-    if ((run.deck[cardId] || 0) <= 0) return { ok: false, reason: '所持していません' };
-    if (cardId === BLANK) return { ok: false, reason: '空白は売れません' };
-    const gold = sellPrice(cards, cardId);
-    run.deck[cardId] -= 1;
-    run.gold += gold;
-    run.log.push('換金：' + (cards[cardId] ? cards[cardId].n : cardId) + '（+' + gold + 'Ｇ）');
-    return { ok: true, gold: gold };
-  }
-  function exchangeLeave(run, n) { n.cleared = true; }
+  /* ★ラン中の売却（旧 sell()）は M7 WP8 で**削除した**（経済追補§4-2でホームへ移った）。
+   * ラン中にカードが減る経路はもう無い。ホームの売却は CQCollection.sellFromBook が受ける。 */
 
   function resolveQuestion(run, n) {
     if (n.resolved) return null;
@@ -576,6 +621,8 @@
    *   book   … ラン中に本行きになった分（run.bookAdd）を加算。
    *   known  … ラン中に入手した種類（run.gainedCards）を登録。
    *            レンタル（run.rentals）は登録しない＝返却されて記憶にも残らない。
+   *            **唯一の例外が買い取り（M7 WP8）**：買い取った時点で run.rentals から外れ
+   *            gainCard() を通っているので、ここでは何もしなくても自然に登録される。
    *   gold   … M6.6 WP11：終わり方に応じて**今日の獲得ぶんだけ**減らして書く（settleGold）。
    *   titles / journal / day … 同じくWP11。内訳は run.settled にも残し、
    *            結果画面が「いま何が起きたか」を再計算せずに描けるようにする。
@@ -612,7 +659,7 @@
     battleSeed, firstTurnOf, battleSetup, reportBattle, reportFlee,
     canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
-    sell, sellPrice, exchangeLeave, resolveQuestion, retire, settle,
+    sellPrice, buyoutPrice, buyout, buyoutLeave, resolveQuestion, retire, settle,
     SETTLE_CUT, settleGold, TITLES, earnedTitles, pushJournal
   };
   global.CQRun = api;
