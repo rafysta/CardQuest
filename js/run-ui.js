@@ -369,8 +369,10 @@ function amberBubbleHTML(bubble, opts) {
   const o = opts || {};
   const portrait = bubble.face === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
   const lines = bubble.lines.map(esc).join('<br>');
+  /* 2026-09-02 本人指摘：「スキップ」は画面右上（HUDの位置）ではなく、吹き出しの下に置く。
+   * DOM順を row→skip にし、overlay側のflex-column（align-items:stretch）に任せて
+   * 自然に下へ流す（絶対配置はやめた。以前は右上固定でホームのHUDと衝突していた）。 */
   return `<div class="amber-overlay" ${o.nextAct ? `data-act="${o.nextAct}"` : ''}>
-    ${o.skipAct ? `<button class="amber-skip" data-act="${o.skipAct}">スキップ</button>` : ''}
     <div class="amber-row">
       <img class="amber-face" src="${portrait}" alt="" draggable="false" onerror="this.remove()">
       <div class="amber-bubble">
@@ -378,6 +380,7 @@ function amberBubbleHTML(bubble, opts) {
         ${o.nextAct ? '<div class="amber-tap-hint">タップして進む</div>' : ''}
       </div>
     </div>
+    ${o.skipAct ? `<button class="amber-skip" data-act="${o.skipAct}">スキップ</button>` : ''}
   </div>`;
 }
 

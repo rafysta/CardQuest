@@ -858,11 +858,11 @@ td.nm{font-weight:800}
  * .amber-overlay をそのまま重ねる（#run-root が position:relative なので inset:0 で覆える）。 */
 .home-scene{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;border-radius:14px;overflow:hidden}
 .home-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 40%;z-index:0}
-/* 2026-09-02 本人指摘：アンバーの吹き出しは元の位置（左上）に戻し、代わりに「所持Ｇ」と
- * タイトルを右側へ寄せて避ける（アンバー側は動かさない）。 */
-/* top:56pxから始める＝案内中に出る「スキップ」ボタン（.amber-skip・top:14px）の下を空ける */
-.home-scene .run-hud{position:absolute;top:56px;right:20px;z-index:1;margin:0}
-.home-scene .run-h2{position:absolute;top:96px;right:20px;z-index:1;margin:0;text-align:right;text-shadow:0 2px 6px #000}
+/* 2026-09-02 本人指摘：アンバーの吹き出しは元の位置（左上）のまま、「所持Ｇ」とタイトルを
+ * 右上へ詰めて寄せる。「スキップ」を吹き出しの下へ移したので（.amber-skip側で対応）、
+ * ここは単純に右上に詰めるだけでよい。 */
+.home-scene .run-hud{position:absolute;top:16px;right:20px;z-index:1;margin:0}
+.home-scene .run-h2{position:absolute;top:54px;right:20px;z-index:1;margin:0;text-align:right;text-shadow:0 2px 6px #000}
 .home-grid{position:relative;z-index:1;display:flex;gap:16px;flex-wrap:wrap;margin-top:auto;padding-bottom:8px}
 .home-tile{
   position:relative;width:190px;height:96px;border-radius:12px;cursor:pointer;
@@ -893,8 +893,11 @@ td.nm{font-weight:800}
   display:flex;flex-direction:column;align-items:stretch;
   padding:16px 20px;
 }
+/* 2026-09-02 本人指摘：画面右上（HUDの位置）ではなく吹き出しの下に置く。overlayが
+ * flex-direction:columnなので、絶対配置をやめてalign-self:flex-endで自然に流す
+ * （js/run-ui.jsのamberBubbleHTML側でDOM順もamber-rowの後ろに変えてある）。 */
 .amber-skip{
-  position:absolute;top:14px;right:16px;z-index:2;
+  align-self:flex-end;margin-top:8px;z-index:2;
   background:rgba(5,8,15,.62);border:1px solid var(--line);color:var(--dim);
   border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;
 }
