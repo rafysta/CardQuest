@@ -65,7 +65,10 @@ const RUI = {
    * どおり gridSel（カードid）で行い、光らせる先だけ gridSelIdx に絞る）。 */
   gridSel: null, gridCtx: null, gridSelIdx: null,
   /* コレクション図鑑（M7 WP6）のタブ（U/M/S）。cq_runには保存しない＝画面を開くたび既定に戻る。 */
-  colTab: 'U'
+  colTab: 'U',
+  /* タブごとのスクロール位置（2026-09-02 本人指摘：カード選択で画面を描き直すたびに
+   * スクロールが0へ戻っていた。tab名をキーに最後の位置を覚えておく）。 */
+  colScroll: {}
 };
 
 function runRoot() { return document.getElementById('run-root'); }
@@ -1539,12 +1542,17 @@ function renderDeckView() {
 /* ================= コレクション図鑑（M7 WP6） =================
  *
  * ホームの「コレクション」施設。cq_meta.known（記憶データ＝一度でも入手した種類）を
- * 元に、全169種（U73／M48／S48）を種別タブで一覧する。未入手はシルエット（形だけ分かって
- * 正体は分からない——霧の中の敵と同じCSSフィルタ・マップ仕様書§5）にし、名前は「？？？」に
- * 伏せるが、入手方法（data.jsの`g`フィールド）は既読・未読どちらも出す＝『作業パッケージ』
- * WP6の「未入手カードには入手経路のヒントを出す」に沿う。カードグリッド＋情報パネルは
- * WP9の共通部品（cgGridHTML等）ではなく専用のcolXxx系を使う——cgTileHTML/cgDetailHTMLは
- * 「持っている枚数」前提の作りで、未入手（0枚だが存在は分かっている）を表せないため。 */
+ * 元に、全169種（U73／M48／S48）を種別タブで一覧する。未入手は「？」のみの伏せカードにし、
+ * 名前は「？？？」に伏せるが、入手方法（data.jsの`g`フィールド）は既読・未読どちらも出す＝
+ * 『作業パッケージ』WP6の「未入手カードには入手経路のヒントを出す」に沿う。
+ * 2026-09-02 本人指摘で分かったこと：当初は霧の中の敵と同じCSSフィルタ（brightness(0)）で
+ * 「形だけ分かる」影にしようとしたが、あちらは背景が透明なキャラの切り抜きPNGだから輪郭が
+ * 残る——カードの絵は全面を塗った長方形の1枚絵で透明部分が無いため、フィルタをかけても
+ * 「輪郭のある影」にはならず、ただの塗り潰しにしかならない（実際に暗い地色の上でほぼ
+ * 見えなかった）。なので絵そのものは出さず、伏せカードは最初から「？」の記号だけにした。
+ * カードグリッド＋情報パネルはWP9の共通部品（cgGridHTML等）ではなく専用のcolXxx系を使う——
+ * cgTileHTML/cgDetailHTMLは「持っている枚数」前提の作りで、未入手（0枚だが存在は分かって
+ * いる）を表せないため。 */
 
 /* コレクション対象＝U／M／S の3種別（カースやおじゃま虫は収集対象外）。169種（ゲーム仕様書§6.3）。
  * id180「空白」はt:'S'だがデッキ枠埋め用の見張り値（CQRun.BLANK）で実在のカードではないため除く。 */
@@ -1554,9 +1562,12 @@ const COLLECTION_TOTAL = CARDS.filter(function (c) {
 
 function colTileHTML(id, known, idx) {
   const c = CARD_BY_ID[id];
+  const inner = known
+    ? `<div class="cg-tile-art">${artInner(c, 3)}</div>`
+    : '<span class="col-unknown-mark">？</span>';
   return `<div class="cg-tile ${known ? '' : 'col-unknown'} ${RUI.gridSelIdx === idx ? 'on' : ''}"
       data-act="grid-pick" data-id="${id}" data-idx="${idx}">
-      <div class="cg-tile-art">${artInner(c, 3)}</div>
+      ${inner}
     </div>`;
 }
 
@@ -1575,7 +1586,7 @@ function colDetailHTML() {
   if (!known) {
     return `
       <div class="big ${c.t} col-unknown">
-        <div class="bigart">${artInner(c)}</div>
+        <div class="bigart col-unknown-mark">？</div>
         <div class="bn">？？？</div>
       </div>
       ${obtHTML}`;
@@ -1597,6 +1608,15 @@ function colDetailHTML() {
 function renderCollection() {
   const meta = RUI.meta;
   const tab = RUI.colTab || 'U';
+  /* 2026-09-02 本人指摘：カードを選ぶたび画面を丸ごと描き直す（innerHTML差し替え）ので、
+   * 何もしなければ .cg-grid のスクロール位置が毎回0に戻ってしまう。タブごとに最後の
+   * スクロール位置を RUI.colScroll に覚えておき、描き直した直後に同じ位置へ戻す。
+   * （タブを切り替えたときは別のタブの記録を読むので、自然に0から始まる＝この動きでよい）。 */
+  const prevCtx = RUI.gridCtx;
+  const prevGridEl = runRoot() && runRoot().querySelector('.cg-grid');
+  if (prevGridEl && prevCtx && prevCtx.indexOf('collection:') === 0) {
+    RUI.colScroll[prevCtx.slice('collection:'.length)] = prevGridEl.scrollTop;
+  }
   gridEnter('collection:' + tab);
   const known = meta.known || [];
   const items = CARDS.filter(function (c) { return c.t === tab && c.id !== CQRun.BLANK; })
@@ -1622,6 +1642,8 @@ function renderCollection() {
       <div class="cg-main">${colGridHTML(items)}</div>
       <div class="detail cg-detail">${colDetailHTML()}</div>
     </div>`;
+  const newGridEl = runRoot().querySelector('.cg-grid');
+  if (newGridEl) newGridEl.scrollTop = RUI.colScroll[tab] || 0;
 }
 
 function renderQuestionNode(run, n) {

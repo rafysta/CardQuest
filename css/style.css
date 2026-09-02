@@ -1683,12 +1683,17 @@ td.nm{font-weight:800}
 
 /* ---- コレクション図鑑（M7 WP6） ----
  * cg-gridは元々40枚（8×5）固定だが、図鑑はU73種まであるのでスクロールする専用の並びにする
- * （cg-grid-btnと同じ「grid-auto-rows + overflow」のやり方）。未入手は霧の中の敵と同じ
- * フィルタ（brightness(0) saturate(0)）で「形だけ分かって正体は分からない」シルエットにする。 */
-.cg-grid.col-grid{grid-template-rows:none;grid-auto-rows:max-content;align-content:start;overflow-y:auto}
+ * （cg-grid-btnと同じ「grid-auto-rows + overflow」のやり方）。スクロールバーがタイルの
+ * 右端に食い込んでいた（2026-09-02 本人指摘）ので、padding-rightで少し離してある。
+ * 未入手は絵を出さず「？」だけの伏せカードにする（2026-09-02 本人指摘で判明：カード絵は
+ * 透明部分の無い長方形の1枚絵なので、フィルタで暗くしても輪郭のある「影」にはならず、
+ * 暗い地色の上ではただ消えて見えなくなるだけだった）。 */
+.cg-grid.col-grid{grid-template-rows:none;grid-auto-rows:max-content;align-content:start;overflow-y:auto;padding-right:14px}
 .cg-grid.col-grid .cg-tile{aspect-ratio:110/135}
-.cg-tile.col-unknown img{filter:brightness(0) saturate(0) opacity(.55)}
-.big.col-unknown .bigart img{filter:brightness(0) saturate(0) opacity(.55)}
+.cg-tile.col-unknown{background:#141b2c}
+.col-unknown-mark{font-size:28px;font-weight:800;color:var(--dim)}
+.big.col-unknown .bigart{display:flex;align-items:center;justify-content:center;background:#141b2c}
+.big.col-unknown .col-unknown-mark{font-size:64px}
 .big.col-unknown .bn{color:var(--dim)}
 
 /* カードのタイル直下にボタンを添える版（ショップ・換金所・戦利品振り分けの3画面で共用・
