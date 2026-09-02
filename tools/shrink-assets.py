@@ -37,9 +37,55 @@ TARGETS = [
     ('assets/ui/home_jailtown.png', 1280, 'ホーム画面背景（表示 1280px幅）'),
 ]
 
+# カード絵（assets/cards/*.png）は枚数が多いので個別指定ではなくまとめて扱う。
+#
+# 発注時は 1024×1024 のPNGで1枚1.7MB前後・169枚で295MBあった。実際の表示は
+# いちばん大きい情報パネルでも281px角（画面は1280×800固定で拡大しない）で、
+# ドラフトのカードでも248×228。**表示の2.3倍**の640px角あれば高精細な画面でも粗く見えない。
+# さらにカード絵には透過部分が無いので、PNGで持つと容量の大半が無駄になる
+# （640pxのPNG=約550KB／同じ絵のWebP=約45KB）。よってWebPに変換する。
+#   → 読み込み側の拡張子は js/layout.js の ART_EXT（1箇所）で決まる。
+CARDS_DIR = 'assets/cards'
+CARDS_CAP = 640          # 長辺の上限px（表示281px×2.3）
+CARDS_QUALITY = 84       # WebPの品質。80を下回ると暗い絵に帯が出はじめる
+
+def convert_cards(dry):
+    """assets/cards/*.png を 640px の .webp に変換する（.png は消さずに残す）。
+    元のPNGは変換後に手で消すこと（このスクリプトは消さない——消してから
+    「やり直したい」となったときに git から戻す手間を増やさないため）。"""
+    d = os.path.join(ROOT, CARDS_DIR)
+    if not os.path.isdir(d):
+        print(f'  skip (無い): {CARDS_DIR}')
+        return
+    pngs = sorted(f for f in os.listdir(d) if f.lower().endswith('.png'))
+    before = after = 0
+    made = 0
+    for f in pngs:
+        src = os.path.join(d, f)
+        dst = os.path.join(d, os.path.splitext(f)[0] + '.webp')
+        before += os.path.getsize(src)
+        if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+            after += os.path.getsize(dst)      # すでに変換済み（絵を差し替えたら作り直す）
+            continue
+        im = Image.open(src).convert('RGB')
+        w, h = im.size
+        if max(w, h) > CARDS_CAP:
+            scale = CARDS_CAP / max(w, h)
+            im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+        if not dry:
+            im.save(dst, 'WEBP', quality=CARDS_QUALITY, method=6)
+            after += os.path.getsize(dst)
+        made += 1
+    print(f'  {CARDS_DIR}/*.png → *.webp：{len(pngs)}枚中 {made}枚を変換'
+          f'（{before/1024/1024:.1f}MB → {after/1024/1024:.1f}MB）')
+    if made and not dry:
+        print(f'  ※ 変換元の .png は残っています。確認できたら消してください'
+              f'（例：cd {CARDS_DIR} && rm *.png）')
+
 def main():
     dry = '--dry' in sys.argv
     total_before = total_after = 0
+    convert_cards(dry)
     for rel, cap, note in TARGETS:
         path = os.path.join(ROOT, rel)
         if not os.path.exists(path):

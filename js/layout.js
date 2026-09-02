@@ -11,6 +11,13 @@
 'use strict';
 
 const ART_DIR = 'assets/cards/';
+/* カード絵の拡張子（2026-09-02：`.png` → `.webp`）。
+ * 発注時の絵は 1024×1024 のPNGで1枚1.7MB前後あり、169枚で**295MB**あった。実際の表示は
+ * いちばん大きい情報パネルでも281px角（画面は1280×800固定で拡大しない）で、カード絵には
+ * 透過部分が無いためPNGで持つ意味も無い。640px角のWebPに揃えて**約7MB**にした
+ * （表示の2.3倍の解像度＝高精細な画面でも粗く見えない）。変換は tools/shrink-assets.py。
+ * 差し替えるときは**この1行**を変えれば全画面に効く（絵の読み込みは artInner に一本化済み）。 */
+const ART_EXT = '.webp';
 const TYPE_MARK = { U: 'Ｕ', M: 'Ｍ', S: 'Ｓ', C: 'Ｃ', X: '虫' };
 const TYPE_NAME = { U: 'モンスター', M: '魔法', S: '技能', C: 'カース', X: 'おじゃま虫' };
 const LAYERS = 6;                    /* チャネリングの最大階層 */
@@ -27,7 +34,7 @@ function abbrev(name, n) {
    そこで専用イラストは用意せず、元ユニットの絵を流用し、CSSの img.curse-art で
    紫の心霊風に加工して「本体ではなく取り憑いた霊のほう」だと分かるようにする。 */
 const CURSE_ART_OFFSET = 26;
-/* おじゃま虫（M6 戦場ルール・ID200）も他のカードと同じ。assets/cards/200.png を置けば絵になる
+/* おじゃま虫（M6 戦場ルール・ID200）も他のカードと同じ。assets/cards/200.webp を置けば絵になる
    （置くまではカード名の文字表示。カードの地色だけ CSS の .card.X で緑に分けてある）。 */
 function artSrcId(card) {
   return card.t === 'C' ? card.id - CURSE_ART_OFFSET : card.id;
@@ -38,7 +45,7 @@ function artInner(card, chars) {
   const a = abbrev(label, chars || 3);
   /* draggable="false" は必須。付けないと、絵のあるカードをドラッグしたときに
      ブラウザ標準の画像ドラッグが始まってしまい、こちらのポインタ操作が途切れる */
-  return `<img ${card.t === 'C' ? 'class="curse-art" ' : ''}src="${ART_DIR}${artSrcId(card)}.png"
+  return `<img ${card.t === 'C' ? 'class="curse-art" ' : ''}src="${ART_DIR}${artSrcId(card)}${ART_EXT}"
      alt="" draggable="false"
      onerror="this.replaceWith(document.createTextNode('${a}'))">`;
 }
