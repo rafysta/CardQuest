@@ -30,6 +30,7 @@ const CQMap = require(path.join(root, 'js/run/map.js'));
 const CQRun = require(path.join(root, 'js/run/run.js'));
 const CQSave = require(path.join(root, 'js/meta/save.js'));
 const CQCollection = require(path.join(root, 'js/meta/collection.js'));
+const CQBackup = require(path.join(root, 'js/meta/backup.js'));
 const CQLore = require(path.join(root, 'js/lore.js'));
 const HOOKS = { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen };
 
@@ -6218,6 +6219,179 @@ t('デッキ編集で扱えるのは本にある実物だけ（デバッグ用�
   eq(CQCollection.moveToDeck(m, 101, 1).ok, true, '本にある1枚は入れられる');
   eq(CQCollection.moveToBook(m, 101, 1).ok, true, '本へ戻せる');
   eq(m.book[101], 1, '戻すと本が元どおりになる（複製ではなく移動）');
+});
+
+/* ================= M7 WP10: 記録画面 ================= */
+section('M7 WP10: 記録画面');
+
+const AREAS_FOR_GOAL = (cleared) => CQAreas.list().map((a) => ({
+  id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, cleared || [])
+}));
+
+t('★「いまの目標」は進行に応じて変わる（世界観§6.6・省略しない1行）', () => {
+  /* ①デッキが未完成 → ②まだ倒していないマスター → ③次のコレクション段階 → ④終わり */
+  const m = { book: { 8: 50 }, deck: {}, known: [8], gold: 0, cleared: [] };
+  eq(CQCollection.nextGoal(m, AREAS_FOR_GOAL([])).key, 'deck', 'まずデッキを組む');
+  CQCollection.moveToDeck(m, 8, 40);
+  const g2 = CQCollection.nextGoal(m, AREAS_FOR_GOAL([]));
+  eq(g2.key, 'area', 'デッキが済んだら、まだ倒していないマスター');
+  eq(g2.id, 'grassland', '解放されているエリアの先頭＝草原');
+  m.cleared = ['grassland'];
+  const g3 = CQCollection.nextGoal(m, AREAS_FOR_GOAL(m.cleared));
+  eq(g3.key, 'area', '草原を倒したら次のエリア');
+  eq(g3.id, 'forest', '草原クリアで解放された森が目標になる');
+  m.cleared = ['grassland', 'forest'];
+  const g4 = CQCollection.nextGoal(m, AREAS_FOR_GOAL(m.cleared));
+  eq(g4.key, 'collection', '行ける場所を全部踏破したら、記憶データ集めが目標になる');
+  eq(g4.n, CQCollection.nextStageNeed(m.known.length), '「あと何種」は段階の残りと一致する');
+  for (let i = 1; i <= 168; i++) if (m.known.indexOf(i) < 0) m.known.push(i);
+  eq(CQCollection.nextGoal(m, AREAS_FOR_GOAL(m.cleared)).key, 'done', '全部やったら「ひとまず終えた」');
+});
+
+t('★目標の1行は必ず文章になる（キーが未知でも空欄にしない）', () => {
+  eq(CQLore.goalLine({ key: 'deck', n: 12 }), 'まず、本のカードをデッキに入れる。あと12枚は入る。');
+  eq(CQLore.goalLine({ key: 'area', area: '草原' }), '草原のマスターを倒す。');
+  eq(CQLore.goalLine({ key: 'collection', n: 5, lv: 2 }),
+    '記憶データを増やす。次の段階（マスターレベル2）まであと5種。');
+  eq(CQLore.goalLine({ key: 'なにか未知のキー' }).length > 0, true, '知らないキーでも1行返る');
+  eq(CQLore.goalLine(null).length > 0, true, 'null でも1行返る');
+});
+
+t('★統計：終わり方の内訳・マスター撃破数・持ち帰った枚数が数えられる', () => {
+  const meta = freshMeta();
+  ['win', 'retire', 'lose', 'win'].forEach((outcome, i) => {
+    const run = CQRun.start(CARD_BY_ID, 'grassland', 40 + i, meta);
+    run.outcome = outcome;
+    if (outcome === 'win') CQRun.gainCard(run, 41);
+    CQRun.settle(run, meta);
+  });
+  eq(meta.stats.win, 2, '踏破して帰還が2回');
+  eq(meta.stats.retire, 1, '引き返しが1回');
+  eq(meta.stats.lose, 1, '倒れたのが1回');
+  eq(meta.stats.boss, 2, 'マスター撃破は勝った回数と同じ');
+  eq(meta.stats.cards, 2, '持ち帰ったカードの累計');
+  eq(meta.day, 4, '通算日数は4日');
+});
+
+t('統計：古いセーブ（statsが無い）を読んでも壊れない', () => {
+  const meta = { book: {}, deck: {}, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  eq(meta.stats, { win: 0, retire: 0, lose: 0, boss: 0, cards: 0 }, '無ければ0で用意される');
+});
+
+t('日誌は新しい順に読める（上限200行は頭から捨てる）', () => {
+  const meta = { book: {}, deck: {}, known: [], gold: 0, cleared: [] };
+  CQRun.pushJournal(meta, '1日目。');
+  CQRun.pushJournal(meta, '2日目。');
+  eq(meta.journal[meta.journal.length - 1], '2日目。', '新しいものが末尾に積まれる');
+  eq(meta.journal.slice().reverse()[0], '2日目。', '画面は逆順に並べて新しい順にする');
+  for (let i = 0; i < 250; i++) CQRun.pushJournal(meta, 'x' + i);
+  eq(meta.journal.length, 200, '上限200行');
+  eq(meta.journal[199], 'x249', '残るのは新しいほう');
+});
+
+/* ================= M7 WP11: バックアップ ================= */
+section('M7 WP11: バックアップ');
+
+/** localStorage のふり（key(i)/length まで持つ。CQBackup が cq_ キーを走査するため）。 */
+function backupStore(init) {
+  const m = Object.assign({}, init || {});
+  const api = {
+    getItem: (k) => (k in m ? m[k] : null),
+    setItem: (k, v) => { m[k] = String(v); },
+    removeItem: (k) => { delete m[k]; },
+    key: (i) => Object.keys(m)[i] || null,
+    _all: () => m
+  };
+  Object.defineProperty(api, 'length', { get: () => Object.keys(m).length });
+  return api;
+}
+
+const SAMPLE_META = JSON.stringify({ book: { 8: 2 }, deck: { 101: 1 }, known: [8, 101], gold: 300 });
+const SAMPLE_RUN = JSON.stringify({ at: 'n1', gold: 120 });
+
+t('★書き出したものを読み込むと同じ状態に戻る', () => {
+  const src = backupStore({ cq_meta: SAMPLE_META, cq_run: SAMPLE_RUN, cq_debug_deck: '[8,8]', other: 'x' });
+  const text = CQBackup.serialize(src);
+  /* 別の端末のつもりで、中身の違う storage に読み込む */
+  const dst = backupStore({ cq_meta: JSON.stringify({ book: {}, deck: {}, known: [], gold: 0 }) });
+  const r = CQBackup.importData(dst, text);
+  eq(r.ok, true, '読み込める');
+  eq(dst.getItem('cq_meta'), SAMPLE_META, 'セーブが書き出したときのまま戻る');
+  eq(dst.getItem('cq_run'), SAMPLE_RUN, '中断中のランも戻る');
+  eq(dst.getItem('cq_debug_deck'), '[8,8]', 'cq_で始まるものは全部戻る');
+});
+
+t('cq_ で始まらないキーには触らない（他のアプリのデータを持ち出さない・壊さない）', () => {
+  const src = backupStore({ cq_meta: SAMPLE_META, lq_confquest: 'よそのゲーム' });
+  const data = CQBackup.exportData(src).data;
+  eq(Object.keys(data), ['cq_meta'], '書き出すのは cq_ だけ');
+  const dst = backupStore({ lq_confquest: 'よそのゲーム' });
+  CQBackup.importData(dst, JSON.stringify(CQBackup.exportData(src)));
+  eq(dst.getItem('lq_confquest'), 'よそのゲーム', '読み込んでも他のアプリのデータは残る');
+});
+
+t('★バックアップに無い cq_ キーは消える（＝書き出したときの状態に戻る）', () => {
+  /* とくに cq_run が残ると、復元したセーブと食い違ったランが動き出してしまう */
+  const text = CQBackup.serialize(backupStore({ cq_meta: SAMPLE_META }));
+  const dst = backupStore({ cq_meta: '{}', cq_run: SAMPLE_RUN });
+  CQBackup.importData(dst, text);
+  eq(dst.getItem('cq_run'), null, 'バックアップに無かった中断中のランは消える');
+  eq(dst.getItem('cq_meta'), SAMPLE_META, 'セーブは戻っている');
+});
+
+t('★壊れたデータを読ませても既存のセーブを壊さない', () => {
+  const bad = [
+    ['', '空ファイル'],
+    ['   ', '空白だけ'],
+    ['これはJSONではない', 'JSONでない'],
+    ['[1,2,3]', '配列'],
+    ['null', 'null'],
+    [JSON.stringify({ app: 'べつのゲーム', data: { cq_meta: SAMPLE_META } }), '別アプリのバックアップ'],
+    [JSON.stringify({ app: 'CardQuest' }), 'dataが無い'],
+    [JSON.stringify({ app: 'CardQuest', data: {} }), 'dataが空'],
+    [JSON.stringify({ app: 'CardQuest', data: { evil_key: '{}' } }), 'cq_以外のキーが混ざる'],
+    [JSON.stringify({ app: 'CardQuest', data: { cq_meta: 123 } }), '値が文字列でない'],
+    [JSON.stringify({ app: 'CardQuest', data: { cq_meta: '{壊れ' } }), '値がJSONとして壊れている'],
+    [JSON.stringify({ app: 'CardQuest', data: { cq_run: SAMPLE_RUN } }), 'cq_metaが無い'],
+    [JSON.stringify({ app: 'CardQuest', data: { cq_meta: '{"book":{}}' } }), 'セーブの形が違う']
+  ];
+  bad.forEach(([text, label]) => {
+    const dst = backupStore({ cq_meta: SAMPLE_META, cq_run: SAMPLE_RUN });
+    const r = CQBackup.importData(dst, text);
+    eq(r.ok, false, label + '：読み込みは失敗する');
+    eq(typeof r.reason === 'string' && r.reason.length > 0, true, label + '：理由が返る');
+    eq(dst.getItem('cq_meta'), SAMPLE_META, label + '：既存のセーブは無傷');
+    eq(dst.getItem('cq_run'), SAMPLE_RUN, label + '：中断中のランも無傷');
+  });
+});
+
+t('書き込みに失敗したら元のセーブに巻き戻す（storageが満杯のときなど）', () => {
+  const dst = backupStore({ cq_meta: SAMPLE_META, cq_run: SAMPLE_RUN });
+  const realSet = dst.setItem;
+  let calls = 0;
+  dst.setItem = function (k, v) {
+    calls += 1;
+    if (calls === 1 && k === 'cq_meta') throw new Error('QuotaExceeded');
+    return realSet(k, v);
+  };
+  const text = CQBackup.serialize(backupStore({ cq_meta: '{"book":{},"deck":{},"known":[1],"gold":9}' }));
+  const r = CQBackup.importData(dst, text);
+  dst.setItem = realSet;
+  eq(r.ok, false, '失敗が返る');
+  eq(dst.getItem('cq_meta'), SAMPLE_META, '元のセーブが戻っている');
+  eq(dst.getItem('cq_run'), SAMPLE_RUN, '消しかけた中断中のランも戻っている');
+});
+
+t('書き出したファイルの中身：日時と版が入り、値は保存されている文字列そのまま', () => {
+  const src = backupStore({ cq_meta: SAMPLE_META });
+  const obj = CQBackup.exportData(src, { version: '0.17.0', now: '2026-09-02T12:00:00.000Z' });
+  eq(obj.app, 'CardQuest', 'アプリ名が入る（他のゲームのファイルと区別できる）');
+  eq(obj.version, '0.17.0', '書き出した版');
+  eq(obj.savedAt, '2026-09-02T12:00:00.000Z', '書き出した日時');
+  eq(obj.data.cq_meta, SAMPLE_META, '値は文字列のまま（読み直して組み替えない）');
+  eq(/^cardquest-backup-\d{8}-\d{4}\.json$/.test(CQBackup.fileName(new Date())), true,
+    'ファイル名に日付が入る');
 });
 
 /* ================= 結果 ================= */

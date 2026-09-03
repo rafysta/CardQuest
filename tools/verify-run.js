@@ -316,6 +316,77 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('デッキ編集から「ホームへ戻る」でホームに戻れる', !!(await page.$('.home-scene')));
   if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
   ok('デッキがそろうとホームの警告が消える', (await page.$$('.home-tile-warn')).length === 0);
+
+  // --- 1d) ホームの「記録」（M7 WP10） ---
+  await page.click('[data-act="home-record"]');
+  await wait(() => page.$('.rec-goal'));
+  ok('ホームの「記録」が開く（M7 WP10）',
+    (await page.$eval('.cg-title', (e) => e.textContent.trim())) === '記録');
+  ok('★トップに「いまの目標」が必ず1行出る（世界観§6.6）',
+    (await page.$eval('.rec-goal-text', (e) => e.textContent.trim())).length > 0,
+    await page.$eval('.rec-goal-text', (e) => e.textContent.trim()));
+  ok('称号の一覧が出る（未獲得も名前を見せる＝次の目標になる）', (await page.$$('.rec-title')).length === 4,
+    String((await page.$$('.rec-title')).length));
+  ok('通算日数・統計が出る', (await page.$$('.rec-rows .rec-row')).length > 0);
+  ok('日誌の欄がある', !!(await page.$('.rec-journal-list')));
+  await shot('record');
+  /* 目標は進行に応じて変わる：草原を踏破済みにすると、次は森が目標になる */
+  const goals = await page.evaluate(() => {
+    const areas = (cleared) => CQAreas.list().map((a) => ({
+      id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, cleared)
+    }));
+    const before = CQLore.goalLine(CQCollection.nextGoal(RUI.meta, areas(RUI.meta.cleared || [])));
+    const keep = (RUI.meta.cleared || []).slice();
+    RUI.meta.cleared = ['grassland'];
+    runRender();
+    const after = document.querySelector('.rec-goal-text').textContent.trim();
+    RUI.meta.cleared = keep;
+    runRender();
+    return { before, after };
+  });
+  ok('★目標の1行が進行に応じて変わる', goals.before !== goals.after,
+    `${goals.before} → ${goals.after}`);
+  await page.click('[data-act="record-leave"]');
+  await wait(() => page.$('.home-scene'));
+  ok('記録から「ホームへ戻る」でホームに戻れる', !!(await page.$('.home-scene')));
+  if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
+
+  // --- 1e) ホームの「設定」＝バックアップ（M7 WP11） ---
+  await page.click('[data-act="home-settings"]');
+  await wait(() => page.$('.set-wrap'));
+  ok('ホームの「設定」が開く（M7 WP11）',
+    (await page.$eval('.cg-title', (e) => e.textContent.trim())) === '設定');
+  ok('書き出し・読み込み・最初からやり直すの3つがある',
+    !!(await page.$('[data-act="backup-export"]')) && !!(await page.$('input[data-file="backup"]'))
+    && !!(await page.$('[data-act="reset-progress"]')));
+  await shot('settings');
+  /* 実際に書き出して、状態を変えてから読み戻す（＝受け入れ基準の往復） */
+  const trip = await page.evaluate(() => {
+    const text = CQBackup.serialize(localStorage, { version: 'test' });
+    const before = localStorage.getItem('cq_meta');
+    /* セーブを別物に書き換える（Ｇと記憶データを壊す） */
+    const broken = JSON.parse(before);
+    broken.gold = 1; broken.known = [];
+    localStorage.setItem('cq_meta', JSON.stringify(broken));
+    localStorage.setItem('cq_junk_extra', '{"x":1}');
+    const r = CQBackup.importData(localStorage, text);
+    return { ok: r.ok, same: localStorage.getItem('cq_meta') === before,
+      junkGone: localStorage.getItem('cq_junk_extra') === null };
+  });
+  ok('★書き出したものを読み込むと同じ状態に戻る', trip.ok && trip.same, JSON.stringify(trip));
+  ok('★バックアップに無かったデータは消える（食い違いを残さない）', trip.junkGone);
+  /* 壊れたファイルを読ませても既存のセーブが無傷であること */
+  const guard = await page.evaluate(() => {
+    const before = localStorage.getItem('cq_meta');
+    const r = CQBackup.importData(localStorage, 'これは壊れたファイル');
+    return { ok: r.ok, reason: r.reason, intact: localStorage.getItem('cq_meta') === before };
+  });
+  ok('★壊れたデータを読ませても既存のセーブを壊さない', guard.ok === false && guard.intact,
+    JSON.stringify(guard));
+  await page.click('[data-act="settings-leave"]');
+  await wait(() => page.$('.home-scene'));
+  ok('設定から「ホームへ戻る」でホームに戻れる', !!(await page.$('.home-scene')));
+  if (await page.$('[data-act="home-guide-skip"]')) await page.click('[data-act="home-guide-skip"]');
   await passHomeToAreaSelect();
   const tiles = await page.$$('.area-tile');
   ok('エリアが2つ出る（草原・森）', tiles.length === 2, String(tiles.length));

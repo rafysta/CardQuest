@@ -161,6 +161,17 @@
       ]
     },
 
+    /* 記録画面のトップに出す「いまの目標」（世界観§6.6・M7 WP10）。
+     * **原作がクリアされなかった最大の原因への対策**なので、必ず1行出す（省略しない）。
+     * どのキーを出すかは CQCollection.nextGoal() が決め、ここは文面だけを持つ
+     * （エンジンを台本に依存させない分担）。{n}{area}{lv} は goalLine() が差し替える。 */
+    goals: {
+      deck:       'まず、本のカードをデッキに入れる。あと{n}枚は入る。',
+      area:       '{area}のマスターを倒す。',
+      collection: '記憶データを増やす。次の段階（マスターレベル{lv}）まであと{n}種。',
+      done:       'この地でやることは、ひとまず終えた。次の土地の話は、まだ聞こえてこない。'
+    },
+
     /* リザルト画面のアンバーの一言（台本§7.1・M6.6 WP11）。終わり方ごとに1つだけ出す。
      * ゲームオーバーだけ初回と2回目以降で分ける——台本§7.1が初回に §5 `gameOverFirst`
      * （「記録は失われない」＝原作最大のストレスが無いことの説明）を出すよう指定しており、
@@ -218,7 +229,18 @@
     });
   }
 
-  const api = { LORE, pickOne, fill, journalLine };
+  /** 「いまの目標」の1行を組み立てる（世界観§6.6・M7 WP10）。
+   * goal は CQCollection.nextGoal() の返り値（{key, n, area, lv}）。
+   * 知らないキーが来ても空文字ではなく無難な1行を返す——**この行は必ず出す**決まりなので、
+   * 目標の種類が増えたときに画面が空欄になるほうが害が大きい。 */
+  function goalLine(goal) {
+    const tpl = (goal && LORE.goals[goal.key]) || LORE.goals.done;
+    return tpl.replace(/\{(\w+)\}/g, function (m, k) {
+      return Object.prototype.hasOwnProperty.call(goal || {}, k) ? String(goal[k]) : m;
+    });
+  }
+
+  const api = { LORE, pickOne, fill, journalLine, goalLine };
   global.CQLore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

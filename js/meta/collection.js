@@ -48,6 +48,9 @@
     if (!meta.titles) meta.titles = [];       /* 獲得済みの称号キー（M6.6 WP11） */
     if (!meta.journal) meta.journal = [];     /* 日誌の行（新しいものを末尾に足す。M6.6 WP11） */
     if (typeof meta.day !== 'number') meta.day = 0;  /* 通算日数＝終えたランの数（同上） */
+    /* M7 WP10：記録画面の統計。終わり方の内訳とボス撃破数を数える（古いセーブには無いので
+     * ここで用意する＝それ以前の記録は0から数え直しになるが、壊れはしない）。 */
+    if (!meta.stats) meta.stats = { win: 0, retire: 0, lose: 0, boss: 0, cards: 0 };
     return meta;
   }
 
@@ -159,6 +162,35 @@
     if (meta.book[id] === 0) delete meta.book[id];
     meta.gold = (meta.gold || 0) + (price || 0);
     return { ok: true, gold: price || 0 };
+  }
+
+  /* ==== 記録画面の「いまの目標」（M7 WP10・世界観§6.6） =======================
+   *
+   * **原作がクリアされなかった最大の原因への対策**（作業パッケージWP10「省略しないこと」）。
+   * 記録画面のトップに常に1行、いま何を目指しているかを出す。
+   *
+   * ここが返すのは**キーと数字だけ**で、文面は js/lore.js（LORE.goals）が持つ——
+   * エンジンを台本に依存させない、というM6.6 WP11で決めた分担をそのまま踏襲する。
+   *
+   *   areas … [{id, name, unlocked}]（呼び出し側が js/run/areas.js から作って渡す）。
+   *           collection.js が areas.js を直接読まないのは、読み込み順に縛りを作らないため。
+   *
+   * 優先順位は「いますぐ手を動かせること」から並べる：
+   *   ①デッキが未完成（出発できない）→ ②まだ倒していないマスター（解放順）→
+   *   ③次のコレクション段階 → ④全部やった（次の版待ち）
+   */
+  function nextGoal(meta, areas) {
+    ensure(meta);
+    const dep = canDepart(meta);
+    if (!dep.ok) return { key: 'deck', n: dep.fillable };
+    const cleared = meta.cleared || [];
+    const todo = (areas || []).filter(function (a) {
+      return a.unlocked && cleared.indexOf(a.id) < 0;
+    });
+    if (todo.length) return { key: 'area', area: todo[0].name, id: todo[0].id };
+    const need = nextStageNeed((meta.known || []).length);
+    if (need > 0) return { key: 'collection', n: need, lv: masterLevelOf(meta) + 1 };
+    return { key: 'done' };
   }
 
   /* ==== コレクション段階・マスターレベル・ショップ母集団（M7 WP2） ==============
@@ -400,7 +432,7 @@
   const api = {
     DECK_MAX, KIND_MAX, PIG, BLANK,
     countsTotal, canAddToDeck, ensure, registerKnown,
-    deckTotal, blankCount, deckFillable, canDepart, moveToDeck, moveToBook, addCard, sellFromDeck, sellFromBook,
+    deckTotal, blankCount, deckFillable, canDepart, nextGoal, moveToDeck, moveToBook, addCard, sellFromDeck, sellFromBook,
     /* M7 WP2 */
     STAGE_STEPS, STAGE_MAX, LP_BASE, LP_CAP, RARE_THRESHOLD_HOME,
     masterLevel, stage, masterLevelOf, stageOf, nextStageNeed,

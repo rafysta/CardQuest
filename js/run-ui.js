@@ -72,6 +72,8 @@ const RUI = {
   shopTab: 'buy', shopBulk: false, bulkExclude: [],
   /* デッキ編集（M7 WP9）を初めて開いたときのアンバーの説明（台本§5-3・一度きり）。 */
   deckGuide: null, deckGuideStep: 0,
+  /* 設定画面（M7 WP11）のバックアップの結果表示（{ok, msg}）。保存はしない。 */
+  backupState: null,
   /* タブごとのスクロール位置（2026-09-02 本人指摘：カード選択で画面を描き直すたびに
    * スクロールが0へ戻っていた。tab名をキーに最後の位置を覚えておく）。 */
   colScroll: {}
@@ -240,8 +242,8 @@ const HOME_FACILITIES = [
   { id: 'shop', label: 'ログショップ', act: 'home-shop', ready: true },
   { id: 'collection', label: 'コレクション', act: 'home-collection', ready: true },
   { id: 'deck', label: 'デッキ編集', act: 'home-deck', ready: true },
-  { id: 'record', label: '記録', ready: false },
-  { id: 'settings', label: '設定', ready: false }
+  { id: 'record', label: '記録', act: 'home-record', ready: true },
+  { id: 'settings', label: '設定', act: 'home-settings', ready: true }
 ];
 
 /** ホームへ入る（または戻る）。節目（マスターレベル上昇・エリア解放）を確認し、
@@ -1721,6 +1723,199 @@ function renderCollection() {
   keepScrollRestore('collection:' + tab);
 }
 
+/* ================= 設定画面（ホーム・M7 WP11） =================
+ *
+ * 『作業パッケージ』WP11＝**バックアップ（書き出し／読み込み）**の置き場所。
+ * ゲーム仕様書§9「機種変更・事故対策」。あわせて、これまでエリア選択の隅にあった
+ * 「最初からやり直す」（M6.6 WP2の開発機能）もここに集約した。
+ *
+ * ★**読み込みは既存のセーブを壊さない**（受け入れ基準）。検査はすべて
+ * `CQBackup.validate()`（storage に触らない）で済ませ、通ったときだけ書き込む。
+ * 読み込んだあとは必ずリロードする——画面が持っている RUI.meta・中断中のランを
+ * 中途半端に作り替えるより、最初から読み直すほうが確実。 */
+
+function renderSettings() {
+  const meta = RUI.meta;
+  const st = RUI.backupState || {};
+  const keys = CQBackup.collectKeys(RUN_STORAGE);
+  runRoot().innerHTML = `
+    <div class="cg-head">
+      <div class="cg-title">設定</div>
+      <div class="cg-stats"><span>通算 <b>${meta.day || 0}</b>日目</span></div>
+      <button class="btn ok cg-done" data-act="settings-leave">ホームへ戻る</button>
+    </div>
+    <div class="set-wrap">
+      <section class="set-box">
+        <h4>バックアップ</h4>
+        <p class="set-note">セーブを1つのファイルに書き出します。機種を変えるとき、
+          データが消えたときに備えて、ときどき書き出しておくと安心です。</p>
+        <p class="set-note">いま保存されているもの：${keys.length}件（${esc(keys.join('・'))}）</p>
+        <div class="set-acts">
+          <button class="btn ok" data-act="backup-export">バックアップを書き出す</button>
+          <label class="btn ng set-file">バックアップを読み込む
+            <input type="file" accept="application/json,.json" data-file="backup" hidden>
+          </label>
+        </div>
+        ${st.msg ? `<p class="set-msg ${st.ok ? 'ok' : 'ng'}">${esc(st.msg)}</p>` : ''}
+        <p class="set-note">読み込むと、いまのセーブは<b>書き出したときの状態に置き換わります</b>
+          （中断中の探索も含めて丸ごと戻ります）。壊れたファイルを読ませても、いまのセーブは
+          そのままです。</p>
+      </section>
+      <section class="set-box">
+        <h4>最初からやり直す</h4>
+        <p class="set-note">すべての記録（本・デッキ・記憶データ・称号・日誌）を消して、
+          目覚めの場面から始め直します。<b>元には戻せません。</b>
+          心配なら、先にバックアップを書き出しておいてください。</p>
+        <div class="set-acts">
+          <button class="btn ng" data-act="reset-progress">最初からやり直す</button>
+        </div>
+      </section>
+    </div>`;
+}
+
+/** バックアップの書き出し（ファイルとして保存させる）。
+ * Blob → 一時的な <a download> を押す、という素直なやり方（confquest の backup.js と同じ）。 */
+function backupExport() {
+  try {
+    const text = CQBackup.serialize(RUN_STORAGE, { version: (typeof APP_VERSION !== 'undefined') ? APP_VERSION : '' });
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = CQBackup.fileName();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    RUI.backupState = { ok: true, msg: '書き出しました：' + CQBackup.fileName() };
+  } catch (e) {
+    RUI.backupState = { ok: false, msg: '書き出せませんでした。' };
+  }
+  runRender();
+}
+
+/** バックアップの読み込み。検査 → 確認 → 書き込み → リロード。 */
+function backupImport(text) {
+  const chk = CQBackup.validate(text);
+  if (!chk.ok) {
+    RUI.backupState = { ok: false, msg: chk.reason + '（いまのセーブはそのままです）' };
+    return runRender();
+  }
+  const when = chk.savedAt ? chk.savedAt.slice(0, 16).replace('T', ' ') : '日時不明';
+  showConfirm(
+    when + ' に書き出したバックアップを読み込みます。いまのセーブは置き換わります。よろしいですか？',
+    function () {
+      const r = CQBackup.importData(RUN_STORAGE, text);
+      if (!r.ok) {
+        RUI.backupState = { ok: false, msg: r.reason };
+        return runRender();
+      }
+      location.reload();
+    },
+    '読み込む'
+  );
+}
+
+/* ================= 記録画面（ホーム・M7 WP10） =================
+ *
+ * 『作業パッケージ』WP10。ホームの「記録」施設。
+ *
+ * ★**トップの「いまの目標」1行は必ず出す**（世界観§6.6）。原作がクリアされなかった
+ * 最大の原因（何をすればいいのか分からなくなる）への対策として名指しで指定されている項目で、
+ * 作業パッケージにも「省略しないこと」と書いてある。何を出すかは
+ * `CQCollection.nextGoal()`（進行から決める）、文面は `CQLore.goalLine()`（台本）が持つ。
+ *
+ * 左に実績・称号・エリア・統計、右に日誌（新しい順）。日誌は `cq_meta.journal` に
+ * M6.6 WP11 から溜まっているもので、読み返す画面がここで初めて付いた。 */
+
+/** 鍵の総数（世界観§5・七罪人の封印）。鍵そのものは M8 の実装なので、
+ * ここでは「これから何を集めるのか」を見せるためだけに枠を出す。 */
+const RECORD_KEYS_TOTAL = 7;
+
+function recordGoalHTML(meta) {
+  const areas = CQAreas.list().map(function (a) {
+    return { id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, meta.cleared || []) };
+  });
+  const goal = CQCollection.nextGoal(meta, areas);
+  return `<div class="rec-goal">
+      <span class="rec-goal-cap">いまの目標</span>
+      <span class="rec-goal-text">${esc(CQLore.goalLine(goal))}</span>
+    </div>`;
+}
+
+/* 称号の名前は**未獲得でも伏せない**。この画面は「次に何を目指すか」を見せるためのもの
+ * （世界観§6.6）なので、名前を隠すと目標が1つ減ってしまう。獲得済みは★＋明るい色で区別する。 */
+function recordTitlesHTML(meta) {
+  const had = meta.titles || [];
+  return CQRun.TITLES.map(function (t) {
+    const got = had.indexOf(t.key) >= 0;
+    return `<div class="rec-title ${got ? 'on' : ''}">
+        <span class="rec-title-mark">${got ? '★' : '☆'}</span>
+        <span class="rec-title-name">${esc(t.name)}</span>
+        <span class="rec-title-desc">${esc(t.desc)}</span>
+      </div>`;
+  }).join('');
+}
+
+function recordAreasHTML(meta) {
+  const cleared = meta.cleared || [];
+  return CQAreas.list().map(function (a) {
+    const unlocked = CQAreas.isUnlocked(a.id, cleared);
+    const done = cleared.indexOf(a.id) >= 0;
+    return `<div class="rec-row">
+        <span>${esc(a.name)}</span>
+        <b class="${done ? 'ok' : ''}">${done ? '踏破' : (unlocked ? '未踏破' : '未解放')}</b>
+      </div>`;
+  }).join('');
+}
+
+function renderRecord() {
+  const meta = RUI.meta;
+  const st = meta.stats || {};
+  const known = (meta.known || []).length;
+  /* 日誌は**新しい順**（受け入れ基準）。溜まった順に push しているので逆から並べる。 */
+  const journal = (meta.journal || []).slice().reverse();
+  const journalHTML = journal.length
+    ? journal.map(function (line) { return `<li>${esc(line)}</li>`; }).join('')
+    : '<li class="rec-empty">まだ何も書かれていない。ひとつ探索を終えると、ここに残る。</li>';
+  runRoot().innerHTML = `
+    <div class="cg-head">
+      <div class="cg-title">記録</div>
+      <div class="cg-stats">
+        <span>通算 <b>${meta.day || 0}</b>日目</span>
+        <span>記憶データ <b>${known}</b>／${COLLECTION_TOTAL}</span>
+        <span>マスターレベル <b>${CQCollection.masterLevelOf(meta)}</b>／${CQCollection.STAGE_MAX}</span>
+      </div>
+      <button class="btn ok cg-done" data-act="record-leave">ホームへ戻る</button>
+    </div>
+    ${recordGoalHTML(meta)}
+    <div class="rec-wrap">
+      <div class="rec-col">
+        <h4>称号</h4>
+        <div class="rec-titles">${recordTitlesHTML(meta)}</div>
+        <h4>踏破</h4>
+        <div class="rec-rows">
+          ${recordAreasHTML(meta)}
+          <div class="rec-row"><span>鍵</span><b>${(meta.keys || []).length}／${RECORD_KEYS_TOTAL}</b></div>
+          <p class="cg-note rec-note">鍵は、この先の土地で見つかる。</p>
+        </div>
+        <h4>統計</h4>
+        <div class="rec-rows">
+          <div class="rec-row"><span>探索した日数</span><b>${meta.day || 0}</b></div>
+          <div class="rec-row"><span>マスター撃破</span><b>${st.boss || 0}</b></div>
+          <div class="rec-row"><span>踏破して帰還</span><b>${st.win || 0}</b></div>
+          <div class="rec-row"><span>引き返した</span><b>${st.retire || 0}</b></div>
+          <div class="rec-row"><span>倒れた</span><b>${st.lose || 0}</b></div>
+          <div class="rec-row"><span>持ち帰ったカード</span><b>${st.cards || 0}枚</b></div>
+          <div class="rec-row"><span>所持Ｇ</span><b>${meta.gold || 0}</b></div>
+        </div>
+      </div>
+      <div class="rec-col rec-journal">
+        <h4>日誌<span class="rec-n">${journal.length}行</span></h4>
+        <ul class="rec-journal-list">${journalHTML}</ul>
+      </div>
+    </div>`;
+}
+
 /* ================= ログショップ（ホーム・M7 WP7） =================
  *
  * 『作業パッケージ』WP7 と『経済追補』§4-2・§4-2b の画面側。3つの機能が1画面に同居する：
@@ -2119,6 +2314,8 @@ function runRender() {
   else if (RUI.view === 'collection') renderCollection();
   else if (RUI.view === 'logshop') renderLogShop();
   else if (RUI.view === 'deckedit') renderDeckEdit();
+  else if (RUI.view === 'record') renderRecord();
+  else if (RUI.view === 'settings') renderSettings();
   else if (RUI.view === 'result') renderResult();
 }
 
@@ -2237,6 +2434,23 @@ function runAct(act, id, idx) {
       RUI.colTab = id;
       return runRender();
     case 'collection-leave':
+      return enterHome();
+
+    /* ---- 設定・バックアップ（M7 WP11） ---- */
+    case 'home-settings':
+      RUI.view = 'settings';
+      RUI.backupState = null;
+      return runRender();
+    case 'settings-leave':
+      return enterHome();
+    case 'backup-export':
+      return backupExport();
+
+    /* ---- 記録画面（M7 WP10） ---- */
+    case 'home-record':
+      RUI.view = 'record';
+      return runRender();
+    case 'record-leave':
       return enterHome();
 
     /* ---- デッキ編集（M7 WP9） ---- */
@@ -2538,6 +2752,22 @@ function bootRunUI() {
     runAct(t.dataset.act, t.dataset.id, t.dataset.idx);
   });
   bindCarryFilters(el);
+  /* バックアップの読み込み（M7 WP11）。<input type="file"> は click ではなく change なので、
+   * data-act の委譲とは別に張る（絞り込み欄と同じ理由）。同じファイルを選び直せるよう、
+   * 読んだあとに value を空にしておく。 */
+  el.addEventListener('change', function (ev) {
+    const inp = ev.target.closest('input[data-file="backup"]');
+    if (!inp || !inp.files || !inp.files[0]) return;
+    const file = inp.files[0];
+    const reader = new FileReader();
+    reader.onload = function () { backupImport(String(reader.result || '')); };
+    reader.onerror = function () {
+      RUI.backupState = { ok: false, msg: 'ファイルを読めませんでした。' };
+      runRender();
+    };
+    reader.readAsText(file);
+    inp.value = '';
+  });
   runInit();
 }
 

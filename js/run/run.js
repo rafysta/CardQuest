@@ -647,6 +647,13 @@
     const titles = earnedTitles(run, meta);
     titles.forEach(function (t) { meta.titles.push(t.key); });
     meta.day = (meta.day || 0) + 1;
+    /* M7 WP10：記録画面の統計。終わり方の内訳・ボス撃破数・累計の獲得枚数を数える。
+     * `day`（通算日数）と重複しないよう、ここでは内訳だけを持つ。 */
+    const st = meta.stats;
+    if (run.outcome === 'win') { st.win += 1; st.boss += 1; }
+    else if (run.outcome === 'retire') st.retire += 1;
+    else st.lose += 1;
+    st.cards += (run.gainedCards || []).length;
     if (run.outcome === 'win' && meta.cleared.indexOf(run.areaId) < 0) meta.cleared.push(run.areaId);
     run.settled = { gold: gold, titles: titles, day: meta.day };
     return meta;

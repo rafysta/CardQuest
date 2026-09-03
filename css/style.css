@@ -1701,6 +1701,51 @@ td.nm{font-weight:800}
 .big.col-unknown .col-unknown-mark{font-size:64px}
 .big.col-unknown .bn{color:var(--dim)}
 
+/* ---- 設定画面・バックアップ（M7 WP11） ---- */
+.set-wrap{display:flex;flex-direction:column;gap:14px;overflow-y:auto}
+.set-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.set-box h4{margin:0 0 8px;font-size:15px}
+.set-note{color:var(--dim);font-size:13px;line-height:1.6;margin:0 0 8px}
+.set-note b{color:var(--txt)}
+.set-acts{display:flex;gap:12px;max-width:620px;margin-top:10px}
+.set-acts .btn{height:52px;font-size:16px}
+/* <label> をボタンに見せる（中の input type=file は hidden） */
+.set-file{display:flex;align-items:center;justify-content:center;cursor:pointer}
+.set-msg{margin:10px 0 0;font-size:14px;font-weight:700}
+.set-msg.ok{color:var(--accent)}
+.set-msg.ng{color:#ff8f8f}
+
+/* ---- 記録画面（M7 WP10） ----
+ * トップの「いまの目標」は、この画面でいちばん目立つ要素にする（世界観§6.6）。 */
+.rec-goal{display:flex;align-items:center;gap:12px;margin:0 0 10px;padding:10px 14px;
+  border:1px solid var(--accent);border-radius:10px;background:#1c2233}
+.rec-goal-cap{flex:0 0 auto;font-size:12px;font-weight:800;color:#241c00;background:var(--accent);
+  border-radius:6px;padding:3px 8px}
+.rec-goal-text{font-size:17px;font-weight:700}
+.rec-wrap{display:flex;gap:14px;flex:1;min-height:0}
+.rec-col{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel);
+  border:1px solid var(--line);border-radius:12px;padding:12px 14px;overflow-y:auto}
+.rec-col h4{margin:10px 0 6px;font-size:14px;color:var(--dim)}
+.rec-col h4:first-child{margin-top:0}
+.rec-titles{display:flex;flex-direction:column;gap:4px}
+.rec-title{display:grid;grid-template-columns:20px 130px 1fr;align-items:baseline;gap:6px;
+  font-size:13px;color:var(--dim)}
+.rec-title.on{color:var(--txt)}
+.rec-title.on .rec-title-mark{color:var(--accent)}
+.rec-title-name{font-weight:800}
+.rec-title-desc{font-size:12px;color:var(--dim)}
+.rec-rows{display:flex;flex-direction:column}
+.rec-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;
+  border-bottom:1px dashed var(--line);font-size:14px}
+.rec-row b{color:#fff}
+.rec-row b.ok{color:var(--accent)}
+.rec-note{text-align:left;margin-top:6px}
+.rec-journal-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.rec-journal-list li{font-size:14px;line-height:1.5;padding:6px 10px;border-radius:8px;
+  background:#141b2c}
+.rec-journal-list li.rec-empty{color:var(--dim);background:none}
+.rec-n{margin-left:8px;font-size:12px;color:var(--dim)}
+
 /* ---- 買い取り所（M7 WP8） ---- */
 .buyout-note{text-align:left;margin:0 0 10px;padding:8px 12px;border:1px solid var(--line);
   border-radius:10px;background:#141b2c;line-height:1.5}

@@ -24,6 +24,7 @@ const APP_SHELL = [
   './js/run/run.js',
   './js/meta/collection.js',
   './js/meta/save.js',
+  './js/meta/backup.js',
   './js/lore.js',
   './js/board-spec.js',
   './js/boot.js',
