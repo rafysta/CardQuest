@@ -104,16 +104,17 @@ const CHEST_STAT = { runs: 0, opened: 0, cardGiven: 0, zeroChestRuns: 0 };
 
 /* M7 WP8：買い取り所でレンタルを買い取った回数と、そのランでレンタルを持っていた率。
  * 経済追補§4-5の「空振り（欲しい物が無い／そもそもレンタルが0枚）」がどれくらい起きるかを見る。 */
-const BUYOUT_STAT = { runs: 0, bought: 0, gold: 0, runsWithRental: 0, visits: 0, attempts: 0, failedGold: 0 };
+const BUYOUT_STAT = { runs: 0, bought: 0, gold: 0, runsWithRental: 0, visits: 0, runsVisited: 0, attempts: 0, failedGold: 0 };
 
 /* M7 WP4：ショップでの購入試行のうち、Ｇ不足で失敗した回数（品揃えは見えているのに買えない）。
  * WP1実測の「ショップ支出7Ｇ/ラン」が低すぎる原因（立寄り率が低いだけなのか、
  * 立ち寄っても買えていないのか）を切り分けるための計測。 */
-const SHOPBUY_STAT = { attempts: 0, failedGold: 0 };
+const SHOPBUY_STAT = { attempts: 0, failedGold: 0, bought: 0 };
 
 /* キャリア（1本のmeta＝草原→森）通算のダブり枚数：各カードについて所持数（本＋デッキ）が
  * 1枚を超えた分の合計。経済追補§4-2bの一括換金がどれだけの量を処理することになるかの目安。 */
-const DUPE_STAT = { careers: 0, total: 0 };
+const GOLD_STAT = { careers: 0, endGold: 0 };
+const DUPE_STAT = { careers: 0, total: 0, bulkG: 0, bulkSheets: 0 };
 function careerDupeCount(meta) {
   const ids = {};
   Object.keys(meta.book || {}).forEach((k) => { ids[k] = true; });
@@ -305,12 +306,18 @@ function playRun(areaId, seed, meta, rng) {
       } else if (n.type === 'shop') {
         shopVisited = true;
         if (n.stock.length && rng.next() < 0.6) {
-          const id = n.stock[rng.int(0, n.stock.length - 1)];
+          /* M7 WP12：**いちばん安いものを買う**ように変えた。WP4までは品揃えから
+           * ランダムに1点選んでいたため、Ｇ不足の失敗率（85.8%）が「ＡＩの買い方が下手」を
+           * 測っているだけになっていた（§5-3の但し書き）。本物のプレイヤーは買える物から
+           * 選ぶので、こちらのほうが「経済が回るか」の実像に近い。 */
+          const cheapest = n.stock.slice().sort((a, b) =>
+            CQRun.shopPrice(CARD_BY_ID, a) - CQRun.shopPrice(CARD_BY_ID, b))[0];
           const beforeG = run.gold;
-          const r = CQRun.shopBuy(run, CARD_BY_ID, n, id);
+          const r = CQRun.shopBuy(run, CARD_BY_ID, n, cheapest);
           trackGoldDelta(beforeG, run.gold);
           SHOPBUY_STAT.attempts++;
           if (!r.ok) SHOPBUY_STAT.failedGold++;
+          else SHOPBUY_STAT.bought++;
         }
         if (run.lp < run.maxLp && rng.next() < 0.4) {
           const beforeG = run.gold;
@@ -327,10 +334,13 @@ function playRun(areaId, seed, meta, rng) {
         buyoutVisits += 1;
         /* M7 WP8：換金所は買い取り所になった（売却はホームのログショップへ移動）。
          * 借りているレンタルを半々で買い取る＝買い取りの経路も毎回のファズで通す。 */
-        if ((run.rentals || []).length && rng.next() < 0.5) {
+        if ((run.rentals || []).length) {
+          /* M7 WP12：ショップと同じく**買えるうちのいちばん安いもの**を狙う
+           * （借りている最大2枚から選ぶだけなので、これが素直な「賢い買い方」）。 */
+          const order = run.rentals.map((id, i) => ({ i: i, price: CQRun.buyoutPrice(CARD_BY_ID, id, run.areaId) }))
+            .sort((a, b) => a.price - b.price);
           const beforeG = run.gold;
-          const idx = rng.int(0, run.rentals.length - 1);
-          const r = CQRun.buyout(run, CARD_BY_ID, idx);
+          const r = CQRun.buyout(run, CARD_BY_ID, order[0].i);
           BUYOUT_STAT.attempts += 1;
           if (r.ok) { boughtCards += 1; BUYOUT_STAT.gold += r.price; }
           else if (r.reason === 'Ｇが足りません') BUYOUT_STAT.failedGold += 1;
@@ -378,6 +388,7 @@ function playRun(areaId, seed, meta, rng) {
   BUYOUT_STAT.runs++;
   BUYOUT_STAT.bought += boughtCards;
   BUYOUT_STAT.visits += buyoutVisits;
+  if (buyoutVisits > 0) BUYOUT_STAT.runsVisited++;      /* M7 WP12：立ち寄れた率（ラン単位） */
   if (rentalCountAtStart > 0) BUYOUT_STAT.runsWithRental++;
   /* M6.6 WP11：清算で「今日の獲得ぶん」が終わり方に応じて削られる（リタイヤ▲50%・
    * ゲームオーバー▲75%）。ランの大半は敗北なので、ここが経済に一番効く数字になった。
@@ -406,6 +417,10 @@ function playRun(areaId, seed, meta, rng) {
 }
 
 const trials = parseInt(process.argv[2], 10) || 300;
+/* M7 WP12：1キャリアで遊ぶラン数（既定2＝草原→森。WP1〜WP4の基準値と同じ条件）。
+ * 3以上を渡すと、解放済みのいちばん奥のエリアを繰り返し遊ぶ**長いキャリア**になる
+ * ——Ｇは cq_meta に積み上がるので、「何ランぶん貯めれば買い物が成立するか」を見るのに使う。 */
+const careerRuns = Math.max(2, parseInt(process.argv[3], 10) || 2);
 const stat = { win: 0, lose: 0, retire: 0, battles: 0, turns: 0, forestRuns: 0, errors: [] };
 for (let seed = 1; seed <= trials; seed++) {
   try {
@@ -417,17 +432,26 @@ for (let seed = 1; seed <= trials; seed++) {
     stat[res.run.outcome] = (stat[res.run.outcome] || 0) + 1;
     stat.battles += res.battles; stat.turns += res.totalTurns;
     CQSave.saveMeta(storage, meta);
-    /* キャリア2本目：森が解放されていればそちらも試す（エリア解放・引き継ぎデータの経路を踏む） */
-    if (CQAreas.isUnlocked('forest', meta.cleared)) {
-      stat.forestRuns++;
-      res = playRun('forest', seed * 2 + 1, meta, rng);
+    /* キャリア2本目以降：森が解放されていればそちらを、まだなら草原をもう一度。
+     * （2本目までは従来どおり＝WP1〜WP4の基準値と同じ条件。3本目以降は WP12 の長期計測用） */
+    for (let r = 1; r < careerRuns; r++) {
+      const areaId = CQAreas.isUnlocked('forest', meta.cleared) ? 'forest' : 'grassland';
+      if (areaId === 'forest') stat.forestRuns++;
+      res = playRun(areaId, seed * 100 + r, meta, rng);
       stat[res.run.outcome] = (stat[res.run.outcome] || 0) + 1;
       stat.battles += res.battles; stat.turns += res.totalTurns;
       CQSave.saveMeta(storage, meta);
     }
+    GOLD_STAT.careers++;
+    GOLD_STAT.endGold += meta.gold;
     /* M7 WP1：このキャリア（草原→森）が終わった時点でのダブり枚数を集計する */
     DUPE_STAT.careers++;
     DUPE_STAT.total += careerDupeCount(meta);
+    /* M7 WP12：ダブりを一括換金したらいくらになるか（実際には換金しない・見積もりだけ）。
+     * §4-2b の「保護規則と25%のレートが在庫整理の手段として釣り合うか」を数字で見る。 */
+    const plan = CQCollection.bulkSellPlan(meta, (id) => CQRun.sellPrice(CARD_BY_ID, id));
+    DUPE_STAT.bulkG += plan.total;
+    DUPE_STAT.bulkSheets += plan.sheets;
   } catch (e) {
     stat.errors.push('seed ' + seed + ': ' + e.message);
   }
@@ -469,9 +493,13 @@ console.log(`  1ランでショップに立ち寄れた率：${pct(SHOPVISIT_STA
   + `（${SHOPVISIT_STAT.visited} / ${SHOPVISIT_STAT.runs} 回）`);
 console.log(`  1ランのＧ収支：獲得 ${(GOLDFLOW_STAT.income / Math.max(1, ESTAT.runs)).toFixed(0)}`
   + ` / ショップ支出 ${(GOLDFLOW_STAT.shopSpend / Math.max(1, ESTAT.runs)).toFixed(0)}`
+  + ` / 買い取り支出 ${(BUYOUT_STAT.gold / Math.max(1, ESTAT.runs)).toFixed(0)}`
   + ` / 清算後Ｇ（再掲） ${(ESTAT.goldKept / Math.max(1, ESTAT.runs)).toFixed(0)}`);
 console.log(`  キャリア通算のダブり枚数：平均 ${(DUPE_STAT.total / Math.max(1, DUPE_STAT.careers)).toFixed(1)} 枚`
-  + `（${DUPE_STAT.careers} キャリア）`);
+  + ` / 一括換金したときの想定額 平均 ${(DUPE_STAT.bulkG / Math.max(1, DUPE_STAT.careers)).toFixed(0)} Ｇ`
+  + `（対象 ${(DUPE_STAT.bulkSheets / Math.max(1, DUPE_STAT.careers)).toFixed(1)} 枚・${DUPE_STAT.careers} キャリア）`);
+console.log(`  キャリアを終えた時点の所持Ｇ：平均 ${(GOLD_STAT.endGold / Math.max(1, GOLD_STAT.careers)).toFixed(0)} Ｇ`
+  + `（${careerRuns} ラン／キャリア）`);
 
 /* M7 WP4（第1段の効果測定）：追加した診断指標。 */
 console.log('');
@@ -482,7 +510,7 @@ console.log(`  1ランあたりの宝箱を開けた回数：平均 ${(CHEST_STA
 console.log(`  宝箱を開けてカードが出た割合：${pct(CHEST_STAT.cardGiven, CHEST_STAT.opened)}`
   + `（${CHEST_STAT.cardGiven} / ${CHEST_STAT.opened} 回。抽選確率80%＋rareチェストは必中ぶん。WP4で60%→80%に調整）`);
 console.log(`  ショップ購入の試行 ${SHOPBUY_STAT.attempts} 回のうちＧ不足で失敗：${pct(SHOPBUY_STAT.failedGold, SHOPBUY_STAT.attempts)}`
-  + `（${SHOPBUY_STAT.failedGold} / ${SHOPBUY_STAT.attempts} 回）`);
+  + `（${SHOPBUY_STAT.failedGold} / ${SHOPBUY_STAT.attempts} 回。M7 WP12で「いちばん安いものを買う」に変更）`);
 
 /* M7 WP8：買い取り所の実効性（経済追補§4-5の「空振り」がどれだけ起きるか）。
  * レンタルを1枚も持たずに出発したランでは、買い取り所は必ず空振りになる。 */
@@ -492,8 +520,10 @@ console.log(`  レンタルを持って出発したランの割合：${pct(BUYOU
 console.log(`  買い取り所のマスを踏んだ回数：${BUYOUT_STAT.visits} 回`
   + ` / 買い取りを試した ${BUYOUT_STAT.attempts} 回のうちＧ不足で失敗：`
   + `${pct(BUYOUT_STAT.failedGold, BUYOUT_STAT.attempts)}（${BUYOUT_STAT.failedGold} / ${BUYOUT_STAT.attempts} 回）`);
+console.log(`  1ランで買い取り所に立ち寄れた率：${pct(BUYOUT_STAT.runsVisited, BUYOUT_STAT.runs)}`
+  + `（${BUYOUT_STAT.runsVisited} / ${BUYOUT_STAT.runs} 回）`);
 console.log(`  実際に買い取った枚数：${BUYOUT_STAT.bought} 枚 / 支出 ${BUYOUT_STAT.gold} Ｇ`
-  + `（ファズは踏むたび50%で買おうとする）`);
+  + ` / 買い取りが成立した率 ${pct(BUYOUT_STAT.bought, BUYOUT_STAT.attempts)}`);
 
 if (stat.errors.length) {
   console.log(`\n例外 ${stat.errors.length} 件:`);
