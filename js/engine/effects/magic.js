@@ -48,6 +48,7 @@
   function recalc(m) {
     const combat = m.combat ? { attacker: m.combat.attacker, defender: m.combat.defender } : null;
     Stats.recalc(m.board, { cards: m.cards, combat: combat });
+    combatApi().enforcePost(m);            /* M7.8 WP1：緊急抵抗・融合解除 */
   }
   function damage(m, side, n) { if (!n) return; m.players[side].lp -= n; }
   function heal(m, side, n) {

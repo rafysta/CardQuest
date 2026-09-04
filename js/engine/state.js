@@ -84,7 +84,10 @@
       if (typeof ch === 'number') return { card: ch, up: false, mine: true, revealed: false };
       return { card: ch.card, up: !!ch.up,
                mine: ch.mine === undefined ? true : !!ch.mine,
-               revealed: !!ch.revealed, st: ch.st };
+               revealed: !!ch.revealed, st: ch.st,
+               /* M7.8 WP1：融合(162)で潜行しているユニットの印。ここで拾わないと
+                * 盤面を作り直したとき（セーブの復元・盤面セットアップ）に潜行が解けてしまう */
+               sunk: !!ch.sunk };
     });
     lane.count = lane.channels.length;
     lane.cap = lane.baseCh;

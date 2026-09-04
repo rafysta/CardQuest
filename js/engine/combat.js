@@ -36,7 +36,10 @@
   function combatOpt(m) {
     return m.combat ? { attacker: m.combat.attacker, defender: m.combat.defender } : null;
   }
-  function recalc(m) { return Stats.recalc(m.board, { cards: m.cards, combat: combatOpt(m) }); }
+  function recalc(m) {
+    Stats.recalc(m.board, { cards: m.cards, combat: combatOpt(m) });
+    enforcePost(m);          /* M7.8 WP1：緊急抵抗・融合解除（再入は enforcePost 側で防ぐ） */
+  }
 
   /** ＬＰダメージ。M6.6 WP6：フリーユニット戦の敵にはＬＰの概念が無いので、敵側への
    * ＬＰダメージは丸ごと無視する（§2-6「敵はLP表示なし」／勝敗は場が空になるかで決まる）。
@@ -298,6 +301,66 @@
   }
 
   /** リバース召還（原作 EV0182 [C]）。潜行ユニットがオープンされて場に出る */
+  /* ==== 集計のあとに走る強制処理（M7.8 WP1・原作 EV0244 page7/page8） ==============
+   *
+   * 原作は能力値の再計算のたびに、集計の直後で次の2つを走らせている。
+   * どちらも「盤面を見て条件が揃っていたらカードを動かす」処理なので、純粋な計算である
+   * Stats.recalc() の中には置けない——各モジュールの recalc(m) ラッパから呼ぶ形にした
+   * （ＡＩの評価は Stats.recalc を直に呼ぶので、この強制処理は走らない＝評価用の複製を壊さない）。
+   *
+   *   ① 緊急抵抗（page7）：抵抗(178)のあるレーンの**表向きのID 1〜100**を1枚ずつ破壊する。
+   *      カースは最初から表向きで貼られるので、「裏を開いた瞬間」しか見ていなかった
+   *      従来の実装では**抵抗が一度もカースを壊せなかった**（M7.8 で判明）。
+   *   ② 融合解除（page8）：融合(162)が封印やクローズで失われたレーンに、表向きのまま
+   *      潜行しているユニット(1〜89)が残っていたら、1体ずつ分離召還する。
+   *
+   * 順序は原作どおり ①→②。破壊は通常攻撃ではない扱い＝救済(179)で守られ、戦利品にもならない。 */
+  function enforcePost(m) {
+    if (!m || !m.board || m._enforcing) return;      /* 再入防止（destroy が recalc を呼ぶため） */
+    m._enforcing = true;
+    try {
+      let guard = 0;
+      let again = true;
+      while (again && guard++ < 24) {
+        again = false;
+        // ① 緊急抵抗
+        for (let i = 0; i < m.board.lanes.length; i++) {
+          const ln = m.board.lanes[i];
+          if (ln.unit == null || !ln.acc || ln.acc.resist < 1) continue;
+          const at = ln.channels.findIndex(function (ch) { return ch.up && ch.card >= 1 && ch.card <= 100; });
+          if (at < 0) continue;
+          const id = ln.channels[at].card;
+          /* 救済(179)は「通常攻撃でない破壊」を無効化する＝抵抗でも壊せない */
+          if (ln.acc.salvation >= 1) continue;
+          ln.channels.splice(at, 1);
+          ln.count = ln.channels.length;
+          note(m, '抵抗：' + nameOf(m, id) + ' は破壊された');
+          recalc(m);
+          again = true;
+          break;
+        }
+        if (again) continue;
+        // ② 融合解除
+        for (let i = 0; i < m.board.lanes.length; i++) {
+          const ln = m.board.lanes[i];
+          if (ln.unit == null || !ln.acc) continue;
+          if (ln.acc.fusion >= 1 || ln.acc.resist >= 1) continue;
+          const at = ln.channels.findIndex(function (ch) { return ch.sunk && ch.up; });
+          if (at < 0) continue;
+          const ch = ln.channels[at];
+          ch.sunk = false;
+          note(m, '融合が解けた：' + nameOf(m, ch.card) + ' が分離召還される');
+          reverseSummon(m, i, at + 1, ch);
+          recalc(m);
+          again = true;
+          break;
+        }
+      }
+    } finally {
+      m._enforcing = false;
+    }
+  }
+
   function reverseSummon(m, laneIndex, layer, ch) {
     const ln = m.board.lanes[laneIndex], id = ch.card;
     const drop = function () {
@@ -315,6 +378,11 @@
     if (id >= 90) return { consumed: false, result: 'curse' };
     // (4) 融合(162)：分離せずチャンネルのまま留まる（潜行継続）
     if (ln.acc.fusion >= 1) {
+      /* M7.8 WP1：**潜行中の印**を付ける（原作の潜行枚数 S(353,L) に相当）。
+       * 融合が失われたときに分離召還する対象を、この印で見分ける——印を使わずに
+       * 「表向きのユニットカード」を対象にすると、開いた直後でまだ処理中のカード
+       * （強制開放の連鎖・スケープゴートの入れ替えなど）まで巻き込んでしまう。 */
+      ch.sunk = true;
       note(m, '融合：' + nameOf(m, id) + ' は潜行したまま');
       return { consumed: false, result: 'fusion' };
     }
@@ -655,6 +723,7 @@
   }
 
   const api = {
+    enforcePost,
     canAttack, canTarget, attackTargets, declareAttack,
     canOpenPhase, openableLayers, openerLane, openerSide, open, endOpen, onOpen, ritualCheck,
     destroy, expireMagic, applyPendingCurse,

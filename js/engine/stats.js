@@ -97,6 +97,26 @@
     'converge', 'soulGate', 'honeymoon', 'tome', 'giant', 'kikou', 'fieldSwap', 'valor',
     'zoneRed', 'zoneBlue', 'zoneWhite', 'zoneBlack', 'mShieldAtk', 'curseDef', 'curseChain'];
 
+  /** 封印(156)／ジャガーノート(37) の「このレーンの集計を全部消す」（M7.8 WP1）。
+   *
+   * 原作 06_skill.md §1-3(d)：`EV0243 page7〜12` は**1枚処理するごとに末尾で**
+   * `if (S(527,L) >= 1)` を見て、そのレーンの技能値・カース値・魔法フラグを全部0にする。
+   * **消えないもの**＝封印自身／抑制由来の無効(=10)／抑制フラグ／ユニット固有能力
+   * （固有能力は集計の後（原作⑨）に入るので、ここで消しても後から入り直す）。
+   *
+   * 「1枚ごと」ではなく「そのレーンを積み終えてから1回」で等価になる——封印自身が
+   * クリア対象外なので、走査順に関係なく最終結果は同じになるため（§1-3の注記）。 */
+  function sealClear(acc) {
+    const keepSeal = acc.seal;
+    const keepSuppress = acc.swSuppress;        /* 原作は SW[732+L] をクリアしない */
+    const keepNullify = (acc.nullify === 10) ? 10 : 0;   /* 抑制由来の10だけ残る */
+    const b = blankAcc();
+    Object.keys(b).forEach(function (k) { acc[k] = b[k]; });
+    acc.seal = keepSeal;
+    acc.swSuppress = keepSuppress;
+    acc.nullify = keepNullify;
+  }
+
   /* 表向きの技能カード(151〜199) → アキュムレータ加算（原作 EV0243 page7〜12） */
   function accSkill(acc, id) {
     switch (id) {
@@ -195,12 +215,10 @@
       case 20: acc.fusion += 10; break;
       case 33: acc.rot += 1; break;
       case 37: {                                     // ジャガーノート：自レーンの集計を全消去
-        const keep = { swBomb: acc.swBomb, swAmplify: acc.swAmplify, swBarrier: acc.swBarrier,
-          swSuppress: acc.swSuppress, swShroud: acc.swShroud, swDisguise: acc.swDisguise,
-          swMirror: acc.swMirror };
-        const b = blankAcc();
-        Object.keys(b).forEach(function (k) { acc[k] = b[k]; });
-        Object.keys(keep).forEach(function (k) { acc[k] = keep[k]; });
+        /* M7.8 WP1：原作（06_skill.md §4-6・07_unit_abilities.md §2-1）は魔法フラグ
+         * （爆殺・増幅・障壁・遮蔽・鏡身・偽装）を**落とす**。従来はこの6つを残していて
+         * 逆になっていた（＝ジャガーノートの封印が弱すぎた）。残すのは抑制だけ。 */
+        sealClear(acc);
         acc.seal += 1;
         break;
       }
@@ -257,6 +275,10 @@
         if (ch.card >= 151) accSkill(ln.acc, ch.card);
         else if (ch.card >= 91 && ch.card <= 99) accCurse(ln.acc, ch.card);
       });
+      /* M7.8 WP1：封印(156) の効果本体。このレーンに封印があれば、いま積んだ技能・カースと
+       * (3)で立てた魔法フラグを全部落とす（原作 06_skill.md §4-6）。
+       * ユニット固有能力は (9) で後から入るので影響を受けない。 */
+      if (ln.acc.seal >= 1) sealClear(ln.acc);
     });
 
     // (5) 戦闘中のみ：鏡身・抑制・縛鎖
@@ -270,8 +292,13 @@
           if (ch.up && ch.card >= 151) accSkill(me.acc, ch.card);
         });
       });
-      // 抑制：攻撃側（ターンプレイヤー側）が持つと相手の無効値を10に（＝魔法・固有能力を封殺）
-      if (A && D && A.acc.swSuppress) D.acc.nullify = 10;
+      /* 抑制(120)：当事者の一方が持つと**相手**の無効値を10にする（＝魔法・固有能力を封殺）。
+       * M7.8 WP1：原作 06_skill.md §1-4(3) は当事者2レーンの**相互適用**。
+       * 従来は攻撃側→防御側の一方向だけで、防御側に貼っても効かなかった。 */
+      if (A && D) {
+        if (A.acc.swSuppress) D.acc.nullify = 10;
+        if (D.acc.swSuppress) A.acc.nullify = 10;
+      }
       // 縛鎖：攻撃側の表向き縛鎖(197)がある階層は、防御側がオープンできない（封印で無効）
       if (A && A.acc.seal === 0) {
         const locked = [];

@@ -6394,6 +6394,138 @@ t('書き出したファイルの中身：日時と版が入り、値は保存�
     'ファイル名に日付が入る');
 });
 
+/* ================= M7.8 WP1: 封印と集計の土台 ================= */
+section('M7.8 WP1: 封印と集計の土台');
+
+t('★封印(156)：同レーンの技能の効果が全部消える（原作 06_skill.md §1-3(d)・§4-6）', () => {
+  /* 魔力の盾(153)＝防+200／攻-100 が乗ったレーンに封印を貼ると、盾の効果が消える。
+   * ±100のＣＨボーナスは EV0171 側なので**消えない**（封印しても枚数ぶんの補正は残る）。 */
+  const noSeal = board([lane(PIG, [up(153)])]);
+  CQStats.recalc(noSeal, OPT);
+  eq([noSeal.lanes[0].atk, noSeal.lanes[0].def], [PIG_A + 100 - 100, PIG_D + 200], '封印なし＝盾が効く');
+  const sealed = board([lane(PIG, [up(153), up(156)])]);
+  CQStats.recalc(sealed, OPT);
+  eq([sealed.lanes[0].atk, sealed.lanes[0].def], [PIG_A + 200, PIG_D], '封印あり＝盾の効果だけ消え、±100は残る');
+  eq([sealed.lanes[0].acc.mShieldDef, sealed.lanes[0].acc.mShieldAtk], [0, 0], '技能の集計値が0に戻っている');
+  eq(sealed.lanes[0].acc.seal >= 1, true, '封印自身は残る');
+});
+
+t('★封印：カースの効果も消える', () => {
+  const b = board([lane(PIG, [up(93), up(156)])]);        // カース93＝防-150
+  CQStats.recalc(b, OPT);
+  eq(b.lanes[0].def, PIG_D, 'カースの-150が消える（表向きのＣＨは防御力を上げない）');
+});
+
+t('★封印：魔法フラグ（増幅など）も落ちる／抑制フラグだけは残る', () => {
+  /* 増幅(106)は数値系を2倍にする魔法フラグ。封印があると2倍化が起きない。 */
+  const amp = board([lane(PIG, [up(106), up(153)])]);
+  CQStats.recalc(amp, OPT);
+  eq(amp.lanes[0].acc.mShieldDef, 400, '封印なし＝魔力の盾が増幅で2倍');
+  const sealed = board([lane(PIG, [up(106), up(153), up(156)])]);
+  CQStats.recalc(sealed, OPT);
+  eq(sealed.lanes[0].acc.swAmplify, false, '増幅のフラグが落ちる');
+  eq(sealed.lanes[0].acc.mShieldDef, 0, '技能も消えている');
+  /* 抑制(120)のフラグは封印でも残る（原作は SW[732+L] をクリアしない） */
+  const sup = board([lane(PIG, [up(120), up(156)])]);
+  CQStats.recalc(sup, OPT);
+  eq(sup.lanes[0].acc.swSuppress, true, '抑制フラグは残る');
+});
+
+t('★封印：無効(190)も解除する', () => {
+  const b = board([lane(PIG, [up(190), up(156)])]);
+  CQStats.recalc(b, OPT);
+  eq(b.lanes[0].acc.nullify, 0, '無効の集計値が消える');
+});
+
+t('★封印：ユニット固有能力は消えない（集計の後で入るため）', () => {
+  /* 41 デアデビルは固有の勇猛(+100)。封印を貼っても固有能力は生き残る。 */
+  const b = board([lane(41, [up(156)]), empty(), empty(), lane(10)]);
+  CQStats.recalc(b, { cards: CARD_BY_ID, combat: { attacker: 0, defender: 3 } });
+  eq(b.lanes[0].acc.valor, 100, '固有能力は封印の後に入るので残る');
+});
+
+t('★ジャガーノート(37)：魔法フラグを落とす（抑制だけ残す）＝原作と逆だったのを修正', () => {
+  const b = board([lane(37, [up(106), up(120), up(117)])]);   // 増幅・抑制・障壁
+  CQStats.recalc(b, OPT);
+  eq(b.lanes[0].acc.swAmplify, false, '増幅は消える');
+  eq(b.lanes[0].acc.swBarrier, false, '障壁は消える');
+  eq(b.lanes[0].acc.swSuppress, true, '抑制だけ残る');
+  eq(b.lanes[0].acc.seal, 1, '封印がついた扱いになる');
+});
+
+t('★抑制(120)は両方向に効く（防御側が持っていても攻撃側の魔法を封殺する）', () => {
+  const atkHas = board([lane(PIG, [up(120)]), empty(), empty(), lane(PIG)]);
+  CQStats.recalc(atkHas, { cards: CARD_BY_ID, combat: { attacker: 0, defender: 3 } });
+  eq(atkHas.lanes[3].acc.nullify, 10, '攻撃側の抑制→防御側が無効10（従来どおり）');
+  const defHas = board([lane(PIG), empty(), empty(), lane(PIG, [up(120)])]);
+  CQStats.recalc(defHas, { cards: CARD_BY_ID, combat: { attacker: 0, defender: 3 } });
+  eq(defHas.lanes[0].acc.nullify, 10, '★防御側の抑制→攻撃側が無効10（今回の修正）');
+});
+
+t('★緊急抵抗：抵抗(178)を後から開くと、既に付いているカースが破壊される', () => {
+  /* 原作 06_skill.md §4-28(c)。カースは最初から表向きで貼られるので、
+   * 「裏を開いた瞬間」しか見ていなかった従来の実装では一度も壊せなかった。 */
+  const m = newMatch(3);
+  CQTurn.beginTurn(m);
+  m.board.lanes[0] = lane(PIG, [up(93), down(178)]);            // カース93＋裏の抵抗
+  CQTurn.recalcForTest ? CQTurn.recalcForTest(m) : null;
+  CQCombat.open ? null : null;
+  /* 抵抗を表にする（メインステップのリバース）→ 緊急抵抗が走ってカースが消える */
+  m.phase = 'main';
+  const r = CQTurn.reverseAction(m, 0, [2]);
+  eq(r.ok, true, '抵抗を開ける');
+  const ids = m.board.lanes[0].channels.map((c) => c.card);
+  eq(ids.indexOf(93), -1, '★カースが破壊されている');
+});
+
+t('★緊急抵抗：救済(179)があるとカースは守られる', () => {
+  const m = newMatch(4);
+  CQTurn.beginTurn(m);
+  m.board.lanes[0] = lane(PIG, [up(93), up(179), down(178)]);   // カース＋救済＋裏の抵抗
+  m.phase = 'main';
+  CQTurn.reverseAction(m, 0, [3]);
+  const ids = m.board.lanes[0].channels.map((c) => c.card);
+  eq(ids.indexOf(93) >= 0, true, '救済があるので破壊されない');
+});
+
+t('融合(162)：ユニットを開いても分離せず潜行したまま残り、潜行の印が立つ', () => {
+  const m = newMatch(5);
+  CQTurn.beginTurn(m);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(PIG, [down(1), up(162)]);        // 裏のミルファイター＋表の融合
+  const r = CQTurn.reverseAction(m, 0, [1]);               // 1階層目を開く
+  eq(r.ok, true, '開ける');
+  const ch = m.board.lanes[0].channels[0];
+  eq([ch.card, ch.up, !!ch.sunk], [1, true, true], '潜行したまま・印が立つ');
+});
+
+t('★融合解除：融合(162)が失われると潜行ユニットが分離召還される', () => {
+  /* 原作 06_skill.md §4-12(c)。融合をクローズ（または封印）すると、
+   * 潜行したまま表向きで残っていたユニットが一斉に場へ出る。 */
+  const m = newMatch(6);
+  CQTurn.beginTurn(m);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(PIG, [up(1, { sunk: true }), up(162)]);   // 潜行中のミルファイター
+  m.board.lanes[1] = empty();
+  CQTurn.reverseAction(m, 0, [2]);                          // 融合(162)をクローズ
+  const stillCh = m.board.lanes[0].channels.some((c) => c.card === 1);
+  const onField = [0, 1, 2].some((i) => m.board.lanes[i].unit === 1);
+  eq(stillCh, false, '潜行ユニットはチャンネルから外れる');
+  eq(onField, true, '★自分の場に分離召還されている');
+});
+
+t('融合解除：抵抗(178)があるレーンでは分離召還ではなく破壊が先に走る', () => {
+  const m = newMatch(7);
+  CQTurn.beginTurn(m);
+  m.phase = 'main';
+  m.board.lanes[0] = lane(PIG, [up(1, { sunk: true }), up(178)]);   // 潜行ユニット＋抵抗
+  CQTurn.reverseAction(m, 0, [2]);                          // 何か操作して再計算を起こす
+  const stillCh = m.board.lanes[0].channels.some((c) => c.card === 1);
+  const onField = [0, 1, 2].some((i) => m.board.lanes[i].unit === 1);
+  eq(stillCh, false, '潜行ユニットは残らない');
+  eq(onField, false, '★場にも出ない（緊急抵抗で破壊された）');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

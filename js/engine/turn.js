@@ -210,6 +210,8 @@
     // 戦闘中は当事者以外のレーンの能力値を凍結する（原作 EV0171 page1 冒頭）
     const combat = m.combat ? { attacker: m.combat.attacker, defender: m.combat.defender } : null;
     Stats.recalc(m.board, { cards: m.cards, combat: combat });
+    /* M7.8 WP1：集計の直後に走る強制処理（緊急抵抗・融合解除）。combat.js が本体。 */
+    combatApi().enforcePost(m);
   }
   /** 戦闘モジュール。循環参照を避けるため、読み込み時ではなく呼ぶ瞬間に解決する */
   function combatApi() {
