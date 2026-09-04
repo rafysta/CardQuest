@@ -268,6 +268,16 @@
     const side = m.active, p = activePlayer(m);
     p.actedThisTurn = false;
     p.fledThisTurn = false;                         // 逃走は1ターン1回（M6.6 WP12）
+    /* M7.8 WP2：石化(168) の強制硬直（原作 CE0173 石化ターン開始）。
+     * 自分のターンが始まるたびに、石化の付いている自陣ユニットを硬直させる。
+     * 石化は防御力+200と一緒に固定(159)相当のロックも掛かる（`lock`）が、それとは別に
+     * 「毎ターン頭に強制で硬直させる」処理がここ。攻撃・チャネル・特殊行動・リバース
+     * すべてができなくなり、実質「防御専用の置物」になる（06_skill.md §4-18）。 */
+    recalc(m);
+    S.lanesOf(side).forEach(function (i) {
+      const ln = m.board.lanes[i];
+      if (ln.unit != null && ln.acc && ln.acc.petrify >= 1) ln.stiff = true;
+    });
     const second = m.first && side !== m.first;     // この手番の側が後攻か
     const n = p.turnsTaken === 0 ? (FIRST_DRAW + (second ? SECOND_DRAW_BONUS : 0)) : 1;
     for (let i = 0; i < n; i++) {
@@ -735,13 +745,34 @@
     });
     recalc(m);
 
+    /* M7.8 WP2：巨大化(188) のＬＰ減少（原作 CE0260 巨大化ダメージ）。
+     * 自ターン終了(EV0006)・敵ターン終了(EV0005)の**両方**から呼ばれる処理で、呼ばれるたびに
+     * 「両陣営それぞれの巨大化合計÷100」を**その陣営自身のＬＰ**から引く。endTurn は1ラウンドに
+     * 2回（自分の番の終わり・相手の番の終わり）呼ばれるので、結果として巨大化1枚につき
+     * 1ラウンドでＬＰ−2になる（06_skill.md §4-38）。増幅で巨大化が2倍になれば
+     * acc.giant がすでに2倍なので、ここでも自動的に反映される。 */
+    ['self', 'enemy'].forEach(function (sd) {
+      const sum = S.lanesOf(sd).reduce(function (t, i) {
+        const ln = m.board.lanes[i];
+        return t + ((ln.unit != null && ln.acc) ? ln.acc.giant : 0);
+      }, 0);
+      const drain = Math.floor(sum / 100);
+      if (drain > 0) {
+        m.players[sd].lp -= drain;
+        note(m, jp(sd) + ' の巨大化ダメージ：ＬＰ-' + drain);
+      }
+    });
+    if (checkResult(m)) { syncHandCount(m); return { ok: true, result: m.winner }; }
+
     // 未行動かつ手札5枚以下なら1枚補充（山札が尽きていれば再装填してから。M5.5）
     if (!m.winner && !p.actedThisTurn && p.hand.length <= 5) {
       draw(m.rng, p, m);
     }
 
-    // ＬＰクランプ
+    // ＬＰクランプ（巨大化ダメージ後の上限超過も一応クランプする。原作もＬＰ上限15で両陣営クランプ）
     if (p.lp > p.maxLp) p.lp = p.maxLp;
+    const opp = m.players[other(side)];
+    if (opp.lp > opp.maxLp) opp.lp = opp.maxLp;
 
     // 自陣の硬直・リバースポインタ・連続攻撃の権利を解除
     S.lanesOf(side).forEach(function (i) {

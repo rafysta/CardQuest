@@ -623,7 +623,10 @@
   function expireMagic(m) {
     recalc(m);
     m.board.lanes.forEach(function (ln, i) {
-      if (ln.unit != null && ln.acc.swBomb && ln.cap === ln.count) {
+      // M7.8 WP2：停滞(151)があるレーンは爆殺の自爆が止まる（原作 06_skill.md §4-1・EV0049 page1 冒頭
+      // `if (S(301,L)==0 && SW[700+L] && …)`）。停滞自身は表向き魔法(101〜150)ではないので
+      // この判定より後のクローズ処理でも消えない。
+      if (ln.unit != null && ln.acc.swBomb && ln.cap === ln.count && !(ln.acc.stasis >= 1)) {
         note(m, '爆殺：' + nameOf(m, ln.unit) + ' が自爆');
         destroy(m, i, { normalAttack: false });
       }

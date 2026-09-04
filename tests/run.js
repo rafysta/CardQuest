@@ -6526,6 +6526,73 @@ t('融合解除：抵抗(178)があるレーンでは分離召還ではなく破
   eq(onField, false, '★場にも出ない（緊急抵抗で破壊された）');
 });
 
+/* ================= M7.8 WP2: ターン系のデメリット ================= */
+section('M7.8 WP2: ターン系のデメリット');
+
+t('★石化(168)：ターン開始時に自陣ユニットが強制的に硬直する（原作 06_skill.md §4-18・CE0173）', () => {
+  const m = newMatch(101);
+  m.board.lanes[0] = lane(PIG, [up(168)]);          // 自陣レーン0に石化
+  CQTurn.beginTurn(m);                              // 自分のターン開始（先攻の初回ドロー）
+  eq(m.board.lanes[0].stiff, true, '★石化で強制硬直');
+  m.phase = 'main';
+  eq(CQCombat.canAttack(m, 0).ok, false, '硬直しているので攻撃できない');
+});
+
+t('石化：敵陣ユニットは自分のターン開始では硬直しない（硬直するのは持ち主のターンの開始時だけ）', () => {
+  const m = newMatch(102);
+  m.board.lanes[3] = lane(PIG, [up(168)]);          // 敵陣レーン3に石化
+  CQTurn.beginTurn(m);                              // 自分のターン開始
+  eq(!!m.board.lanes[3].stiff, false, '敵陣は自分のターン開始では硬直させない');
+});
+
+t('★巨大化(188)：陣営の巨大化合計÷100を、両者のターン終了のたびにＬＰから引く（1ラウンドで-2。原作 06_skill.md §4-38・CE0260）', () => {
+  const m = newMatch(103);
+  CQTurn.beginTurn(m);                              // 自分のターン開始（draw）
+  m.board.lanes[0] = lane(PIG, [up(188)]);          // 自陣に巨大化1枚（+100点＝÷100で1）
+  const lpBefore = m.players.self.lp;
+  m.phase = 'main';
+  CQTurn.endTurn(m);                                // 自分のターン終了 → ここで-1
+  eq(m.players.self.lp, lpBefore - 1, '自分のターン終了時に-1');
+  eq(m.players.enemy.lp, 10, '相手は巨大化を持っていないので減らない');
+  CQTurn.beginTurn(m);                              // 相手のターン開始
+  m.phase = 'main';
+  CQTurn.endTurn(m);                                // 相手のターン終了 → ここでもさらに-1（合計-2）
+  eq(m.players.self.lp, lpBefore - 2, '★1ラウンドでＬＰ-2（自分・相手どちらのターン終了でも発生）');
+});
+
+t('★爆殺(104)は停滞(151)があると消滅処理でも自爆しない（原作 06_skill.md §4-1）', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(104), up(151), down(180), down(180)]);   // ＣＨ4で飽和＋停滞
+  const lpBefore = m.players.self.lp;
+  CQCombat.expireMagic(m);
+  eq(m.board.lanes[0].unit, 8, '★停滞があるので自爆しない');
+  eq(m.players.self.lp, lpBefore, 'ＬＰも減らない');
+});
+
+t('★135 雷撃：気孔術(189)ぶん、しきい値が伸びる（550+気孔術。原作 CE0252 対象確認BLITZ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(135), up(189)]);   // 気孔術+100
+  m.board.lanes[3] = lane(28, []);                    // Ｄ600（気孔術なしなら雷撃の射程外）
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].unit, null, '★気孔術で600以下も届く（550+100=650）');
+});
+
+t('135 雷撃：気孔術が無ければ従来どおり550以下しか届かない', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(135)]);
+  m.board.lanes[3] = lane(28, []);                    // Ｄ600
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].unit, 28, '気孔術が無いので届かない');
+});
+
+t('★16 レッドレックス：気孔術(189)ぶん、しきい値が伸びる（600+気孔術）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(16), up(189)]);      // 気孔術+100
+  m.board.lanes[3] = lane(8, [down(180), down(180)]);   // Ｄ450+200=650（気孔術なしなら600以下ではない）
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.board.lanes[3].unit, null, '★気孔術で650も届く（600+100=700）');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }

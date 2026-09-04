@@ -121,12 +121,17 @@
       return !ch.up && !ch.revealed && inScope(m, ctx, lane);
     });
   }
-  /** 防御力が上限以下の敵ユニット（16レッドレックス＝600／10・32・36＝550） */
+  /** 防御力が上限以下の敵ユニット（16レッドレックス＝600／10・32・36＝550）。
+   * ★M7.8 WP2：気孔術(189)ぶん、しきい値を上げる（原作 CE0252 対象確認BLITZ・
+   * `07_unit_abilities.md` 371行・676行）。気孔術は**発動したユニット自身のレーン**
+   * （ctx.laneIndex）のものを見る。増幅で気孔術が2倍になれば自動的にここへ反映される。 */
   function defAtMost(m, ctx, max) {
     recalc(m);
     const enemy = other(ctx.caster);
+    const here = m.board.lanes[ctx.laneIndex];
+    const kikou = (here && here.acc) ? here.acc.kikou : 0;
     return scopeLanes(m, ctx).filter(function (i) {
-      return S.sideOf(i) === enemy && m.board.lanes[i].def <= max;
+      return S.sideOf(i) === enemy && m.board.lanes[i].def <= max + kikou;
     });
   }
   /** ＣＨに空きのある敵ユニット（石化・疫障・腐食の付加先） */

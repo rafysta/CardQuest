@@ -561,8 +561,15 @@
       }
       case 141:   /* 思念波：防御力551〜1000（550以下は雷撃の担当。原作の住み分け） */
         return lane(rBlitz(m, c, 551, 1000).filter(function (i) { return S.sideOf(i) === other(c.caster); }));
-      case 135:   /* 雷撃：防御力550以下（BLITZ） */
-        return lane(rBlitz(m, c, 0, 550));
+      case 135: {  /* 雷撃：防御力550以下（BLITZ）。
+                    * ★M7.8 WP2：気孔術(189)ぶん、しきい値を上げる（原作 CE0252 対象確認BLITZ・
+                    * `05_magic.md` 164行）。V401 = V409(550) + 気孔術。増幅で気孔術が2倍になれば
+                    * 自動的にここへ反映される（acc.kikou は集計時点で増幅済みの値）。 */
+        recalc(m);
+        const here135 = m.board.lanes[c.laneIndex];
+        const kikou135 = (here135 && here135.acc) ? here135.acc.kikou : 0;
+        return lane(rBlitz(m, c, 0, 550 + kikou135));
+      }
       case 114: { /* 暗殺：相手の手札のユニットカードを1枚。
                    *（原作では選んでいる間、相手の手札が全部見える＝偵察にもなる） */
         const p = m.players[other(c.caster)];
