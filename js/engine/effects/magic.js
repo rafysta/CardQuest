@@ -65,6 +65,15 @@
    * 連鎖中に開かれたら**連鎖を止める**役目を持たせるため（h140 を参照）。
    * ターンのやり直しは連鎖中には起こさないので、「誰のターンか」の曖昧さは生じない。 */
   const NO_FORCED = { 108: 1, 109: 1, 144: 1 };
+  /* ★M7.8 WP3：連唱(174)で2回発動**しない**カード（原作 EV0152 page3 の SW566。
+   * `05_magic.md` §1-7）。原作の除外は25枚だが、本人指定（決定#5・2026-09-04）で
+   * 122・124・125・137 の4枚は2回発動を許すことにしたので、残り21枚だけをここに置く。
+   * ここに無いカード（101,102,105,110,111,112,113,114,115,116,121,122,123,124,125,126,
+   * 127,129,130,131,135,137,139,141,142,146,147）は、連唱があれば2回発動する。 */
+  const CHANT_NO_REPEAT = {
+    103: 1, 104: 1, 106: 1, 107: 1, 108: 1, 109: 1, 117: 1, 118: 1, 119: 1, 120: 1,
+    128: 1, 132: 1, 133: 1, 134: 1, 136: 1, 138: 1, 140: 1, 143: 1, 144: 1, 145: 1, 148: 1
+  };
   /* 詠唱レベル（配置階層 ≧ 記載レベル。魔道書(186)が1枚につき-2＝ln.acc.tomeをそのまま引く）。
    * ★M6.7：141思念波を追加した（判断12・2026-08-29 本人確定）。
    * 原作は `V397==6` の分岐が存在せずレベル判定が働かないバグだったが、
@@ -1358,7 +1367,8 @@
     const Turn = turnApi();
 
     const chant = ln0 && ln0.acc ? ln0.acc.chant >= 1 : false;   // 連唱・ソウルイーター・ウロボロス・ブラックドッグ
-    const times = chant ? 2 : 1;
+    // ★M7.8 WP3：CHANT_NO_REPEAT に載っているカードは、連唱があっても1回しか発動しない
+    const times = (chant && !CHANT_NO_REPEAT[cardId]) ? 2 : 1;
     let consumed = false;
     for (let t = 0; t < times; t++) {
       const ln = m.board.lanes[laneIndex];
@@ -1386,7 +1396,7 @@
     return { consumed: consumed };
   }
 
-  const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED, resolvePending, autoResolve,
+  const api = { onMagicOpen, LEVEL_REQ, NO_COMBAT, NO_FORCED, CHANT_NO_REPEAT, resolvePending, autoResolve,
     forcedChainStep, beginAim, endAim, strikeDoomed, targetsFor };
   global.CQMagic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

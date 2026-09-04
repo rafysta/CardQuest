@@ -6593,6 +6593,46 @@ t('★16 レッドレックス：気孔術(189)ぶん、しきい値が伸びる
   eq(m.board.lanes[3].unit, null, '★気孔術で650も届く（600+100=700）');
 });
 
+/* ================= M7.8 WP3: 連唱(174) の除外リスト ================= */
+section('M7.8 WP3: 連唱(174) の除外リスト');
+
+t('★連唱の除外：134 呪念は連唱があっても2回発動しない（本人指定の21枚。原作 05_magic.md §1-7）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(13, [up(174), down(151), down(151), down(134)]);   // 連唱＋呪念（詠唱Ｌｖ3）
+  const lpBefore = m.players.self.lp;
+  CQTurn.reverseAction(m, 0, [4]);
+  eq(m.players.self.lp, lpBefore - 5, '★連唱があっても1回だけ（-5点。-10点にはならない）');
+});
+
+t('連唱の除外リストに無いカードは従来どおり連唱で2回発動する（対照：101憑依解除）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(174), down(101)]);
+  m.board.lanes[1] = lane(8, [down(151), down(151), down(151)]);
+  const before = m.board.lanes[0].channels.length + m.board.lanes[1].channels.length;
+  CQTurn.reverseAction(m, 0, [2]);
+  const after = m.board.lanes[0].channels.length + m.board.lanes[1].channels.length;
+  eq(after, before - 3, '2回発動して2枚破壊し、使い終わった101自身も消える');
+});
+
+t('★連唱で2回発動を許すカード（本人指定・決定#5）：124 凍結は2体を硬直させる', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [up(174), down(124)]);
+  m.board.lanes[3] = lane(8, [down(180)]);
+  m.board.lanes[4] = lane(8, [down(180)]);
+  CQTurn.reverseAction(m, 0, [2]);
+  eq([!!m.board.lanes[3].stiff, !!m.board.lanes[4].stiff], [true, true], '★連唱で2回発動＝2体とも硬直する');
+});
+
+t('連唱が無ければ124凍結は1体しか硬直させない（対照）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(124)]);
+  m.board.lanes[3] = lane(8, [down(180)]);
+  m.board.lanes[4] = lane(8, [down(180)]);
+  CQTurn.reverseAction(m, 0, [1]);
+  const stiffCount = [!!m.board.lanes[3].stiff, !!m.board.lanes[4].stiff].filter(Boolean).length;
+  eq(stiffCount, 1, '連唱が無いので1体だけ硬直する');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }
