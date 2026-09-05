@@ -7320,6 +7320,57 @@ t('buildBossDeck：bossId が無いエリアは従来どおりの簡易生成（
   eq(area.bossId, undefined, '草原にはまだ bossId が付いていない（M8.1 WP3で付ける）');
 });
 
+
+section('M8.1 WP1: 入手経路の網羅表（js/meta/routes.js）');
+
+const CQRoutesTest = require(path.join(root, 'js/meta/routes.js'));
+
+t('全169種のカードを対象にする（憑依カース・空白・おじゃま虫は除く）', () => {
+  const list = CQRoutesTest.realCardList(CARD_BY_ID);
+  eq(list.length, 169, '169種ちょうど');
+  eq(list.some((c) => c.id === 180), false, '空白(180)は含まない');
+  eq(list.some((c) => c.id === 91), false, 'カースは含まない（そもそも別種別）');
+  eq(list.some((c) => c.id === 200), false, 'おじゃま虫(200)は含まない');
+});
+
+t('coverageReport：いまの実装でFAIL（経路0本）は無い', () => {
+  const { summary, rows } = CQRoutesTest.coverageReport(CARD_BY_ID);
+  eq(summary.total, 169, '対象は169種');
+  eq(summary.fail, 0, `経路0本のカードがあってはいけない（実際: ${rows.filter((r) => r.status === 'FAIL').map((r) => r.id).join(',')}）`);
+  eq(summary.ok + summary.planned, 169, 'OKとPLANNEDの合計が全体と一致');
+});
+
+t('原作で入手不可だった2種は「予定」経路（神竜討伐報酬）を持つ（実装計画M8 §3-4）', () => {
+  const { rows } = CQRoutesTest.coverageReport(CARD_BY_ID);
+  const byId = {}; rows.forEach((r) => { byId[r.id] = r; });
+  eq(byId[154].status, 'PLANNED', '連続攻撃：予定扱い');
+  eq(byId[154].routes.some((r) => r.type === 'dragon-fix'), true, '連続攻撃：ニドヘッグ討伐報酬の経路がある');
+  eq(byId[187].status, 'PLANNED', '修練の拳：予定扱い');
+  eq(byId[187].routes.some((r) => r.type === 'dragon-fix'), true, '修練の拳：キリン討伐報酬の経路がある');
+});
+
+t('草原・森の敵プールにあるカードは real:true のエリア経路を持つ（既存の実装どおり）', () => {
+  const wolf = CARD_BY_ID[7];  // ワーウルフ＝草原L1・山地L1・ダンジョン内L1
+  const routes = CQRoutesTest.routesFor(wolf, CARD_BY_ID);
+  const areaRoute = routes.find((r) => r.type === 'area' && r.area === 'grassland');
+  eq(!!areaRoute, true, '草原の戦利品経路がある');
+  eq(areaRoute.real, true, '草原は実装済みなので real:true');
+});
+
+t('ユニットカードは g にコレクション段階の表記があってもショップ経路にしない（shopPoolの実際の挙動と一致）', () => {
+  const wolf = CARD_BY_ID[7];  // ワーウルフ：gに「コレクション段階1〜」とあるがユニットなので売られない
+  const routes = CQRoutesTest.routesFor(wolf, CARD_BY_ID);
+  eq(routes.some((r) => r.type === 'shop'), false, 'ユニットはショップ経路を持たない（js/meta/collection.js shopPool の種別フィルタと一致）');
+});
+
+t('マスター報酬は area.bossId が付くまで real:false（未配線）のまま', () => {
+  const laris = CARD_BY_ID[182];  // 蜜月＝『傭兵』ラリー（coast）の初回撃破報酬
+  const routes = CQRoutesTest.routesFor(laris, CARD_BY_ID);
+  const bossRoute = routes.find((r) => r.type === 'boss-reward');
+  eq(!!bossRoute, true, 'マスター報酬の経路はある');
+  eq(bossRoute.real, false, 'coastエリアはまだ無い（M8.1 WP3待ち）ので real:false');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }
