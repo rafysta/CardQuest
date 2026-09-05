@@ -5937,6 +5937,21 @@ t('貴重カードは限定枠（1枠）で、価格は定価×1.5（マップ�
   eq(CQCollection.homeBuyPrice(plain), plain.p, '汎用カードは定価のまま');
 });
 
+t('★M7.8 WP7：エグゼデグゼス(15)は高額（貴重閾値超）でもホームの限定枠に出ない（限定枠は魔法・技能のみ）', () => {
+  const exo = CARD_BY_ID[15];
+  eq(exo.p, 600000, 'エグゼデグゼスの価格は600000Ｇ（ストライフ(61)より高い最上位の長期目標）');
+  eq(exo.lv, 5, 'エグゼデグゼスの召還レベルは5');
+  eq(CQCollection.isRare(exo), true, '600000Ｇは貴重閾値（3000Ｇ）を大きく超える');
+  const meta = { book: {}, deck: {}, known: [], gold: 0 };
+  for (let day = 0; day < 30; day++) {
+    meta.day = day;
+    const slot = CQCollection.rareSlot(CARD_BY_ID, meta);
+    eq(slot == null || slot.id !== 15, true, '限定枠はモンスターを対象にしない（day=' + day + '）');
+  }
+  const stock = CQCollection.homeStock(CARD_BY_ID, meta);
+  eq(stock.some((it) => it.id === 15), false, '本体の品揃えにもエグゼデグゼスは出ない');
+});
+
 t('限定枠は探索を終えるごとに入れ替わり、買った貴重カードはもう限定枠に出ない', () => {
   const meta = { book: {}, deck: {}, known: [], gold: 0, day: 0 };
   const a = CQCollection.rareSlot(CARD_BY_ID, meta);
