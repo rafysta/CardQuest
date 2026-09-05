@@ -1259,6 +1259,32 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.evaluate(() => M.players.enemy.hand.join(',') === '101,8'
       && M.players.self.hand.indexOf(151) >= 0),
     JSON.stringify(await page.evaluate(() => M.log.slice(-2))));
+
+  /* ⑩ ★M7.8 WP6：傀儡(169)はレーンごと相手の場へ**物理的に移る**。
+   * 自分のユニットに伏せてある傀儡を自分で開く → そのユニットが敵レーンに現れ、
+   * 「傀儡」のタグが付き、元のレーンは空になる。倒すと戦利品にならない・ＬＰは敵側。 */
+  await reopenBoard();
+  await startBoard(Object.assign({}, BASE, {
+    win: 'field',
+    lanes: { '0': { unit: 8, ch: [{ id: 169, up: false, by: 'enemy' }, { id: 151, up: false, by: 'self' }] },
+             '1': { unit: 8, ch: [] }, '3': { unit: 8, ch: [] } } }));
+  await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  await page.waitForTimeout(700);
+  const pupState = await page.evaluate(() => ({
+    l0: M.board.lanes[0].unit, l4: M.board.lanes[4].unit, pup: M.board.lanes[4].puppeted,
+    ch4: M.board.lanes[4].channels.map((c) => c.card + (c.up ? 'u' : 'd')).join(','),
+    tag: !!document.querySelector('.lane[data-lane="4"] .card.unit .pup-tag'),
+    foe: !!document.querySelector('.lane[data-lane="4"] .card.unit.foe')
+  }));
+  ok('★傀儡を開いたユニットは敵レーンへ移る（元のレーンは空・ＣＨも一緒）',
+    pupState.l0 === null && pupState.l4 === 8 && pupState.pup === 'self' && pupState.ch4 === '169u,151d',
+    JSON.stringify(pupState));
+  ok('移ったユニットに「傀儡」のタグが付き、相手のユニットとして描かれる', pupState.tag && pupState.foe,
+    JSON.stringify(pupState));
+  await shot('wp6-puppet-moved');
+  /* 自分のもう1体で、移ったユニットを攻撃できる（相手のレーンとして狙える） */
+  const pupTargets = await page.evaluate(() => CQCombat.attackTargets(M, 1).join(','));
+  ok('移った自軍ユニットは自分の攻撃対象になる', pupTargets.split(',').indexOf('4') >= 0, pupTargets);
   await reopenBoard();
   /* ストーリー側のセーブに触れていないこと（フリーバトルと同じ扱い） */
   ok('盤面セットアップはストーリーのセーブを壊さない',

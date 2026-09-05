@@ -191,11 +191,12 @@
   /** ①傀儡を受けた ②全ＣＨを裏にしても相手の攻撃を止められない ③この1体でリーサル */
   function isDesperate(m, side, vstat) {
     const foe = S.otherSide(side);
-    // ① 物理的には自陣なのに操作権を奪われているレーンがある
-    const phys = S.lanesOf(side);
-    for (let k = 0; k < phys.length; k++) {
-      const ln = m.board.lanes[phys[k]];
-      if (ln.unit != null && S.controlSide(ln, phys[k]) !== side) return true;
+    // ① 自分のユニットが傀儡で相手の場へ移されている（★M7.8 WP6：物理移動方式。
+    //    相手陣営のレーンに puppeted === side のユニットが居る）
+    const foeLanes = S.lanesOf(foe);
+    for (let k = 0; k < foeLanes.length; k++) {
+      const ln = m.board.lanes[foeLanes[k]];
+      if (ln.unit != null && ln.puppeted === side) return true;
     }
     const mine = S.controlledLanesOf(m.board.lanes, side);
     const theirs = S.controlledLanesOf(m.board.lanes, foe);

@@ -22,13 +22,18 @@
   /** その陣営のレーン番号の配列 */
   function lanesOf(side) { return side === 'self' ? [0, 1, 2] : [3, 4, 5]; }
 
-  /** 傀儡(169)・カース92（傀儡化）で操作権が反転しているレーンの、実際の操作側（原作 SW568〜573）。
-   * 持ち主・被弾側もこれと同じ側に反転する（`03_combat` §7.3／`destroy()` の ownerSide 参照）。
-   * 物理的な場所（lane 0〜5）は動かさず、"どちらが操作できるか" だけを反転させる実装方針
-   * （実装計画M4）。 */
+  /** そのレーンを操作する側。
+   *
+   * ★M7.8 WP6：傀儡(169)・カース92（傀儡化）は**レーンごと相手陣営へ物理的に移動する**
+   * 方式に改めた（原作 EV0019 page4。M4 で採った「場所は動かさず操作権だけ反転する
+   * （`flipped`）」方式は、フリーユニット戦で「敵の場を空にする」勝利条件が成立しない・
+   * 傀儡されたユニットが倒されると自分のＬＰが減る、という不自然を生んでいた）。
+   * 操作側＝居る場の陣営なので、この関数は常に物理的な陣営を返す。呼び出し側（攻撃宣言・
+   * リバース・特殊行動・ＡＩ）の書き換えを避けるために関数として残してある。
+   * 「もともと誰のユニットか」は `lane.puppeted`（＝元の陣営。原作 SW568〜573）に持つ。 */
   function controlSide(lane, laneIndex) {
-    const phys = sideOf(laneIndex);
-    return lane.flipped ? otherSide(phys) : phys;
+    void lane;
+    return sideOf(laneIndex);
   }
   /** side が操作できるレーン番号の配列（ユニットが居るレーンのみ。傀儡の反転を考慮） */
   function controlledLanesOf(lanes, side) {
@@ -59,13 +64,15 @@
    *   stiff       … 硬直（原作 SW314〜319）
    *   channeled   … このターンにチャネリングされた（原作 SW583〜588。アタックできない）
    *   extraAttack … 連続攻撃(154)の2回目の権利（原作 SW526〜531。硬直をバイパスする）
-   *   flipped     … 傀儡による所有者反転（原作 SW568〜573。持ち主と居る場がズレている＝M4）
+   *   puppeted    … 傀儡(169)・カース92で**相手陣営へ移されたユニット**の元の陣営
+   *                 （'self'|'enemy'。null＝自前の場に居る。原作 SW568〜573＝M7.8 WP6）。
+   *                 立っている間は戦利品にならず、敵レーンでは傀儡ロック（固定）が付く
    *   swapped     … 身転換(142)で入れ替えられた（以後そのユニットは戦利品にならない。原作 SW251＝M4）
    */
   function emptyLane() {
     return { unit: null, baseCh: 0, channels: [],
              stiff: false, reversePtr: 0,
-             channeled: false, extraAttack: false, flipped: false, swapped: false,
+             channeled: false, extraAttack: false, puppeted: null, swapped: false,
              atk: 0, def: 0, cap: 0, count: 0, free: 0, acc: null };
   }
 
@@ -80,6 +87,7 @@
     lane.unit = unitId;
     lane.baseCh = unitStats(card, o.msEquip).ch;   // 素のＣＨ数（召還時に固定。原作 V260+L）
     lane.msEquip = o.msEquip;
+    if (o.puppeted === 'self' || o.puppeted === 'enemy') lane.puppeted = o.puppeted;   // M7.8 WP6
     lane.channels = (chs || []).map(function (ch) {
       if (typeof ch === 'number') return { card: ch, up: false, mine: true, revealed: false };
       return { card: ch.card, up: !!ch.up,

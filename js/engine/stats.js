@@ -341,12 +341,20 @@
       if (ln.acc.resist >= 1 && ln.acc.fusion >= 1) ln.acc.fusion = 0;
     });
 
-    // (10b) 傀儡(169)・カース92（傀儡化）：表向きで付いていると操作権が反転する（M4）。
-    //   物理的な場所は動かさず、S.controlSide()/controlledLanesOf() が this を参照して
-    //   「誰が操作できるか」を解決する。持ち主・被弾側の反転は combat.js の destroy() 側で扱う
-    lanes.forEach(function (ln) {
-      ln.flipped = ln.unit != null && ln.acc.puppet >= 1;
-    });
+    // (10b) 傀儡ロック（★M7.8 WP6・原作 EV0019 page3 ⑪）。
+    //   傀儡(169)・カース92は**レーンごと相手陣営へ移動する**方式になった（移動そのものは
+    //   盤面を書き換える処理なので、純粋な集計であるここには置かず combat.js の enforcePost が
+    //   `acc.puppet` を見て行う）。ここでは、**敵レーン(3〜5)に移されているユニット**に
+    //   固定(159)相当のロックを掛けるだけ——原作はＡＩが傀儡カードをリバースして外すのを
+    //   封じるためにこれを敵レーン限定で入れている（自陣レーン1〜3には同等処理が無い）。
+    //   従来の `flipped`（操作権の反転）は廃止。操作側＝居る場の陣営になった。
+    //   ロックは**非戦闘時だけ**（原作⑪「敵レーンのみ・非戦闘時」）——戦闘中に掛けると
+    //   防御側オープンフェイズが丸ごと飛ばされてしまう（固定・石化と同じ扱いになる）
+    if (!combat) {
+      lanes.forEach(function (ln, i) {
+        if (ln.unit != null && ln.puppeted && S.sideOf(i) === 'enemy') ln.acc.lock += 1;
+      });
+    }
 
     // (11) 陣営集計（霊陣）・(12) ユニット数など
     board.sideAgg = {};

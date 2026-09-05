@@ -87,6 +87,15 @@ function checkInvariants(m) {
     if (fcap != null && ln.cap > fcap) throw new Error('レーン' + i + '：戦場ルールのＣＨ上限を超えた');
     if (m.board.fieldLock && m.board.fieldLock[i] && ln.unit != null)
       throw new Error('レーン' + i + '：使用不可のレーンにユニットが立った');
+    /* M7.8 WP6 傀儡の物理移動：印（puppeted）は「相手の場に居る」ときだけ立つ。
+     * 戦闘中・連鎖中・効果処理中でなければ、傀儡の有無と印は必ず一致している */
+    if (ln.puppeted && ln.puppeted === S.sideOf(i))
+      throw new Error('レーン' + i + '：自分の場に居るのに傀儡の印が残っている');
+    if (!m.combat && !m.forcedChain && !m.pendingCurse && !(m._openHold > 0) && ln.acc) {
+      const held = ln.acc.puppet >= 1;
+      if (held && !ln.puppeted) throw new Error('レーン' + i + '：傀儡が表なのに移動していない');
+      if (!held && ln.puppeted) throw new Error('レーン' + i + '：傀儡が無いのに戻っていない');
+    }
   });
   ['self', 'enemy'].forEach(function (side) {
     const p = m.players[side];
@@ -157,7 +166,8 @@ function runMatch(seed, maxTurns, mode) {
 const runs = parseInt(process.argv[2], 10) || 300;
 const maxTurns = parseInt(process.argv[3], 10) || 80;
 const mode = process.argv[4] || 'mixed';
-const stat = { self: 0, enemy: 0, draw: 0, turns: 0, loot: 0, reloads: 0, reloadGames: 0, errors: [] };
+const stat = { self: 0, enemy: 0, draw: 0, turns: 0, loot: 0, reloads: 0, reloadGames: 0, errors: [],
+               puppet: 0, puppetBack: 0, puppetKill: 0 };   // M7.8 WP6：傀儡の移動・帰還・移動失敗の回数
 for (let seed = 1; seed <= runs; seed++) {
   try {
     const m = runMatch(seed, maxTurns, mode);
@@ -167,6 +177,11 @@ for (let seed = 1; seed <= runs; seed++) {
     const rl = m.players.self.reloads + m.players.enemy.reloads;   // M5.5：山札の再装填
     stat.reloads += rl;
     if (rl > 0) stat.reloadGames += 1;
+    m.log.forEach(function (l) {
+      if (l.indexOf('傀儡：') === 0 && l.indexOf('へ移った') >= 0) stat.puppet += 1;
+      else if (l.indexOf('傀儡が解けた：') === 0 && l.indexOf('へ移った') >= 0) stat.puppetBack += 1;
+      else if (l.indexOf('空きが無く破壊された') >= 0) stat.puppetKill += 1;
+    });
   } catch (e) {
     stat.errors.push('seed ' + seed + ': ' + e.message);
   }
@@ -174,6 +189,8 @@ for (let seed = 1; seed <= runs; seed++) {
 console.log(runs + ' 戦（mode=' + mode + '）：自陣側 ' + stat.self + ' 勝 / 敵陣側 ' + stat.enemy + ' 勝 / 決着つかず ' + stat.draw);
 console.log('平均 ' + (stat.turns / runs).toFixed(1) + ' 手番、戦利品 平均 ' + (stat.loot / runs).toFixed(2) + ' 枚、'
   + '再装填 平均 ' + (stat.reloads / runs).toFixed(2) + ' 回（発生 ' + (100 * stat.reloadGames / runs).toFixed(1) + '%）');
+console.log('傀儡の物理移動（M7.8 WP6）：相手の場へ ' + stat.puppet + ' 回 / 元の場へ帰還 ' + stat.puppetBack
+  + ' 回 / 移動先が無く破壊 ' + stat.puppetKill + ' 回');
 if (stat.errors.length) {
   console.log('\n例外 ' + stat.errors.length + ' 件:');
   stat.errors.slice(0, 10).forEach(function (e) { console.log('  ' + e); });

@@ -766,6 +766,13 @@
   }
 
   function endForcedChain(m, aborted) {
+    /* ★M7.8 WP6：後始末の間は傀儡の物理移動を待たせる（fc.target / fc.marker.lane の
+     * レーン番号で場を触るため）。抜けるときに移動する。 */
+    combatApi().holdSettle(m);
+    try { return endForcedChainBody(m, aborted); }
+    finally { combatApi().releaseSettle(m); }
+  }
+  function endForcedChainBody(m, aborted) {
     const fc = m.forcedChain;
     m.forcedChain = null;
     m.forcedCtx = null;

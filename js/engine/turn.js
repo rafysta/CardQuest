@@ -368,7 +368,7 @@
     const acc = laneAcceptsChannel(m, laneIndex);
     if (!acc.ok) return acc;
     const lane = acc.lane;
-    // 硬直するのは「付加された自陣ユニット」だけ（仕様書§4.2。傀儡の反転は操作権で判定）。
+    // 硬直するのは「付加された自陣ユニット」だけ（仕様書§4.2。傀儡で移されたユニットは居る場の陣営で判定）。
     // 相手のユニットへのチャネルで相手を行動不能にできてはいけない（2026-08-24 本人の指摘）
     const targetIsOwn = S.controlSide(lane, laneIndex) === side;
     // 閉鎖(184)・カース98：チャネリング自体ができなくなる（押し込みも不可）。
@@ -480,8 +480,8 @@
     if (laneIndex < 0 || laneIndex >= 6) return { ok: false, reason: '不正なレーンです' };
     const lane = m.board.lanes[laneIndex];
     if (lane.unit == null) return { ok: false, reason: 'ユニットが居ません' };
-    recalc(m);                                              // flipped（傀儡）・acc を最新化してから判定
-    // 傀儡(169)・カース92で操作権が反転していると、いまの操作側だけがリバースできる（M4）
+    recalc(m);                                              // acc（と傀儡の移動）を最新化してから判定
+    // 操作側＝居る場の陣営（★M7.8 WP6：傀儡で奪ったユニットは自分の場へ移ってくる）
     if (S.controlSide(lane, laneIndex) !== side) return { ok: false, reason: '自陣のユニットだけがリバースできます' };
     // 継続モードでは1階層目を開いた時点で硬直させる（2026-08-24 本人の指定）ため、
     // 「継続中のレーン自身」だけは硬直していても続きのリバースを許す（原作 SW583 の継続に相当）

@@ -1199,41 +1199,175 @@ t('魂の門：空きが無ければ得られない', () => {
   eq([m.board.lanes[0].channels.length, m.players.self.deckCount], [4, deckBefore], '変化なし');
 });
 
-section('M4: 傀儡(169)・カース92（操作権の反転）');
-t('傀儡：物理的には自陣のユニットでも、操作権は相手に移る', () => {
+section('M4→M7.8 WP6: 傀儡(169)・カース92（レーンごと相手の場へ物理移動）');
+/* ★M7.8 WP6 で方式を変更した。M4 の「場所は動かさず操作権だけ反転（flipped）」ではなく、
+ * 原作（06_skill.md §4-19 EV0019 page4/5）どおり**ユニット本体＋ＣＨを丸ごと相手陣営の
+ * 空きレーンへ移す**。移動は集計後の強制処理（combat.js enforcePost ③）で、戦闘中・連鎖中・
+ * 効果処理中は待つ。 */
+t('傀儡：表向きで付いた自陣ユニットは、レーンごと相手の場の空きレーンへ移る', () => {
   const m = mkC();
-  m.board.lanes[0] = lane(8, [up(169)]);                        // 傀儡が付いた自陣ユニット
+  m.board.lanes[0] = lane(8, [up(169), down(151)]);             // 傀儡が付いた自陣ユニット
   m.board.lanes[1] = lane(8, []);                                // 通常の自陣ユニット
-  eq(CQCombat.canAttack(m, 0).ok, false, '元の持ち主はもう動かせない');
+  CQCombat.recalc(m);
+  eq(m.board.lanes[0].unit, null, '元のレーンは空になる');
+  eq(m.board.lanes[3].unit, 8, '相手の場の若いレーン（3）に実在する');
+  eq(m.board.lanes[3].channels.map((c) => c.card), [169, 151], 'ＣＨも丸ごと付いていく');
+  eq(m.board.lanes[3].channels.map((c) => c.up), [true, false], '表裏は保持される');
+  eq(m.board.lanes[3].puppeted, 'self', '元の陣営（自分）が puppeted に残る');
+  eq(CQState.controlSide(m.board.lanes[3], 3), 'enemy', '操作側は居る場の陣営＝相手');
+  eq(CQCombat.canAttack(m, 3).ok, false, '自分のターンには相手の場に居るので動かせない');
   eq(CQCombat.canAttack(m, 1).ok, true, '傀儡されていないユニットは通常どおり');
   m.active = 'enemy';
-  eq(CQCombat.canAttack(m, 0).ok, true, '操作権を得た側が動かせる');
+  eq(CQCombat.canAttack(m, 3).ok, true, '相手のターンには相手が動かせる');
 });
-t('傀儡：新しい操作側の視点では、傀儡された自軍ユニットが攻撃対象になる', () => {
+t('傀儡：移されたユニットが自分の攻撃対象になり、倒すと相手のＬＰが減る（自分は減らない）', () => {
   const m = mkC();
+  m.board.lanes[1] = lane(8, []);                                // 攻撃側：自分
+  m.board.lanes[0] = lane(8, [up(169)]);                         // 傀儡で相手の場へ行く
+  CQCombat.recalc(m);
+  eq(CQCombat.attackTargets(m, 1), [3], '相手の場に移った自軍ユニットが対象に含まれる');
+  const r = CQCombat.declareAttack(m, 1, 3);
+  eq([r.ok, m.players.enemy.lp, m.players.self.lp], [true, 6, 10], '被弾は居る場の陣営（相手）');
+  eq(m.board.lanes[3].unit, null, '倒されて消える');
+});
+t('傀儡：自分のターン中に自分が開いた傀儡でも、移った先では硬直しない（相手の次のターンで動ける）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(169)]);
+  const r = CQTurn.reverseAction(m, 0, [1]);
+  eq(r.ok, true, 'リバースはできる');
+  eq(m.board.lanes[0].unit, null, '開いた瞬間に相手の場へ移る');
+  eq(m.board.lanes[3].unit, 8, 'レーン3に居る');
+  eq(m.board.lanes[3].stiff, false, '受け取る側のターンではないので硬直しない');
+  eq(m.reversing, null, 'リバース継続は打ち切られる');
+});
+t('傀儡：相手のターン中に相手の場へ移ったユニットは硬直する（その場で攻撃に使えない）', () => {
+  const m = mkC();
+  m.active = 'enemy';
   m.board.lanes[0] = lane(8, [up(169)]);
-  m.board.lanes[1] = lane(8, []);
-  eq(CQCombat.attackTargets(m, 1), [0], '傀儡された自軍ユニットが対象に含まれる');
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].unit, 8, '相手の場へ移る');
+  eq(m.board.lanes[3].stiff, true, '相手のターン中なので硬直');
+  eq(CQCombat.canAttack(m, 3).ok, false, 'そのターンは攻撃に使えない');
 });
-t('傀儡：破壊時のＬＰダメージは、操作権を得た側が受ける', () => {
+t('傀儡：相手の場に空きが無ければ破壊される（ＬＰは減らない・救済でも守れない）', () => {
   const m = mkC();
-  m.board.lanes[1] = lane(8, []);                                // 攻撃側：自分（操作権そのまま）
-  m.board.lanes[0] = lane(8, [up(169)]);                         // 防御側：物理的には自陣だが操作権は敵
-  const r = CQCombat.declareAttack(m, 1, 0);
-  eq([r.ok, m.players.enemy.lp, m.players.self.lp], [true, 6, 10], '被弾は操作側（敵）');
+  m.board.lanes[3] = lane(8, []); m.board.lanes[4] = lane(8, []); m.board.lanes[5] = lane(8, []);
+  m.board.lanes[0] = lane(8, [up(169), up(179)]);                // 救済(179)付き
+  CQCombat.recalc(m);
+  eq(m.board.lanes[0].unit, null, '移動先が無いので破壊される');
+  eq(m.board.lanes.filter((l) => l.unit === 8).length, 3, '相手の3体はそのまま');
+  eq([m.players.self.lp, m.players.enemy.lp], [10, 10], 'ＬＰはどちらも減らない');
+  eq(m.log.some((l) => l.indexOf('救済') >= 0 && l.indexOf('破壊されない') >= 0), false, '救済は効かない');
 });
-t('カース92（傀儡化）も同様に操作権を反転させる', () => {
+t('カース92（傀儡化）も同様にレーンごと相手の場へ移る', () => {
   const m = mkC();
   m.board.lanes[0] = lane(8, [up(92)]);
-  m.active = 'enemy';
-  eq(CQCombat.canAttack(m, 0).ok, true, 'カース92でも操作権が移る');
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].unit, 8, 'カース92でも移る');
+  eq(m.board.lanes[3].puppeted, 'self', '元の陣営は自分');
 });
-t('傀儡：メインステップのリバースも新しい操作側だけができる', () => {
+t('傀儡が失われると元の陣営へ戻る（クローズ・破壊）', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(169)]);
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].unit, 8, '相手の場に居る');
+  /* 相手が傀儡をクローズ……は敵レーンでは傀儡ロックで塞がれる（下のテスト）ので、
+   * ここでは憑依解除(101)相当の直接破壊で失わせる */
+  m.board.lanes[3].channels = [];
+  m.board.lanes[3].count = 0;
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].unit, null, '相手の場から消える');
+  eq(m.board.lanes[0].unit, 8, '自分の場の若いレーンへ戻る');
+  eq(m.board.lanes[0].puppeted, null, '印は消える');
+});
+t('傀儡ロック：敵レーンに移されたユニットは固定が付き、ＡＩ側は傀儡を剥がせない（非戦闘時のみ）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [up(169), down(151)]);
-  eq(CQTurn.reverseAction(m, 0, [2]).ok, false, '元の持ち主はリバースできない');
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].acc.lock >= 1, true, '敵レーンでは固定が付く');
   m.active = 'enemy';
-  eq(CQTurn.reverseAction(m, 0, [2]).ok, true, '新しい操作側はリバースできる');
+  eq(CQTurn.reverseAction(m, 3, [1]).ok, false, '相手は傀儡をクローズして外せない');
+  /* 逆向き：相手のユニットが自分の場へ来た場合はロック無し（原作は自陣レーン1〜3に同等処理が無い） */
+  const m2 = mkBattleBoard();
+  m2.board.lanes[3] = lane(8, [up(169), down(151)]);
+  CQCombat.recalc(m2);
+  eq(m2.board.lanes[0].unit, 8, '自分の場へ来る');
+  eq(m2.board.lanes[0].acc.lock, 0, '自陣レーンには傀儡ロックが無い');
+  eq(m2.board.lanes[0].stiff, true, '自分のターン中に来たので、このターンは硬直している');
+  m2.board.lanes[0].stiff = false;                               // 次のターンになったつもり
+  eq(CQTurn.reverseAction(m2, 0, [2]).ok, true, '自分は普通にリバースできる');
+  /* 戦闘中はロックしない（防御側オープンフェイズが飛ばされてはいけない） */
+  const m3 = mkC();
+  m3.board.lanes[1] = lane(8, []);
+  m3.board.lanes[0] = lane(8, [up(169), down(153)]);
+  CQCombat.recalc(m3);
+  const r = CQCombat.declareAttack(m3, 1, 3);
+  eq(r.ok, true, '移ったユニットへ攻撃');
+  if (m3.combat) {
+    eq(m3.board.lanes[3].acc.lock, 0, '戦闘中は傀儡ロックが掛からない');
+  }
+});
+t('傀儡：戦闘中に開かれた傀儡は、戦闘が終わってから移る', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [down(169), down(153)]);            // 自分の防御側に傀儡が伏せてある（魔力の盾で生き残る）
+  m.board.lanes[3] = lane(8, []);
+  m.active = 'enemy';
+  const r = CQCombat.declareAttack(m, 3, 0);
+  eq(r.ok, true, '相手が攻撃');
+  /* 攻撃側は開くものが無い→防御側オープンフェイズで傀儡を開く */
+  let guard = 0;
+  while (m.combat && m.combat.opener !== 'defender' && guard++ < 5) CQCombat.endOpen(m);
+  eq(!!m.combat && m.combat.opener === 'defender', true, '防御側オープンフェイズに入っている');
+  CQCombat.open(m, 1);
+  eq(!!m.combat, true, 'まだ戦闘中（魔力の盾がまだ裏）');
+  eq(m.board.lanes[0].unit, 8, '戦闘中はまだ動かない');
+  CQCombat.open(m, 2);                                           // 魔力の盾：防御650＞攻撃500で生き残る
+  fin(m);
+  eq(m.combat, null, '戦闘は終わっている');
+  eq(m.board.lanes[0].unit, null, '戦闘が終わると元のレーンから消え');
+  eq(m.board.lanes[4].unit, 8, '相手の場の空きレーン（4）へ移っている');
+  eq(m.board.lanes[4].puppeted, 'self', '元の陣営は自分');
+  eq(m.board.lanes[4].stiff, true, '相手のターン中に移ったので硬直');
+});
+t('傀儡：フリーユニット戦で、相手のユニットを傀儡で奪い切れば「敵の場を空にする」勝利が成立する', () => {
+  const m = mkC({ mode: 'field', opponentId: 101, enemyBoard: [8] });   // 敵は1体だけ
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, []);
+  m.board.lanes[3] = lane(8, [up(169)]);                         // 敵の最後の1体に傀儡
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].unit, null, '敵の場から消える');
+  eq(m.board.lanes[1].unit, 8, '自分の場の空きレーンへ来る');
+  eq(m.board.lanes[1].puppeted, 'enemy', '元は敵のユニット');
+  eq(m.winner, 'self', '敵の場が空になったので勝ち');
+});
+t('傀儡：奪った敵ユニットが自分の場で倒されても戦利品にはならない（自分のＬＰは減る）', () => {
+  const m = mkC({ mode: 'field', opponentId: 101, enemyBoard: [8, 8] });
+  m.phase = 'main';
+  m.board.lanes[3] = lane(8, [up(169)]);
+  m.board.lanes[4] = lane(8, []);
+  CQCombat.recalc(m);
+  eq(m.board.lanes[0].unit, 8, '自分の場へ来る');
+  eq(m.winner, null, '敵がまだ1体居るので決着しない');
+  m.active = 'enemy';
+  const r = CQCombat.declareAttack(m, 4, 0);
+  eq(r.ok, true, '敵が奪われたユニットを攻撃');
+  fin(m);
+  eq(m.board.lanes[0].unit, null, '倒された');
+  eq(m.players.self.lp, 10 - 4, '自分のＬＰが素のＣＨ数ぶん減る');
+  eq(m.loot.length, 0, '戦利品にはならない');
+});
+t('傀儡：セーブ（JSONクローン）で puppeted が保たれ、復元後に二重移動や勝手な帰還が起きない', () => {
+  const m = mkC();
+  m.board.lanes[0] = lane(8, [up(169), down(151)]);
+  CQCombat.recalc(m);
+  const before = JSON.stringify(m.board.lanes.map((l) => [l.unit, l.puppeted, l.channels.length]));
+  const m2 = JSON.parse(JSON.stringify(m));
+  m2.cards = m.cards; m2.rng = m.rng; m2.hooks = m.hooks;
+  CQCombat.recalc(m2);
+  const after = JSON.stringify(m2.board.lanes.map((l) => [l.unit, l.puppeted, l.channels.length]));
+  eq(after, before, '復元しても盤面は同じ');
+  eq(m2.board.lanes[3].puppeted, 'self', 'puppeted が残っている');
+  eq(S.makeLane(8, [], CARD_BY_ID, { puppeted: 'enemy' }).puppeted, 'enemy', 'makeLane でも印を渡せる');
 });
 
 /* ================= M4 v0.13: 魔法48種 ================= */
@@ -2588,25 +2722,30 @@ t('敵のユニットに仕込んだ場合は生贄を用意できず失敗す�
 });
 
 section('M5.8: 傀儡で奪ったユニットの生贄と、召還Ｌｖ1の据え置き');
-t('傀儡で操作権を奪った敵ユニットは生贄にできる（自分の場の空きへ召還）', () => {
+/* ★M7.8 WP6：傀儡で奪ったユニットは自分の場へ物理的に移ってくる。生贄はその跡地に立つ */
+t('傀儡で奪った敵ユニットは自分の場へ移り、自陣のユニットとして生贄にできる（跡地に召還）', () => {
   const m = mkBattleBoard();
-  m.board.lanes[3] = lane(2, [down(FILL), down(FILL), down(13), up(169)]);   // 表の傀儡で操作権が自分に
-  CQStats.recalc(m.board, OPT);
-  eq(CQState.controlSide(m.board.lanes[3], 3), 'self', '操作権は自分側');
-  CQTurn.reverseAction(m, 3, [3]);
-  eq(m.board.lanes[3].unit, null, '敵陣のホストが生贄になった');
-  const born = m.board.lanes.findIndex((l, i) => i < 3 && l.unit === 13);
-  eq(born >= 0, true, 'ニドヘッグは自分の場に召還される');
-  eq(m.board.lanes[born].channels.length, 2, '下の2枚を引き継ぐ');
+  m.board.lanes[3] = lane(2, [down(FILL), down(FILL), down(13), up(169)]);   // 表の傀儡
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].unit, null, '敵陣から消え');
+  eq(m.board.lanes[0].unit, 2, '自分の場のレーン0へ移ってくる');
+  eq(CQState.controlSide(m.board.lanes[0], 0), 'self', '操作権は自分側（居る場の陣営）');
+  m.board.lanes[0].stiff = false;                                 // 自分のターン中に来たので硬直している→次のターンのつもり
+  const r = CQTurn.reverseAction(m, 0, [3]);
+  eq(r.ok, true, 'リバースできる');
+  eq(m.board.lanes[0].unit, 13, 'ホストが生贄になり、跡地にニドヘッグが立つ');
+  eq(m.board.lanes[0].puppeted, null, '召還されたニドヘッグは自前のユニット（傀儡の印は引き継がない）');
+  eq(m.board.lanes[0].channels.length, 2, '下の2枚を引き継ぐ');
 });
-t('傀儡で奪っても、自分の場に空きが無ければ召還は失敗する', () => {
+t('傀儡で奪おうとしても、自分の場に空きが無ければそのユニットは破壊される（ＬＰは減らない）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, []); m.board.lanes[1] = lane(8, []); m.board.lanes[2] = lane(8, []);
   m.board.lanes[3] = lane(2, [down(FILL), down(FILL), down(13), up(169)]);
-  CQStats.recalc(m.board, OPT);
-  CQTurn.reverseAction(m, 3, [3]);
-  eq(m.board.lanes[3].unit, 2, 'ホストは残る');
-  eq(m.board.lanes[3].channels.some((c) => c.card === 13), false, 'ニドヘッグは破壊された');
+  const lp = [m.players.self.lp, m.players.enemy.lp];
+  CQCombat.recalc(m);
+  eq(m.board.lanes[3].unit, null, '移動先が無いので破壊される');
+  eq(m.board.lanes.some((l) => l.unit === 13), false, '積んであったニドヘッグも失われる');
+  eq([m.players.self.lp, m.players.enemy.lp], lp, 'ＬＰはどちらも減らない');
 });
 t('召還Ｌｖ1のユニットは従来どおり（生贄なし・引き継ぎなし・空きレーンへ）', () => {
   const m = ritualBoard([down(19)]);                     // 召還Ｌｖ1のユニットを1階層目に

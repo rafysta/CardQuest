@@ -245,10 +245,14 @@ function handSide() { return humanSide() || 'self'; }
 /** いま人が戦闘のオープンフェイズを操作しているか（UI.mode に依存しない判定） */
 function humanOpening() { return !!(M && M.combat && !M.winner && humanSide()); }
 function laneSide(i) { return i < 3 ? 'self' : 'enemy'; }
-/** そのレーンのユニットの持ち主（傀儡で反転していることがある） */
-function unitOwner(i) {
+/** そのレーンのユニットを操作する側＝居る場の陣営（★M7.8 WP6：傀儡はレーンごと相手の場へ
+ * 物理的に移る方式になったので、操作側と場所がズレることは無い）。
+ * 「もともと誰のユニットか」は unitHome() で別に見る */
+function unitOwner(i) { return laneSide(i); }
+/** そのレーンのユニットの元の陣営（傀儡で移されていれば ln.puppeted、ふつうは居る場の陣営） */
+function unitHome(i) {
   const ln = M.board.lanes[i];
-  return ln.flipped ? otherSide(laneSide(i)) : laneSide(i);
+  return ln.puppeted || laneSide(i);
 }
 /** 中身が見えるか（表・公開済み・自分が置いたカード） */
 function chKnown(ch) {
@@ -1226,7 +1230,7 @@ function unitHTML(i) {
   const ln = M.board.lanes[i];
   const card = CARD_BY_ID[ln.unit];
   const own = unitOwner(i) === 'self';
-  const pup = unitOwner(i) !== laneSide(i);
+  const pup = unitHome(i) !== laneSide(i);            // 傀儡で相手の場から移ってきた／持って行かれた
   const cls = (v, base) => (v !== base ? (v > base ? ' up' : ' dn') : '');
   const tags = [];
   if (ln.stiff && !ln.extraAttack) tags.push('<div class="st-tag">行動済</div>');
@@ -1552,9 +1556,10 @@ function infoCardHTML(card, o) {
   if (back) foot = '<p class="i-t dim">※ いまは裏向きです。自分のカードなので内容が分かります（相手には見えません）。</p>';
   else if (st === 'possess') foot = '<p class="i-t pup">憑依：通常攻撃で倒されたユニットが、カースになって取り憑いています。クローズはできません。</p>';
   if (pup) {
+    /* ★M7.8 WP6：own＝いま操作できる側（居る場の陣営）。傀儡は相手の場へ物理的に移る */
     foot += own
-      ? '<p class="i-t pup">傀儡：自分のモンスターですが、いまは<b>相手が操作しています</b>。</p>'
-      : '<p class="i-t pup">傀儡：相手のモンスターですが、いまは<b>自分が操作できます</b>。</p>';
+      ? '<p class="i-t pup">傀儡：相手のモンスターですが、いまは<b>自分の場に移って自分が操作できます</b>。倒されると自分のＬＰが減ります。傀儡が外れると相手の場へ戻ります。</p>'
+      : '<p class="i-t pup">傀儡：自分のモンスターですが、いまは<b>相手の場に移って相手が操作しています</b>。倒しても戦利品にはなりません。傀儡が外れると自分の場へ戻ります。</p>';
   }
   return `<div class="i-art ${card.t} ${back ? 'downed' : ''}">${artInner(card)}</div>
     <div class="i-tag">${TYPE_NAME[card.t]}</div>${own === undefined ? '' : ownTagHTML(own, unit)}

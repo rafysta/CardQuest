@@ -57,15 +57,15 @@
   /* ================= ① 攻撃宣言 ================= */
 
   /** 攻撃側としての適格性（原作 EV0006 page7 → SW357）。
-   * 傀儡(169)・カース92で操作権が反転しているユニットは、物理的な場所に関わらず
-   * いまの操作側（S.controlSide）だけが動かせる（M4） */
+   * 操作側＝居る場の陣営（S.controlSide）。傀儡(169)・カース92で奪ったユニットは
+   * ★M7.8 WP6 で自分の場へ物理的に移ってくるので、自陣のユニットとして普通に動かせる */
   function canAttack(m, laneIndex) {
     if (m.winner) return { ok: false, reason: '対局は終了しています' };
     if (m.phase !== 'main') return { ok: false, reason: 'メインステップではありません' };
     if (laneIndex < 0 || laneIndex >= 6) return { ok: false, reason: '不正なレーンです' };
     const ln = m.board.lanes[laneIndex];
     if (ln.unit == null) return { ok: false, reason: 'ユニットが居ません' };
-    recalc(m);                                              // flipped（傀儡）・acc を最新化してから判定
+    recalc(m);                                              // acc（と傀儡の移動）を最新化してから判定
     if (S.controlSide(ln, laneIndex) !== m.active) return { ok: false, reason: '自陣のユニットだけが攻撃できます' };
     if (ln.channeled) return { ok: false, reason: 'このターンにチャネリングしたユニットは攻撃できません' };
     if (m.reversing === laneIndex) return { ok: false, reason: 'リバースしたユニットはこのターン攻撃できません' };  // 原作 SW322
@@ -75,7 +75,7 @@
   }
 
   /** 防御側としての適格性（原作 EV0006 page7 → SW358）。追跡は制限をすべて無視する。
-   * 対象になりうるのは「相手側が操作しているレーン」（傀儡の反転を考慮。M4） */
+   * 対象になりうるのは「相手側のレーン」（傀儡で移されたユニットも、いま居る場の陣営で扱う） */
   function canTarget(m, atkLane, defLane) {
     const a = canAttack(m, atkLane);
     if (!a.ok) return a;
@@ -99,7 +99,7 @@
   }
 
   /** 攻撃できる相手レーンの一覧（ＵＩ・ＡＩ用）。全6レーンを走査する
-   * （傀儡で操作権が反転していると、相手のユニットが物理的には自陣側に居ることがあるため） */
+   * （canTarget が陣営を判定するので、ここで絞らない） */
   function attackTargets(m, atkLane) {
     const res = [];
     if (!canAttack(m, atkLane).ok) return res;
@@ -247,6 +247,13 @@
 
   /** オープンによる割り込み処理（原作 EV0182 ＣＨオープン処理） */
   function onOpen(m, laneIndex, layer, ch, opts) {
+    /* ★M7.8 WP6：効果の処理中は傀儡の物理移動を待たせる（処理の途中でレーンが動くと、
+     * laneIndex を握っている効果処理が別のユニットを触ってしまう）。抜けるときに移動する。 */
+    holdSettle(m);
+    try { return onOpenBody(m, laneIndex, layer, ch, opts); }
+    finally { releaseSettle(m); }
+  }
+  function onOpenBody(m, laneIndex, layer, ch, opts) {
     const id = ch.card;
     if (id >= 1 && id <= 100) {
       // ユニット固有能力「開：」型（M4 v0.14）：リバース召還より前に解決し、無効・抑制を迂回する
@@ -285,14 +292,16 @@
     // ① 戦闘中は儀式ができない（オープンフェイズでのリバース召還は必ず失敗する）
     if (m.combat) return { ok: false, result: 'ritualCombat', reason: '戦闘中は生贄を捧げられず、' };
     // ② 生贄にできるのは「そのカードを置いた本人が操作している」ユニットだけ。
-    //    敵のユニットに仕込んだ場合は生贄を用意できない。傀儡で操作権を奪ったユニットは生贄にできる
+    //    敵のユニットに仕込んだ場合は生贄を用意できない。傀儡で奪ったユニットは
+    //    （★M7.8 WP6 で自分の場へ物理的に移ってくるので）自陣のユニットとして生贄にできる
     if (S.controlSide(ln, laneIndex) !== destSide)
       return { ok: false, result: 'ritualFoe', reason: '生贄にできるユニットが無く、' };
     // ③ 救済(179)／救済能力（11 ケツァルコアトル固有）で守られたユニットは生贄にできない
     if (ln.acc.salvation >= 1)
       return { ok: false, result: 'ritualSalvation', reason: '救済に守られたユニットは生贄にできず、' };
-    // ④ 置き場所：ふつうはホストの跡地。傀儡で奪った相手陣のユニットを生贄にしたときだけ、
-    //    自分の場に空きレーンが必要（無ければ失敗）
+    // ④ 置き場所：ホストの跡地（操作側＝居る場の陣営なので、ここは常に成立する）。
+    //    下の「空きレーンを探す」経路は M4 の flipped 方式（操作権だけ反転）の名残で、
+    //    いまは通らないが安全のため残してある
     if (S.sideOf(laneIndex) === destSide) return { ok: true, dest: laneIndex };
     // M6 戦場ルール laneLock：ふさがれたレーンは召還先にできない（Field.freeLanesOf に集約）
     const dest = Field.freeLanesOf(m, destSide)[0];
@@ -314,7 +323,14 @@
    *   ② 融合解除（page8）：融合(162)が封印やクローズで失われたレーンに、表向きのまま
    *      潜行しているユニット(1〜89)が残っていたら、1体ずつ分離召還する。
    *
-   * 順序は原作どおり ①→②。破壊は通常攻撃ではない扱い＝救済(179)で守られ、戦利品にもならない。 */
+   * 順序は原作どおり ①→②。破壊は通常攻撃ではない扱い＝救済(179)で守られ、戦利品にもならない。
+   *
+   *   ③ 傀儡の移動（★M7.8 WP6・原作 EV0019 page4／page5）：傀儡(169)・カース92が表向きで
+   *      付いたユニットを**レーンごと相手陣営の空きレーンへ移す**。傀儡が失われたら元の陣営へ戻す。
+   *      原作はこれを「戦闘中でも魔法処理中でもないとき」だけ走らせる（EV0019 page3 ⑱）ので、
+   *      戦闘中（m.combat）・強制リバース連鎖中（m.forcedChain）・カード効果の処理中
+   *      （m._openHold＞0。onOpen が立てる）・憑依の予約が残っている間（m.pendingCurse）は
+   *      動かさない。戦闘中に開かれた傀儡は、戦闘終了の recalc で移動する。 */
   function enforcePost(m) {
     if (!m || !m.board || m._enforcing) return;      /* 再入防止（destroy が recalc を呼ぶため） */
     m._enforcing = true;
@@ -323,6 +339,9 @@
       let again = true;
       while (again && guard++ < 24) {
         again = false;
+        // ③ 傀儡の移動・帰還（M7.8 WP6）。①②より先に見る——移動先で集計が変わるので、
+        //    緊急抵抗・融合解除は移動後の盤面で判定させる
+        if (puppetSettle(m)) { recalc(m); again = true; continue; }
         // ① 緊急抵抗
         for (let i = 0; i < m.board.lanes.length; i++) {
           const ln = m.board.lanes[i];
@@ -359,6 +378,83 @@
     } finally {
       m._enforcing = false;
     }
+  }
+
+  /* ==== 傀儡の物理移動（★M7.8 WP6・原作 06_skill.md §4-19 `EV0019 page4/page5`） ==========
+   *
+   * 原作：
+   *   page4（発動）… ユニットが居て S(613,L)≧1 で、まだ移っていない（SW[567+L]=OFF）レーンを、
+   *     相手陣営の空きレーン（若い順）へ**ユニット本体＋階層1〜6を丸ごと**移送する。
+   *     裏／所有者／既知の3フラグは保持。移動先に空きが無ければ（相手ユニット3体）**破壊**
+   *     ——ただし SW574=ON なので**ＬＰダメージも憑依も発生しない**（SW550=ON＝通常攻撃扱いで
+   *     救済(179)には守られない）。相手のターン中に移ったなら硬直させる。
+   *   page5（解除）… 傀儡が失われた（S(613,L)=0）のに移されたまま（SW[567+L]=ON）のレーンを
+   *     同じ手順で元の陣営へ戻す。
+   *
+   * CardQuest での置き換え：
+   *   ・「移されている」の印は `lane.puppeted`（元の陣営。null＝自前の場）。
+   *   ・移動先の候補は Field.freeLanesOf（M6 戦場ルールでふさがれたレーンは使わない）。
+   *   ・移動失敗の破壊は destroy(normalAttack:true, suppress:true, noLoot:true)＝
+   *     救済を迂回・ＬＰと憑依を抑止・戦利品も出さない（原作の SW571 条件は移動元レーンの
+   *     フラグを見ていて解釈が割れるため、**戦利品は通常攻撃で倒したときだけ**という
+   *     CardQuest の規則のほうに揃えた）。
+   *   ・移った先で `channeled`／`extraAttack`／`reversePtr` は消す（原作「元レーンのステータス
+   *     変数を全消去」）。硬直は「受け取る側のターン中に移った」ときだけ付ける＝その場で
+   *     ただちに攻撃に使えない。それ以外は次の自分のターン開始で解除されるので付けない。
+   *   ・帰還も同じ手順。元の陣営に空きが無ければ、やはりＬＰなしで破壊される。
+   * 1回の呼び出しで1レーンだけ動かし、動いたら true を返す（enforcePost が recalc して回し直す）。 */
+  function puppetSettle(m) {
+    if (m.combat || m.forcedChain || m.pendingCurse) return false;
+    if (m._openHold > 0) return false;
+    const lanes = m.board.lanes;
+    for (let i = 0; i < lanes.length; i++) {
+      const ln = lanes[i];
+      if (ln.unit == null || !ln.acc) continue;
+      const here = S.sideOf(i);
+      const held = ln.acc.puppet >= 1;
+      if (held && !ln.puppeted) {                              // page4：相手陣営へ
+        puppetMove(m, i, other(here), here, '傀儡');
+        return true;
+      }
+      if (!held && ln.puppeted) {                              // page5：元の陣営へ
+        /* 元の陣営に居るのに印が残っている（セーブの復元など）＝印だけ消す */
+        if (ln.puppeted === here) { ln.puppeted = null; return true; }
+        puppetMove(m, i, ln.puppeted, null, '傀儡が解けた');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** レーン from のユニットを destSide の空きレーンへ移す。mark＝移動後に付ける puppeted の値
+   * （相手陣営へ行くときは元の陣営、帰るときは null）。空きが無ければ破壊する。 */
+  function puppetMove(m, from, destSide, mark, label) {
+    const ln = m.board.lanes[from];
+    const unitId = ln.unit;
+    const dest = Field.freeLanesOf(m, destSide)[0];
+    if (dest === undefined) {
+      note(m, label + '：' + nameOf(m, unitId) + ' は' + jp(destSide) + 'の場に空きが無く破壊された（ＬＰは減らない）');
+      destroy(m, from, { normalAttack: true, suppress: true, noLoot: true });
+      return;
+    }
+    m.board.lanes[from] = S.emptyLane();
+    ln.puppeted = mark;
+    ln.channeled = false;
+    ln.extraAttack = false;
+    ln.reversePtr = 0;
+    ln.stiff = (m.active === destSide);                        // 受け取る側のターン中なら硬直
+    m.board.lanes[dest] = ln;
+    if (m.reversing === from) m.reversing = null;              // 続きのリバースはもうできない
+    note(m, label + '：' + nameOf(m, unitId) + ' が' + jp(destSide) + 'の場（レーン' + dest + '）へ移った');
+    Turn.checkResult(m);                                       // フリーユニット戦：敵の場が空になれば勝ち
+  }
+
+  /** カード効果の処理中は傀儡の移動を待たせる（onOpen・強制リバース連鎖の後始末が使う）。
+   * release で 0 に戻ったとき recalc して、待たせていた移動をその場で行う。 */
+  function holdSettle(m) { m._openHold = (m._openHold || 0) + 1; }
+  function releaseSettle(m) {
+    m._openHold = Math.max(0, (m._openHold || 0) - 1);
+    if (m._openHold === 0) recalc(m);
   }
 
   function reverseSummon(m, laneIndex, layer, ch) {
@@ -527,7 +623,10 @@
     const normal = !!o.normalAttack;
     const inBattle = !!m.combat && !o.magic;
     const side = S.sideOf(laneIndex);
-    const ownerSide = ln.flipped ? other(side) : side;    // 傀儡で持ち主が反転しているか
+    /* ★M7.8 WP6：被弾側＝**居る場の陣営**。傀儡で相手陣営に移されたユニットが倒されれば、
+     * 移動先の陣営のＬＰが減る（原作 CE0167 の SW568〜573 と同じ結果。従来の flipped 方式でも
+     * 結果は同じだったが、いまは物理的に移っているので陣営をそのまま見ればよい）。 */
+    const ownerSide = side;
     const unitId = ln.unit, chDmg = ln.baseCh;            // ＬＰダメージ＝カード記載の素のＣＨ数
 
     // [1] 不死(177)：戦闘中かつ魔法処理中でなければ、ＬＰダメージだけ受けて生き残る
@@ -560,8 +659,12 @@
       m.players[ownerSide].hand.push(28);
       note(m, nameOf(m, 28) + ' は手札に戻った');
     }
-    // [6] 戦利品：フリーユニット戦で、敵陣のユニットを通常攻撃で倒したときだけ
-    if (!o.magic && normal && side === 'enemy' && !ln.flipped && !ln.swapped &&
+    // [6] 戦利品：フリーユニット戦で、敵陣のユニットを通常攻撃で倒したときだけ。
+    //     傀儡で移されているユニット（puppeted）は取れない（原作 CE0170〜0172 の SW571 条件。
+    //     ★M7.8 WP6：自分のユニットが敵陣に移されて自分で倒した場合も、敵のユニットが自陣に
+    //     移されて敵に倒された場合も、どちらも戦利品にはならない）。noLoot は傀儡の移動失敗
+    //     （移動先が満杯）による破壊で使う
+    if (!o.magic && normal && side === 'enemy' && !ln.puppeted && !ln.swapped && !o.noLoot &&
         m.opponentId >= 101 && m.loot.length < LOOT_MAX) {
       m.loot.push(unitId);
       note(m, '戦利品：' + nameOf(m, unitId));
@@ -730,7 +833,7 @@
   }
 
   const api = {
-    enforcePost,
+    enforcePost, holdSettle, releaseSettle, recalc,
     canAttack, canTarget, attackTargets, declareAttack,
     canOpenPhase, openableLayers, openerLane, openerSide, open, endOpen, onOpen, ritualCheck,
     destroy, expireMagic, applyPendingCurse,
