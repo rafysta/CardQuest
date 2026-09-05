@@ -73,15 +73,18 @@ def save_optimized(im, dst):
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# js/run/areas.js の CQAreas.enemyPool() の出力をエリアごとに合算した一覧（2026-08-26 時点）。
-# 草原: 8,7,23,24,32,41,1,29,33,21,70
-# 森  : 28,23,27,31,44,5,25,33,68,65,67,35
+# M8.1 の敵プール（2026-09-06 更新）：
+# 草原 + 森 + 山地 + 海辺 + 砂漠 + 荒野 の全エリアの敵カード ID
+# 計算コマンド：
+#   node -e "const fs=require('fs');const d=JSON.parse('['+fs.readFileSync('js/data.js','utf8').match(/const CARDS = \[([\s\S]*?)\];/)[1]+']');
+#   ['草原','森','山地','海','砂漠','荒野'].forEach(t=>{const p=d.filter(c=>c.t==='U'&&c.id!==64&&c.p>0&&c.g.indexOf(t)>=0).sort((a,b)=>a.p-b.p);console.log(t+': '+p.map(c=>c.id).join(','))});"
 ENEMY_IDS = sorted(set([
-    1, 5, 7, 8, 21, 23, 24, 25, 27, 28, 29, 31, 32, 33, 35, 41, 44, 65, 67, 68, 70,
+    1, 4, 5, 6, 7, 8, 9, 20, 21, 23, 24, 25, 26, 27, 28, 29, 31, 32, 33, 36, 37, 40, 41, 42, 44, 45, 46, 47, 48, 49, 50, 51, 59, 65, 67, 68, 70,
 ]))
 
 # assets/masters/<name>.png → assets/masters/<name>_cut.png
-MASTERS = ['m_grassland', 'm_forest']
+# M8.1 時点での新しいエリアのボス肖像を追加
+MASTERS = ['m_grassland', 'm_forest', 'm_mountain', 'm_coast', 'm_desert']
 
 
 def main():

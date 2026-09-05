@@ -15,6 +15,7 @@
   }
   const CQAreas = need('areas.js') || global.CQAreas;
   const CQMap = need('map.js') || global.CQMap;
+  const CQOpponents = need('../opponents.js') || global.CQOpponents;
   const CQTurnRef = (typeof require === 'function' && typeof module !== 'undefined')
     ? require('../engine/turn.js') : global.CQTurn;
   const CQCollection = (typeof require === 'function' && typeof module !== 'undefined')
@@ -78,6 +79,14 @@
 
   /** ボスのデッキ：プール上位（価格上限area.bossPriceMax以下）を集めて組む */
   function buildBossDeck(cards, area) {
+    /* M8.1 WP2：エリアに本物のマスター（area.bossId）が割り当たっていれば、原作の
+     * デッキを40枚化したもの（js/opponents.js）をそのまま使う。まだ割り当てが無い
+     * エリア（草原・森は WP3 で bossId が付くまでの間）は、従来どおりの簡易生成に
+     * フォールバックする——挙動を変えずに済むための互換パスであり、恒久的な仕様ではない。 */
+    if (area.bossId && CQOpponents) {
+      const real = CQOpponents.bossDeckArray(area.bossId, cards);
+      if (real && real.length) return real;
+    }
     const pool = CQAreas.enemyPool(cards, area.id).filter(function (e) { return e.price <= area.bossPriceMax; });
     const top = pool.slice(-8);   /* 上位8種を薄く混ぜる（1種に偏らせない。理由は buildBattleDeck 参照） */
     const units = [];

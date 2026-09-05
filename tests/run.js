@@ -7266,6 +7266,60 @@ t('★40 スピアバードだけは既に判明している札も再確認で�
   eq(uf(m2, 48).targets, [], '48/49 は既知の札を候補にしない');
 });
 
+
+section('M8.1 WP2: 対戦相手データ（js/opponents.js）');
+
+const CQOpponents = require(path.join(root, 'js/opponents.js'));
+
+t('闘技場マスター19人ぶんのデッキがある（原作18人＋バルザミコス）', () => {
+  eq(CQOpponents.ids().length, 19, '1〜19（8番を除く18人）＋99の19本');
+});
+
+CQOpponents.ids().forEach((id) => {
+  t(`マスター${id}：40枚デッキ・実在ID・同種3枚以下（ピッグマン除く）`, () => {
+    const deck = CQOpponents.deck40(id, CARD_BY_ID);
+    const total = Object.keys(deck).reduce((a, k) => a + deck[k], 0);
+    eq(total, 40, '40枚ちょうど');
+    Object.keys(deck).forEach((k) => {
+      const cid = +k;
+      if (!CARD_BY_ID[cid]) { fail++; failures.push(`✗ [M8.1 WP2] マスター${id} — カード${cid}が実在しない`); }
+      if (cid !== 8 && deck[k] > 3) { fail++; failures.push(`✗ [M8.1 WP2] マスター${id} — カード${cid}が${deck[k]}枚（3枚超）`); }
+    });
+  });
+});
+
+t('convert50to40：空白(180)を除き、ユニットを残し、40枚に揃える', () => {
+  const raw = { 1: 3, 2: 2, 101: 10, 102: 10, 180: 5 };  // ユニット5・魔法20・空白5＝合計30…下のケースで検証
+  const conv = CQOpponents.convert50to40(raw, CARD_BY_ID);
+  eq(conv[180], undefined, '空白は残らない');
+  eq(conv[1], 3, 'ユニットは減らない');
+  eq(conv[2], 2, 'ユニットは減らない');
+  const total = Object.keys(conv).reduce((a, k) => a + conv[k], 0);
+  eq(total, 25, '空白ぶんを除いた総数（30-5）のまま＝40未満なら削らない');
+});
+
+t('convert50to40：超過ぶんは魔法・技能から多い順に削る', () => {
+  const raw = { 1: 3, 101: 20, 102: 20, 180: 3 };  // ユニット3＋魔法40＋空白3＝46枚
+  const conv = CQOpponents.convert50to40(raw, CARD_BY_ID);
+  const total = Object.keys(conv).reduce((a, k) => a + conv[k], 0);
+  eq(total, 40, '空白を除いた43枚から3枚削って40枚');
+  eq(conv[1], 3, 'ユニットは1枚も削らない');
+});
+
+t('buildBossDeck：エリアに bossId があれば opponents.js のデッキをそのまま使う', () => {
+  const fakeArea = { id: 'test-area', bossId: 11, bossPriceMax: 999999 };
+  const deck = CQRun.buildBossDeck(CARD_BY_ID, fakeArea);
+  eq(deck.length, 40, 'マスター11の40枚デッキ');
+  eq(deck, CQOpponents.bossDeckArray(11, CARD_BY_ID), 'opponents.js の変換結果と一致');
+});
+
+t('buildBossDeck：bossId が無いエリアは従来どおりの簡易生成（草原・森は未変更）', () => {
+  const area = CQAreas.get('grassland');
+  const deck = CQRun.buildBossDeck(CARD_BY_ID, area);
+  eq(deck.length, CQRun.DECK_SIZE, '従来どおりDECK_SIZE枚');
+  eq(area.bossId, undefined, '草原にはまだ bossId が付いていない（M8.1 WP3で付ける）');
+});
+
 /* ================= 結果 ================= */
 console.log(`\n${pass} passed / ${fail} failed`);
 if (failures.length) { console.log('\n' + failures.join('\n\n')); process.exit(1); }
