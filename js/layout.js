@@ -138,12 +138,15 @@ function startRunBattle(setup, onOver) {
    * 入れ替わるので、step() が非同期に手番を進めた後だと当てにならない）。 */
   const first = M.first;
   showScreen('screen-battle');     /* タブは「ラン」のまま動かさない（2026-08-29） */
+  abandonStep();                   /* 前の対戦の進行・演出を捨てる（2026-09-05） */
   renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
-  step();
   /* バトル画面が表示されると同時に先攻ルーレットを見せる。結果はもう決定済み（上のfirst。
    * CQRun.battleSetup の first＝戦闘シードから決定的に決まっている）なので、ここでは
-   * 乱数を使わず、その結果を演出として見せるだけ。 */
+   * 乱数を使わず、その結果を演出として見せるだけ。
+   * ★step() より先に呼ぶこと：runStep は最初の await までは同期で走るので、後から
+   * ルーレットを出すと最初の手番（ドロー）がルーレットの下で先に進んでしまう（2026-09-05）。 */
   showFirstTurnRoulette(first);
+  step();
 }
 
 /** 先攻／後攻ルーレット（M6.6 WP5・追補§4）。黒カットイン→中央の羅針盤（矢印は画像に
@@ -165,9 +168,16 @@ const FTR_HOLD_MS = 1000;                  /* 停止後、そのまま見せる�
 const FTR_FADE_MS = 450;                   /* 消えるときのフェード */
 const FTR_TURNS = 6;                       /* 何周回してから止まるか */
 
+/** ルーレットが消えるまで手番の進行を待たせるための約束（runStep が見る）。
+ * ★2026-09-05 本人指摘：相手が先攻のとき、ルーレットが回っている最中に相手の最初の手番が
+ * 済んで「あなたの手番」の帯が出てしまい、そのあとにコンパスが「後攻」と止まる、という
+ * 順序の逆転が起きていた。ルーレットの間は手番を進めない。 */
+let INTRO_WAIT = null;
 function showFirstTurnRoulette(winner) {
   const app = document.getElementById('app');
   if (!app) return;
+  let introDone = null;
+  INTRO_WAIT = new Promise(function (res) { introDone = res; });
   /* 針は画像に右向きで焼き込まれている：0°＝右＝自分が先攻、180°＝左＝相手が先攻。
    * 常に「何周ぶんか＋最終角」という累積値にしておくことで、逆回転が起きない。 */
   const endDeg = FTR_TURNS * 360 + (winner === 'enemy' ? 180 : 0);
@@ -200,6 +210,8 @@ function showFirstTurnRoulette(winner) {
     gone = true;
     ov.classList.add('fade-out');           /* CSS側で opacity を FTR_FADE_MS かけて0へ */
     setTimeout(function () { ov.remove(); }, FTR_FADE_MS + 60);
+    INTRO_WAIT = null;
+    if (introDone) introDone();             /* ここから手番が進む（runStep が待っている） */
   }
 
   ov.addEventListener('click', function () { settle(true); });
@@ -499,6 +511,7 @@ function startFreeBattle() {
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
   showScreen('screen-battle');
+  abandonStep();                   /* 前の対戦の進行・演出を捨てる（2026-09-05） */
   renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
   step();
 }
@@ -778,6 +791,7 @@ function startBoardBattle() {
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null; UI.pick = null; UI.chainFx = null;
   showScreen('screen-battle');
+  abandonStep();                   /* 前の対戦の進行・演出を捨てる（2026-09-05） */
   renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
   step();
 }
@@ -976,7 +990,8 @@ function snapFx() {
     lp: { self: M.players.self.lp, enemy: M.players.enemy.lp },
     logLen: M.log.length,
     lastBattle: M.lastBattle,
-    combat: !!M.combat
+    combat: !!M.combat,
+    m: M                      /* どの対戦の控えか（対戦が差し替わったら演出を捨てる） */
   };
 }
 let FXPREV = null;
@@ -1170,6 +1185,7 @@ async function fxAct(fn) {
 /** 1手の差分をすべて演出して描き直す。戻り値＝animateFx と同じ「待つべきミリ秒」 */
 async function playChanges(prev) {
   if (!prev) { renderAll(); return 0; }
+  if (prev.m && prev.m !== M) return 0;               /* 前の対戦の控え：新しい対戦には何もしない */
   const newLines = M.log.slice(prev.logLen);
   const battle = (M.lastBattle && M.lastBattle !== prev.lastBattle) ? M.lastBattle : null;
   /* この1手で戦闘が宣言されたか：まだ戦闘中なら M.combat、宣言→即判定なら lastBattle */
@@ -1202,6 +1218,7 @@ async function playChanges(prev) {
     if (!move) await sleep(fxMs('telop'));
     else await sleep(Math.round(fxMs('telop') * 0.4));    /* 少し見せてから滑らせ始める */
   }
+  if (prev.m && prev.m !== M) return 0;               /* 演出の途中で対戦が差し替わった */
   return animateFx(prev);
 }
 
@@ -1386,25 +1403,48 @@ async function playAimedDestroy(aimed) {
 /** 人の入力が要るところまで進める。UIの操作は必ず最後にこれを呼ぶ。
  * 相手の手番と戦闘のオープンは1手ずつ、間（FX.step）を置いて見せる */
 let stepQueued = false;
+/* 対戦の世代番号（2026-09-05）。新しい対戦を始めたら +1 して、前の対戦の演出を待っていた
+ * runStep が目を覚ましたとき「もう自分の対戦ではない」と分かるようにする。演出が長くなった
+ * （M7.9）ことで、前の対戦の進行が残ったまま次の対戦が始まると busy が立ちっぱなしになり、
+ * 新しい盤面への最初の操作が無視されることがあった（verify-run で判明）。 */
+let MATCH_GEN = 0;
+/** 新しい対戦を始める側が呼ぶ：前の対戦の進行・待ち・表示物を捨てる */
+function abandonStep() {
+  MATCH_GEN += 1;
+  busy = false; stepQueued = false;
+  liveLogMark = null; clearTimeout(revealTimer); revealTimer = null;
+  const r = tapResolve; tapResolve = null;
+  const g = document.getElementById('tap-gate'); if (g) g.classList.remove('on');
+  if (r) r();                                            /* 待っていた古い進行を起こして終わらせる */
+  hideBanner();
+  document.querySelectorAll('.cq-telop, .cq-verdict, .cq-lp-float, .cq-slide-ghost').forEach((e) => e.remove());
+  const tc = document.getElementById('turn-cut'); if (tc) tc.classList.remove('on');
+}
 function step() {
   if (busy) { stepQueued = true; return; }
   busy = true;
-  runStep()
+  const gen = MATCH_GEN;
+  runStep(gen)
     .catch((e) => { console.error(e); })
     .then(() => {
+      if (gen !== MATCH_GEN) return;                     /* 古い対戦の進行：新しい対戦には触れない */
       busy = false;
       if (stepQueued) { stepQueued = false; step(); }
     });
 }
 
-async function runStep() {
+async function runStep(gen) {
+  const stale = () => gen !== MATCH_GEN;
   const mark = logMark === null ? M.log.length : logMark;
   logMark = null;
   liveLogMark = mark;                                   /* B1：この手番のログを逐次表示するための起点 */
   const pv = FXPREV; FXPREV = null;
   if (pv) { const w = await playChanges(pv); if (w) await sleep(w); }   /* 人の操作直後の変化をまず見せる */
+  if (stale()) return;
   let guard = 0;
   while (M && !M.winner && !M.fled && guard++ < 500) {   /* M.fled＝逃走成功。勝敗は付かないが対局は終わり */
+    if (INTRO_WAIT) await INTRO_WAIT;                 /* 先攻ルーレットが消えるまで手番を進めない */
+    if (stale()) return;
     if (M.combat) {                                   /* 戦闘中のオープンフェイズ */
       if (!isAuto(CQCombat.openerSide(M))) break;
       await fxAct(() => CQAi.openStep(M));            /* 相手のオープンは1枚ずつめくって見せる */
@@ -1413,6 +1453,7 @@ async function runStep() {
     if (isAuto(M.active)) {                           /* 相手の手番（自動） */
       if (M.phase === 'draw') {
         await playTurnCut(M.active);                  /* A5：「相手の手番」の帯 */
+        if (stale()) return;
         CQTurn.beginTurn(M); renderAll(); continue;
       }
       if (M.phase === 'discard') { CQAi.discardStep(M); continue; }
@@ -1420,19 +1461,22 @@ async function runStep() {
         let n = 0;
         while (n++ < 4 && M.phase === 'placement') {
           if (!(await fxAct(() => CQAi.placementStep(M)))) break;
+          if (stale()) return;
         }
         if (M.phase === 'placement') CQTurn.endPlacement(M);
         continue;
       }
-      if (M.phase === 'main') { if (await fxAct(() => CQAi.mainStep(M))) continue; CQTurn.endTurn(M); continue; }
+      if (M.phase === 'main') { if (await fxAct(() => CQAi.mainStep(M))) continue; if (stale()) return; CQTurn.endTurn(M); continue; }
       break;
     }
     if (M.phase === 'draw') {                         /* 人の手番：ドローは自動＋配布演出 */
       await playTurnCut(M.active);                    /* A5：「あなたの手番」の帯 */
+      if (stale()) return;
       await fxAct(() => CQTurn.beginTurn(M)); continue;
     }
     break;
   }
+  if (stale()) return;
   liveLogMark = null;
   clearTimeout(revealTimer); revealTimer = null;      /* 逐次表示の途中なら、ここで全部出す */
   const lines = M.log.slice(mark);

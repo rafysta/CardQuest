@@ -615,6 +615,15 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     if (rouletteEl) {
       await page.waitForTimeout(1400);   // 回転の途中の絵を撮る
       await shot('first-turn-roulette');
+      /* ★2026-09-05 本人指摘：ルーレットが回っている最中に手番が進んでしまい（相手が先攻だと
+       * 相手の最初の手番が済んで「あなたの手番」の帯まで出る）、そのあとに「後攻」と止まる
+       * 順序の逆転が起きていた。ルーレットの間は手番を進めない（INTRO_WAIT）。 */
+      const underRoulette = await page.evaluate(() => ({
+        turn: M.turn, turncut: !!document.querySelector('#turn-cut.on'),
+        waiting: !!INTRO_WAIT, first: M.first, active: M.active
+      }));
+      ok('★ルーレットの間は手番が進まない（帯も出ない）',
+        underRoulette.turn === 0 && !underRoulette.turncut && underRoulette.waiting, JSON.stringify(underRoulette));
       /* 2026-08-29 本人指摘の再発防止：旧実装は停止時に rotate(最終角) を代入し直していたため、
        * そこから逆向きに1080°戻る「高速逆回転」が見えていた。回転角は常に増える一方であること
        * （＝逆回転しないこと）を、スキップの前後で実際の角度を読んで確かめる。 */
@@ -633,6 +642,9 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
       /* 止まったあと1秒そのまま見せてから、ゆっくり透明になって消える（合計で約1.5秒） */
       await wait(() => page.evaluate(() => !document.querySelector('.first-turn-roulette')), 4000);
       ok('1秒見せてからフェードして消える', await page.evaluate(() => !document.querySelector('.first-turn-roulette')));
+      await wait(() => page.evaluate(() => M.turn >= 1), 4000);
+      ok('★ルーレットが消えてから最初の手番が始まる', await page.evaluate(() => M.turn >= 1 && !INTRO_WAIT),
+        JSON.stringify(await page.evaluate(() => ({ turn: M.turn, active: M.active }))));
     }
     await page.waitForTimeout(1500);   // 手札配布などの演出(FX)が終わるまで待つ。演出中の強制上書きはstep()に打ち消される
     ok('ラン中はバトル画面の「新しい対戦」ボタンが隠れる', !(await page.$('#turnbox [data-act="new"]')));
