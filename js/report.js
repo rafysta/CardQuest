@@ -21,8 +21,9 @@
  * 6手ぶんしか持たない＝押した瞬間まで常に用意できている（押してから作るのでは間に合わない）。
  *
  * 送り方は3通り。Androidの共有シートが本命で、残り2つはその保険：
- *   ① 📧 共有して送る … navigator.share にＪＳＯＮファイルを添えて渡す。Androidの共有シートが
- *      開くのでＧmailを選ぶ。**宛先はWeb標準の側で指定できない**ので、Ｇmailの画面で自分あてに
+ *   ① 📧 共有して送る … navigator.share にＪＳＯＮ（中身）の .txt ファイルを添えて渡す
+ *      （Chrome の Web Share は .json を添付できない＝permission denied になる。2026-09-05）。
+ *      Androidの共有シートが開くのでＧmailを選ぶ。**宛先はWeb標準の側で指定できない**ので、Ｇmailの画面で自分あてに
  *      する（一度送れば以後は宛先の履歴から選べる）。
  *   ② ✉ メールを開く … mailto: で宛先（MAIL_TO）まで埋めて開く。添付は付けられないので
  *      ＪＳＯＮは本文に入れる（長すぎるときはクリップボードへ回す）。
@@ -277,31 +278,49 @@ const CQReport = (function () {
 
   /** 共有シートを開く。**ユーザーの操作から途切れずに呼ぶこと**（間にawaitを挟むと
    * 「ユーザー操作から来た呼び出し」と見なされず、端末によっては何も起きない）。
-   * ＪＳＯＮという拡張子は共有を許さない端末があるので、駄目なら .txt で出し直す。 */
+   *
+   * ★2026-09-05 本人報告「共有できませんでした：permission denied」の修正。
+   * Chrome（Android含む）の Web Share は**添付できるファイルの種類を拡張子で制限**していて、
+   * `.json`／`application/json` は許可リストに無い。`canShare()` は true を返すのに
+   * `share()` だけが NotAllowedError（Permission denied）で落ちる、という分かりにくい
+   * 失敗になる。許可リストにある **`.txt`（text/plain）を最初の候補**にし（中身はＪＳＯＮの
+   * まま。盤面セットアップの「取り込む」は文字列を読むので拡張子は関係ない）、
+   * それでも駄目なら本文にＪＳＯＮを入れた添付なしの共有へ順に落とす。
+   * 取り消し（AbortError）だけは落とさずそのまま返す。 */
   function share(rep) {
     const json = jsonOf(rep);
     const base = 'cardquest-' + fileStamp();
     const cands = [
-      { n: base + '.json', t: 'application/json' },
-      { n: base + '.txt', t: 'text/plain' }
+      { n: base + '.txt', t: 'text/plain' },
+      { n: base + '.json', t: 'application/json' }
     ];
     const data = { title: subjectOf(rep), text: bodyOf(rep) };
-    if (navigator.canShare && typeof File === 'function') {
-      for (let i = 0; i < cands.length; i++) {
-        let f = null;
-        try { f = new File([json], cands[i].n, { type: cands[i].t }); } catch (_) { continue; }
-        let ok = false;
-        try { ok = navigator.canShare({ files: [f] }); } catch (_) { ok = false; }
-        if (ok) return navigator.share(Object.assign({ files: [f] }, data))
-          .then(function () { return { ok: true, how: cands[i].n + ' を添えて共有しました' }; });
-      }
-    }
-    if (navigator.share) {
+    const textOnly = function () {
+      if (!navigator.share) return Promise.reject(new Error('この端末は共有に対応していません'));
       /* 添付できない端末：本文にＪＳＯＮを丸ごと入れて共有する（読める形は保たれる） */
       return navigator.share({ title: data.title, text: data.text + '\n\n' + json })
         .then(function () { return { ok: true, how: '本文に入れて共有しました（添付は使えない端末です）' }; });
+    };
+    const files = [];
+    if (navigator.canShare && typeof File === 'function') {
+      cands.forEach(function (c) {
+        let f = null;
+        try { f = new File([json], c.n, { type: c.t }); } catch (_) { return; }
+        let ok = false;
+        try { ok = navigator.canShare({ files: [f] }); } catch (_) { ok = false; }
+        if (ok) files.push({ f: f, n: c.n });
+      });
     }
-    return Promise.reject(new Error('この端末は共有に対応していません'));
+    const tryAt = function (k) {
+      if (k >= files.length) return textOnly();
+      return navigator.share(Object.assign({ files: [files[k].f] }, data))
+        .then(function () { return { ok: true, how: files[k].n + ' を添えて共有しました' }; },
+              function (e) {
+                if (e && e.name === 'AbortError') throw e;      /* 取り消しは次を試さない */
+                return tryAt(k + 1);                             /* 種類が拒まれた等：次の候補へ */
+              });
+    };
+    return tryAt(0);
   }
 
   /** mailto: を組み立てる。長すぎるときはＪＳＯＮを本文から外す（クリップボードへ回す）。 */
