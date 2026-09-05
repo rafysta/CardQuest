@@ -76,8 +76,10 @@
       const v = lp[s];
       if (v === undefined || v === null) return;
       const n = Math.round(Number(v));
-      if (!isFinite(n) || n < 1 || n > 99) errors.push('lp.' + s + ' は 1〜99 の数で書いてください');
-      else out.lp[s] = n;
+      if (!isFinite(n)) { errors.push('lp.' + s + ' は 1〜99 の数で書いてください'); return; }
+      /* 範囲外は丸める（エラーにしない）。「盤面を報告」は決着した直後の盤面（ＬＰ0以下）も
+       * 封筒に入れるので、それをそのまま取り込めるようにする（2026-09-05 本人報告）。 */
+      out.lp[s] = Math.max(1, Math.min(99, n));
     });
 
     const known = function (id, where) {

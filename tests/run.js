@@ -4790,6 +4790,17 @@ t('伏せたＣＨは revealed が付かない（透視・予見の対象から�
   eq(!!m.board.lanes[3].channels[0].revealed, false, '見られていない札として置かれる');
 });
 
+t('★ＬＰが0以下の盤面（決着直後の報告）も取り込める：範囲外は1〜99に丸める（2026-09-05 本人報告）', () => {
+  const r = CQBoardSpec.normalize({ lp: { self: -4, enemy: 120 }, lanes: {} }, CARD_BY_ID);
+  eq(r.errors, [], 'エラーにしない');
+  eq(r.spec.lp, { self: 1, enemy: 99 }, '1〜99に丸める');
+  eq(CQBoardSpec.normalize({ lp: { self: 'abc' } }, CARD_BY_ID).errors.length, 1, '数でなければ従来どおりエラー');
+  /* 報告の封筒（board.lp.self が負）をそのまま parse できる */
+  const env = { kind: 'cardquest-board-report', board: { lp: { self: -4, enemy: 10 }, lanes: { '0': { unit: 1, ch: [] } } } };
+  const p = CQBoardSpec.parse(JSON.stringify(env), CARD_BY_ID);
+  eq([p.errors.length, p.spec.lp.self, !!p.report], [0, 1, true], '封筒ごと取り込める');
+});
+
 t('★カース(91〜99)は憑依として置かれる（常に表・公開済み・st:possess。2026-09-05 本人指定）', () => {
   const m = specMatch({ lanes: { '0': { unit: 8, ch: [{ id: 93, up: false, by: 'enemy' }] } } });
   const ch = m.board.lanes[0].channels[0];
@@ -4884,7 +4895,7 @@ t('おじゃま虫だけは階層に置けない（チャネリング不可の�
 
 t('おかしな記述はエラーとして返す（適用する前に気づける）', () => {
   const bad = CQBoardSpec.normalize({
-    first: 'me', phase: 'battle', lp: { self: 0 },
+    first: 'me', phase: 'battle', lp: { self: 'zero' },   /* ＬＰ0は丸めるので、数でない値でエラーを起こす */
     hand: { self: [999] },
     lanes: { '9': { unit: 8 }, '0': { unit: 101 }, '1': { unit: 8, ch: [{ id: 200 }] } }
   }, CARD_BY_ID);
