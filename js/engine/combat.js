@@ -445,6 +445,10 @@
     ln.stiff = (m.active === destSide);                        // 受け取る側のターン中なら硬直
     m.board.lanes[dest] = ln;
     if (m.reversing === from) m.reversing = null;              // 続きのリバースはもうできない
+    /* ＵＩの演出用：どのレーンからどこへ移ったかを控える（破壊ではなく「移動」として見せる。
+     * 2026-09-05 本人指定）。js/layout.js の animateFx が読んで空にする。読まれない環境
+     * （ＡＩ・シミュレータ）で溜まらないよう、末尾8件だけ残す */
+    m.fxMoves = (m.fxMoves || []).concat([{ from: from, to: dest, unit: unitId, kind: 'puppet' }]).slice(-8);
     note(m, label + '：' + nameOf(m, unitId) + ' が' + jp(destSide) + 'の場（レーン' + dest + '）へ移った');
     Turn.checkResult(m);                                       // フリーユニット戦：敵の場が空になれば勝ち
   }

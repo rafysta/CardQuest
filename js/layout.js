@@ -979,20 +979,63 @@ function shatterEffect(el, opts) {
   });
 }
 
+/** 傀儡でユニットがレーンごと相手の場へ移ったとき、**壊れたのではなく移った**と分かるように、
+ * 古いカードの分身を移動先のレーンまで滑らせる（2026-09-05 本人指定：破壊の飛散は使わない）。
+ * ★呼ぶ側の約束：まだ描き直していないこと（古いＤＯＭのカードを掴んで動かす）。 */
+function slideUnitEffect(el, toLane) {
+  return new Promise((res) => {
+    const fromLane = el.dataset.lane;
+    const from = el.getBoundingClientRect();
+    const slot = document.querySelector('#board .lane[data-lane="' + toLane + '"] .empty-unit')
+      || document.querySelector('#board .lane[data-lane="' + toLane + '"]');
+    const to = slot ? slot.getBoundingClientRect() : from;
+    const dx = (to.left + (to.width - from.width) / 2) - from.left;
+    const dy = (to.bottom - from.height) - from.top;       /* ユニットはレーンの下端に立つ */
+    /* ユニットだけでなく、積まれているＣＨもまとめて（レーンごと）滑らせる */
+    const cards = Array.from(document.querySelectorAll('#board .lane[data-lane="' + fromLane + '"] .card'))
+      .filter((c) => !c.classList.contains('empty-unit'));
+    const ghosts = cards.map((c) => {
+      const r = c.getBoundingClientRect();
+      const g = c.cloneNode(true);
+      g.classList.add('cq-slide-ghost');
+      g.classList.remove('an-in', 'an-in-left', 'an-flip', 'openable', 'flippable');
+      Object.assign(g.style, {
+        position: 'fixed', left: r.left + 'px', top: r.top + 'px',
+        width: r.width + 'px', height: r.height + 'px', margin: '0', bottom: 'auto', zIndex: 60,
+        pointerEvents: 'none', transition: 'transform .55s cubic-bezier(.2,.7,.2,1)'
+      });
+      document.body.appendChild(g);
+      c.style.visibility = 'hidden';                       /* 本体は隠す（分身が本体の代わり） */
+      return g;
+    });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      ghosts.forEach((g) => { g.style.transform = 'translate(' + dx + 'px,' + dy + 'px)'; });
+    }));
+    setTimeout(res, 580);
+    setTimeout(() => ghosts.forEach((g) => g.remove()), 700);
+  });
+}
+
 /** 差分を検出して演出しつつ再描画する。
  * 戻り値＝演出が落ち着くまでに待つべきミリ秒（見える変化が無ければ 0） */
 async function animateFx(prev) {
   if (!prev) { renderAll(); return 0; }
   let wait = 0;
   const lanes = M.board.lanes;
-  /* --- 再描画の前：古いDOMのまま行う演出（破壊の飛散・押し出されるカード） --- */
+  /* 傀儡の移動（エンジンが控えた from→to）。破壊ではなく「滑って移る」演出にする */
+  const moves = (M.fxMoves || []).slice();
+  M.fxMoves = [];
+  const movedTo = {};
+  /* --- 再描画の前：古いDOMのまま行う演出（破壊の飛散・押し出されるカード・傀儡の移動） --- */
   const pre = [];
   let hadOut = false;
   for (let i = 0; i < 6; i++) {
     const pv = prev.lanes[i], now = lanes[i];
     if (pv.unit != null && now.unit !== pv.unit) {
       const el = document.querySelector('#board .card.unit[data-lane="' + i + '"]');
-      if (el) { pre.push(shatterEffect(el)); wait = Math.max(wait, 340); }
+      const mv = moves.find((v) => v.from === i && v.unit === pv.unit && lanes[v.to].unit === v.unit);
+      if (el && mv) { pre.push(slideUnitEffect(el, mv.to)); movedTo[mv.to] = true; wait = Math.max(wait, 580); }
+      else if (el) { pre.push(shatterEffect(el)); wait = Math.max(wait, 340); }
     } else if (pv.unit != null && now.unit != null && pv.chs.length === now.channels.length) {
       for (let k = 1; k <= now.channels.length; k++) {
         if (pv.chs[k - 1] && pv.chs[k - 1].card !== now.channels[k - 1].card) {
@@ -1010,6 +1053,7 @@ async function animateFx(prev) {
     const pv = prev.lanes[i], now = lanes[i];
     if (now.unit == null) continue;
     if (pv.unit !== now.unit) {                            /* 召還・リバース召還 */
+      if (movedTo[i]) continue;                            /* 傀儡で滑って来た札は、もうそこに居る（出現の演出はしない） */
       const el = document.querySelector('#board .card.unit[data-lane="' + i + '"]');
       if (el) { el.classList.add('an-in'); wait = Math.max(wait, 340); }
       continue;

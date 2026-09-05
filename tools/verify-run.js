@@ -1269,7 +1269,16 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     lanes: { '0': { unit: 8, ch: [{ id: 169, up: false, by: 'enemy' }, { id: 151, up: false, by: 'self' }] },
              '1': { unit: 8, ch: [] }, '3': { unit: 8, ch: [] } } }));
   await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
+  /* ★2026-09-05 本人指定：倒されたのではなく「移った」と分かるよう、粉々ではなく滑らせる */
+  let sawSlide = false, sawShatter = false;
+  for (let n = 0; n < 20 && !sawSlide; n++) {
+    await page.waitForTimeout(40);
+    if (await page.$('.cq-slide-ghost')) { sawSlide = true; await page.waitForTimeout(250); await shot('wp6-puppet-slide'); }
+    if (await page.$('.cq-shard-box')) sawShatter = true;
+  }
   await page.waitForTimeout(700);
+  ok('★傀儡の移動は「滑って移る」演出で、破壊の飛散は出ない', sawSlide && !sawShatter,
+    JSON.stringify({ slide: sawSlide, shatter: sawShatter }));
   const pupState = await page.evaluate(() => ({
     l0: M.board.lanes[0].unit, l4: M.board.lanes[4].unit, pup: M.board.lanes[4].puppeted,
     ch4: M.board.lanes[4].channels.map((c) => c.card + (c.up ? 'u' : 'd')).join(','),
