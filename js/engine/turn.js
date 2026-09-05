@@ -603,7 +603,11 @@
     if (S.controlSide(lane, laneIndex) !== m.active) return { ok: false, reason: '自陣のユニットだけが行動できます' };
     if (lane.stiff) return { ok: false, reason: 'そのユニットは行動済みです' };
     if (lane.channeled) return { ok: false, reason: 'このターンにチャネリングしたユニットは特殊行動できません' };
-    if (lane.acc && lane.acc.lock >= 1) return { ok: false, reason: '固定／石化で行動できません' };
+    /* ★M7.8 WP5：**固定(159)・石化(168) のチェックは外した**（原作 CE0272 の実行条件は
+     * 「メインステップ・自陣・未硬直」の3つだけで、固定も石化も見ていない。
+     * `07_unit_abilities.md` §5-1）。固定は原作では「リバースを禁止する」だけの技能で、
+     * 特殊行動は禁止しない。石化で行動を止めるのは WP2 で入れた
+     * 「ターン開始時の強制硬直」に一本化した＝上の `lane.stiff` で自然に弾かれる。 */
     return { ok: true };
   }
 

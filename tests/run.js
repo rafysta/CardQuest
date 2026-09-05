@@ -2000,10 +2000,10 @@ t('31 ドライアード：開：ＬＰ＋１回復', () => {
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.players.self.lp, before + 1, 'ＬＰが1回復する');
 });
-t('40 スピアバード：開：ＣＨ×１確認', () => {
+t('40 スピアバード：開：ＣＨ×１確認（相手が置いた裏ＣＨが対象）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(40)]);
-  m.board.lanes[1] = lane(8, [down(151)]);
+  m.board.lanes[1] = lane(8, [down(151, { mine: false })]);   // 相手が押し込んだ裏札
   CQTurn.reverseAction(m, 0, [1]);
   eq(m.board.lanes[1].channels[0].revealed, true, '裏向きのＣＨが確認される');
 });
@@ -2014,7 +2014,7 @@ t('特殊行動：Ｃ型を持たないユニットは実行できない', () =>
   m.board.lanes[0] = lane(8, []);
   eq(CQTurn.canSpecialAction(m, 0).ok, false, '通常ユニットは不可');
 });
-t('特殊行動：硬直・チャネリング済み・敵陣・固定石化では実行できない', () => {
+t('特殊行動：硬直・チャネリング済み・敵陣では実行できない（M7.8 WP5で固定・石化の条件は外した）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(3, []);
   m.board.lanes[0].stiff = true;
@@ -2111,17 +2111,17 @@ t('45 デザートニードル：特：「腐食」付加', () => {
   CQTurn.specialAction(m, 0);
   eq(m.board.lanes[3].channels.some(c => c.card === 167), true, '腐食(167)が付加される');
 });
-t('48 スカウター：特：ＣＨ×１確認', () => {
+t('48 スカウター：特：ＣＨ×１確認（相手が置いた裏ＣＨが対象）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(48, []);
-  m.board.lanes[1] = lane(8, [down(151)]);
+  m.board.lanes[1] = lane(8, [down(151, { mine: false })]);
   CQTurn.specialAction(m, 0);
   eq(m.board.lanes[1].channels[0].revealed, true, '裏向きのＣＨが確認される');
 });
-t('49 シャドウハンズ：特：ＣＨ×１確認', () => {
+t('49 シャドウハンズ：特：ＣＨ×１確認（相手が置いた裏ＣＨが対象）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(49, []);
-  m.board.lanes[1] = lane(8, [down(151)]);
+  m.board.lanes[1] = lane(8, [down(151, { mine: false })]);
   CQTurn.specialAction(m, 0);
   eq(m.board.lanes[1].channels[0].revealed, true, '裏向きのＣＨが確認される');
 });
@@ -5158,12 +5158,15 @@ t('24シニスターセラフ：自分のレーン以外の全ＣＨが候補', 
   eq(uf(m, 24, { layer: 2 }).targets, [{ lane: 3, idx: 0 }], '自分の下のＣＨも対象外');
 });
 
-t('40スピアバード：まだ中身の分かっていない裏向きＣＨが候補', () => {
+t('40スピアバード：相手が置いた裏向きＣＨが候補（M7.8 WP5：既知でも再確認できる）', () => {
   const m = mkBattleBoard();
   m.board.lanes[0] = lane(8, [down(40)]);
-  m.board.lanes[3] = lane(8, [down(151), down(152)]);
-  m.board.lanes[3].channels[0].revealed = true;          /* もう知っている札は見る意味が無い */
-  eq(uf(m, 40).targets, [{ lane: 3, idx: 1 }], '既知の札は候補から外れる');
+  m.board.lanes[3] = lane(8, [down(151, { mine: false }), down(152, { mine: false })]);
+  m.board.lanes[3].channels[0].revealed = true;
+  /* 原作の40は既知フラグを見ていない（条件が常に真）ので、判明済みの札も候補に残る */
+  eq(uf(m, 40).targets, [{ lane: 3, idx: 0 }, { lane: 3, idx: 1 }], '既知の札も候補に残る');
+  m.board.lanes[3].channels[1].mine = true;              /* 自分が押し込んだ札は対象外 */
+  eq(uf(m, 40).targets, [{ lane: 3, idx: 0 }], '自分が置いた札は候補から外れる');
 });
 
 t('29ステルスゴブリン：相手の手札から1枚を選んで奪う（選択中は手札が丸見え）', () => {
@@ -6860,6 +6863,146 @@ t('★160 放出：放出自身は消えない（同レーンの他の表向き�
   m.board.lanes[0] = lane(8, [up(160), up(152), down(180)]);
   CQCombat.expireMagic(m);
   eq(m.board.lanes[0].channels.map((c) => c.card), [160, 180], '★放出自身は残り、152だけが消える');
+});
+
+/* ================= M7.8 WP5: ユニット固有能力の個別修正 ================= */
+section('M7.8 WP5: ユニット固有能力の個別修正');
+
+t('★3／6／45：付加先は自陣・敵陣どちらでもよい（原作 07_unit_abilities.md §5-2）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(6, []);
+  m.board.lanes[1] = lane(8, []);                       // 自陣の味方しか居ない
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[1].channels.some((c) => c.card === 155), true, '★自陣のユニットにも疫障を付けられる');
+});
+
+t('★3 ダーククラウド：自陣に石化を付けると、その対象ユニットが硬直する（原作 CE0273）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(3, []);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[1].channels.some((c) => c.card === 168), true, '石化が付く');
+  eq(m.board.lanes[1].stiff, true, '★自陣に付けた場合は対象ユニットが硬直する');
+});
+
+t('3 ダーククラウド：敵陣に付けた場合は硬直しない（硬直は自陣に付けたときだけ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(3, []);
+  m.board.lanes[3] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[3].channels.some((c) => c.card === 168), true, '石化が付く');
+  eq(!!m.board.lanes[3].stiff, false, '敵陣では硬直しない');
+});
+
+t('6 ヴェノムスピナー：自陣に付けても硬直はしない（硬直するのは3ダーククラウドだけ）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(6, []);
+  m.board.lanes[1] = lane(8, []);
+  CQTurn.specialAction(m, 0);
+  eq(!!m.board.lanes[1].stiff, false, '疫障では硬直しない');
+});
+
+t('★Ｃ型のゲート条件：固定(159)・石化(168)が付いていても特殊行動はできる（原作 CE0272 は硬直だけ見る）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(3, [up(159)]);                // 固定
+  eq(CQTurn.canSpecialAction(m, 0).ok, true, '★固定でも特殊行動はできる（原作は禁止していない）');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(3, [up(168)]);               // 石化
+  eq(CQTurn.canSpecialAction(m2, 0).ok, true, '★石化も同じ（抑止はターン開始時の強制硬直に一本化した）');
+});
+
+t('★石化(168)はターン開始時の強制硬直で結果的に特殊行動も封じられる（WP2との合わせ技）', () => {
+  const m = newMatch(401);
+  m.board.lanes[0] = lane(3, [up(168)]);
+  CQTurn.beginTurn(m);                                  // ここで石化ユニットが硬直する
+  m.phase = 'main';
+  eq(CQTurn.canSpecialAction(m, 0).ok, false, '★硬直しているので結局できない');
+});
+
+t('★30 イビルアイ：戦闘中に開かれると戦闘そのものが中断される（本人指定E）', () => {
+  const m = duel(8, [down(30)], 8, []);
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 1);
+  eq(m.board.lanes[0].unit, null, '開けた側（攻撃側）のユニットが自爆する');
+  eq(m.combat, null, '★戦闘が中断されている');
+  eq(m.lastBattle, null, '★勝敗の判定まで行かない（中断なので戦闘結果が残らない）');
+  eq(m.board.lanes[3].unit, 8, '守っていた側は無傷のまま残る');
+});
+
+t('30 イビルアイ：不死(177)で生き残ったら中断しない（本人指定E「無効化されない限り」）', () => {
+  const m = duel(8, [up(177), down(30)], 8, []);
+  CQCombat.declareAttack(m, 0, 3);
+  CQCombat.open(m, 2);
+  eq(m.board.lanes[0].unit, 8, '不死で生き残る');
+  eq(m.lastBattle != null, true, '★中断されず、そのまま戦闘の判定まで進んだ');
+});
+
+t('★35 ティンバータンク：自分のＣＨの「既知」フラグを消す（相手の記憶を消すのが主眼）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(35, [down(151, { revealed: true }), down(152, { revealed: true })]);
+  CQTurn.specialAction(m, 0);
+  eq(m.board.lanes[0].channels.every((c) => !c.revealed), true, '★既知フラグが全部消える');
+});
+
+t('★23 アンフィビアス：手札6枚以上なら発動しない', () => {
+  const m = newMatch(402, { selfDeck: mkDeck(50, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(23)]);
+  m.players.self.hand = [151, 152, 153, 154, 155, 156];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.hand.length, 6, '★1枚も引かない');
+});
+
+t('★23 アンフィビアス：手札5枚なら1枚だけ引いて打ち切り', () => {
+  const m = newMatch(403, { selfDeck: mkDeck(50, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(8, [down(23)]);
+  m.players.self.hand = [151, 152, 153, 154, 155];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.self.hand.length, 6, '★6枚で打ち切り');
+});
+
+t('★29 ステルスゴブリン：自分の手札が6枚以上なら奪わない（原作の手札ガード）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(29)]);
+  m.players.self.hand = [151, 152, 153, 154, 155, 156];
+  m.players.enemy.hand = [180];
+  CQTurn.reverseAction(m, 0, [1]);
+  eq(m.players.enemy.hand, [180], '★相手の手札は減らない');
+  eq(m.players.self.hand.length, 6, '自分の手札も増えない');
+});
+
+t('★38 デモングローブ：手札7枚なら引かない', () => {
+  const m = newMatch(404, { selfDeck: mkDeck(50, [180]) });
+  m.phase = 'main';
+  m.board.lanes[0] = lane(38, []);
+  m.players.self.hand = [151, 152, 153, 154, 155, 156, 157];
+  CQTurn.specialAction(m, 0);
+  eq(m.players.self.hand.length, 7, '★1枚も引かない');
+});
+
+t('★48／49：覗けるのは「相手が置いた」裏向きＣＨだけ（原作 §5-2 ID48/49）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(48, []);
+  m.board.lanes[1] = lane(8, [down(151)]);              // 自分が置いた札（既定 mine:true）
+  CQTurn.specialAction(m, 0);
+  eq(!!m.board.lanes[1].channels[0].revealed, false, '★自分が置いた札は覗く意味が無いので対象外');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(48, []);
+  m2.board.lanes[1] = lane(8, [down(151, { mine: false })]);
+  CQTurn.specialAction(m2, 0);
+  eq(m2.board.lanes[1].channels[0].revealed, true, '相手が置いた札は覗ける');
+});
+
+t('★40 スピアバードだけは既に判明している札も再確認できる（原作の条件が常に真）', () => {
+  const m = mkBattleBoard();
+  m.board.lanes[0] = lane(8, [down(40)]);
+  m.board.lanes[3] = lane(8, [down(151, { mine: false, revealed: true })]);
+  eq(uf(m, 40).targets, [{ lane: 3, idx: 0 }], '★既知でも候補に残る');
+  const m2 = mkBattleBoard();
+  m2.board.lanes[0] = lane(48, []);
+  m2.board.lanes[3] = lane(8, [down(151, { mine: false, revealed: true })]);
+  eq(uf(m2, 48).targets, [], '48/49 は既知の札を候補にしない');
 });
 
 /* ================= 結果 ================= */

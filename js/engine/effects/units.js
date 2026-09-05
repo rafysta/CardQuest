@@ -115,10 +115,16 @@
   function closableCandidates(m, ctx) {
     return allChannels(m, function (ch, lane) { return ch.up && inScope(m, ctx, lane); });
   }
-  /** ＣＨ×１確認の候補＝まだ中身の分かっていない裏向きＣＨ */
-  function peekCandidates(m, ctx) {
+  /** ＣＨ×１確認の候補＝**相手が置いた**裏向きＣＨ（原作 `07_unit_abilities.md` §5-2 ID48/49・
+   * §4-2 ID40 の `SW[442+idx]==ON`）。自分が置いた札は中身を知っているので覗く意味が無い。
+   * ★M7.8 WP5：`allowKnown` で40スピアバードだけ「既に判明した札の再確認」を許す
+   * （原作の40は `SW481`（既知）の状態を見ておらず、条件が常に真になっている）。 */
+  function peekCandidates(m, ctx, allowKnown) {
+    const mine = ctx.caster === 'self';
     return allChannels(m, function (ch, lane) {
-      return !ch.up && !ch.revealed && inScope(m, ctx, lane);
+      if (ch.up || !inScope(m, ctx, lane)) return false;
+      if (ch.mine === mine) return false;                 // 相手が置いた札だけ
+      return allowKnown ? true : !ch.revealed;
     });
   }
   /** 防御力が上限以下の敵ユニット（16レッドレックス＝600／10・32・36＝550）。
@@ -160,9 +166,10 @@
       case 1: case 27:              /* 開：クローズ×１（ミルファイター・メガゾエア） */
       case 44:                      /* 特：クローズ×１（ブレインサッカー） */
         return chs(closableCandidates(m, c));
-      case 40:                      /* 開：ＣＨ×１確認（スピアバード） */
-      case 48: case 49:             /* 特：ＣＨ×１確認（スカウター・シャドウハンズ） */
-        return chs(peekCandidates(m, c));
+      case 40:                      /* 開：ＣＨ×１確認（スピアバード）＝既知の札も再確認できる */
+        return chs(peekCandidates(m, c, true));
+      case 48: case 49:             /* 特：ＣＨ×１確認（スカウター・シャドウハンズ）＝未判明のみ */
+        return chs(peekCandidates(m, c, false));
       case 24:                      /* 開：ＣＨ×１破壊（シニスターセラフ） */
       case 9:                       /* 特：ＬＰ消費ＣＨ１破壊（ディゾルバー） */
         return chs(allChannels(m, function (ch, l) { return inScope(m, c, l); }));
@@ -170,8 +177,12 @@
         return lane(defAtMost(m, c, 600));
       case 10: case 32: case 36:    /* 特：Ａ５５０雷撃／烈風 */
         return lane(defAtMost(m, c, 550));
-      case 3: case 6: case 45:      /* 特：石化／疫障／腐食 付加 */
-        return lane(foeWithRoom(m, c));
+      case 3: case 6: case 45:      /* 特：石化／疫障／腐食 付加。
+                                     * ★M7.8 WP5：原作は `V211 != V213` かつ空きＣＨがあれば
+                                     * **自陣・敵陣どちらも対象にできる**（07_unit_abilities.md §5-2）。
+                                     * 従来は敵陣限定だったので、味方に石化を貼って
+                                     * 「守りを固める」といった原作の使い方ができなかった */
+        return lane(anyWithRoom(m, c));
       case 34: case 70:             /* 特：潜入能力／妄執（行き先は陣営を問わない） */
         return lane(anyWithRoom(m, c));
       case 29: {                    /* 開：敵手札×１奪取（ステルスゴブリン）。
@@ -227,11 +238,18 @@
     note(m, label + '：' + name + ' を破壊');
   }
 
-  /** 「石化」「疫障」「腐食」を敵ユニット1体に付加する（3/6/45系の特殊行動で共通） */
+  /** 「石化」「疫障」「腐食」をユニット1体に付加する（3/6/45系の特殊行動で共通）。
+   * 対象は自陣・敵陣を問わない（原作 §5-2）。手札コストは**付けない**（本人指定#6）。
+   * ★M7.8 WP5：**3 ダーククラウドだけ**は、自陣のユニットに付けると
+   * そのユニットが硬直する（原作 `CE0273` の `if (L == 1|2|3) SW[313+L] = ON`）。 */
   function attachCurseSkill(m, ctx, skillId, label) {
     const t = decide(m, ctx, ctx.cardId);
     if (t == null) { note(m, label + '：付加できる対象が無い'); return; }
     pushChannel(m, t, { card: skillId, up: true, mine: ctx.caster === 'self', revealed: true });
+    if (ctx.cardId === 3 && S.sideOf(t) === ctx.caster) {
+      m.board.lanes[t].stiff = true;
+      note(m, label + '：自陣に付けたので ' + nameOf(m, m.board.lanes[t].unit) + ' は硬直した');
+    }
     recalc(m);
     note(m, label + '：' + nameOf(m, m.board.lanes[t].unit) + ' に付加した');
   }
@@ -249,12 +267,21 @@
     note(m, 'Ａ６００火弾：' + name + ' を破壊');
   }
 
+  /** 手札の打ち切り枚数（原作 `V227 >= 6` / 38デモングローブだけ `>= 7`）。
+   * ★M7.8 WP5：従来は上限を無視して引いてから捨てていた＝「手札が多いと引けない」という
+   * 原作のブレーキが効いていなかった。 */
+  const HAND_STOP = 6;
+
   function h23(m, ctx) {                                        // アンフィビアス：手札２枚入手
     const p = m.players[ctx.caster], Turn = turnApi();
     let n = 0;
-    for (let i = 0; i < 2; i++) { if (Turn.draw(m.rng, p, m) == null) break; n += 1; }
+    for (let i = 0; i < 2; i++) {
+      if (p.hand.length >= HAND_STOP) break;                    // ★6枚で打ち切り（原作§4-2 ID23）
+      if (Turn.draw(m.rng, p, m) == null) break;
+      n += 1;
+    }
     capHand(m, ctx.caster);
-    note(m, '手札２枚入手：' + n + '枚引いた');
+    note(m, n ? ('手札２枚入手：' + n + '枚引いた') : '手札２枚入手：手札が多くて引けない');
   }
 
   function h24(m, ctx) {                                        // シニスターセラフ：ＣＨ×１破壊
@@ -314,6 +341,11 @@
     /* 原作も相手の手札を1枚ずつ見ながら選ぶ（＝選択中は手札が丸見えになる）。
      * 07_unit_abilities.md §ID29。種類の制限は無く、どのカードでも奪える。 */
     const enemy = other(ctx.caster), p = m.players[enemy];
+    /* ★M7.8 WP5：自分の手札がいっぱいなら奪わない（原作§4-2 ID29 の `if (V227 == 6) return`。
+     * 原作は7枚のとき素通りして**奪ったカードが消滅する**バグがあるが、それは再現しない）。 */
+    if (m.players[ctx.caster].hand.length >= HAND_STOP) {
+      note(m, '敵手札奪取：自分の手札がいっぱいで奪えない'); return;
+    }
     const i = decide(m, ctx, 29);
     if (i == null) { note(m, '敵手札奪取：相手の手札が無い'); return; }
     const id = p.hand.splice(i, 1)[0];
@@ -322,13 +354,22 @@
     note(m, '敵手札奪取：' + jp(enemy) + 'の手札から ' + nameOf(m, id) + ' を奪った');
   }
 
-  function h30(m, ctx) {                                        // イビルアイ：呪爆能力
-    // 魔法カード133『呪爆』（このカードを開かせたユニットを破壊）と同じ挙動をユニット固有能力
-    // として持つ、という解釈（名称・効果テキストが完全一致するため）
+  /** イビルアイ：呪爆能力。魔法カード133『呪爆』と同じ処理系（原作 §4-2 ID30）。
+   * ★M7.8 WP5（本人指定E）：**戦闘中に開かれると戦闘そのものが中断される**
+   * （原作 `if (SW359) CE0232 戦闘途中終了`）。開けた側のユニットがその場で消えるので、
+   * 押し込まれたカードを中身を知らずに開くと自爆して戦闘が終わる、という札。
+   * ただし本人指定のとおり**不死・救済などで生き残ったときは戦闘を続ける**
+   * （原作は生死を問わず中断するが、「無効化されない限り終わらせる」という指定を採る）。 */
+  function h30(m, ctx) {
     const ln = m.board.lanes[ctx.laneIndex];
     const name = ln && ln.unit != null ? nameOf(m, ln.unit) : null;
-    combatApi().destroy(m, ctx.laneIndex, { normalAttack: false });
+    const r = combatApi().destroy(m, ctx.laneIndex, { normalAttack: false }) || {};
+    if (r.survived) {
+      note(m, '呪爆能力：' + name + ' は' + (r.survived === 'undying' ? '不死' : '救済') + 'で生き残った');
+      return { handled: true };                                 // 階層は残る（リバース召還はしない）
+    }
     if (name) note(m, '呪爆能力：' + name + ' が破壊された');
+    if (m.combat) combatApi().abortBattle(m);                   // ★戦闘中断（原作 EV0154）
     return { consumed: true };                                  // 自分ごとホストのレーンが消える
   }
 
@@ -378,6 +419,10 @@
   function s35(m, laneIndex, side, ctx) {                       // ティンバータンク：自己ＣＨシャッフル
     const ln = m.board.lanes[laneIndex];
     if (!ln.channels.length) { note(m, '自己ＣＨシャッフル：ＣＨが無い'); return; }
+    /* ★M7.8 WP5：原作はシャッフルの前に**そのレーンの「既知」フラグを全部落とす**
+     * （原作 §5-2 ID35 の ①）。並べ替えるだけでは、相手は「どのカードがどこへ動いたか」を
+     * 見ていられるので意味がほとんど無い——**相手の記憶を消すのがこの能力の主眼**。 */
+    ln.channels.forEach(function (ch) { ch.revealed = false; });
     for (let i = ln.channels.length - 1; i > 0; i--) {
       const j = m.rng.int(0, i);
       const tmp = ln.channels[i]; ln.channels[i] = ln.channels[j]; ln.channels[j] = tmp;
@@ -388,6 +433,9 @@
 
   function s38(m, laneIndex, side, ctx) {                       // デモングローブ：手札＋１入手
     const p = m.players[side], Turn = turnApi();
+    /* ★M7.8 WP5：手札7枚なら引かない（原作§5-2 ID38 の `if (V227 >= 7) return`。
+     * 23・29 の6枚と違ってここだけ7枚なのは原作のまま）。 */
+    if (p.hand.length >= 7) { note(m, '手札＋１入手：手札がいっぱいで引けない'); return; }
     const id = Turn.draw(m.rng, p, m);
     capHand(m, side);
     note(m, '手札＋１入手：' + (id == null ? '山札が無い' : nameOf(m, id) + ' を引いた'));
