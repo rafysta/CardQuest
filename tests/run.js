@@ -4809,6 +4809,17 @@ t('★カース(91〜99)は憑依として置かれる（常に表・公開済�
      true, 'normalize の時点で up が true に直る（書き出しても裏にならない）');
 });
 
+t('★傀儡で移されたユニット（puppeted）は dump→apply で往復しても二重に移動しない（巻き戻し・報告の再現用）', () => {
+  const m = specMatch({ lanes: { '0': { unit: 8, ch: [{ id: 169, up: true, by: 'enemy' }] }, '3': { unit: 8, ch: [] } } });
+  eq([m.board.lanes[0].unit, m.board.lanes[4].unit, m.board.lanes[4].puppeted], [null, 8, 'self'], '始めた瞬間に相手の場（レーン4）へ');
+  const spec = CQBoardSpec.dump(m);
+  eq(spec.lanes['4'].puppeted, 'self', 'dump が元の陣営を運ぶ');
+  eq(/"puppeted": "self"/.test(CQBoardSpec.stringify(spec)), true, 'stringify にも出る');
+  const m2 = specMatch(spec);
+  eq([m2.board.lanes[4].unit, m2.board.lanes[4].puppeted, m2.board.lanes[0].unit, m2.board.lanes[1].unit],
+     [8, 'self', null, null], '作り直しても同じ場所に居て、戻りも二重移動もしない');
+});
+
 t('★カース92（傀儡化）を置いた盤面は、始めた瞬間にそのユニットが相手の場へ移っている（M7.8 WP6）', () => {
   const m = specMatch({ lanes: {
     '0': { unit: 8, ch: [{ id: 92, by: 'enemy' }, { id: 151, up: false, by: 'self' }] },

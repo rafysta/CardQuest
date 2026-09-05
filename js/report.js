@@ -70,6 +70,7 @@ const CQReport = (function () {
       hist.push({
         turn: m.turn, active: m.active, phase: m.phase,
         lp: { self: m.players.self.lp, enemy: m.players.enemy.lp },
+        deck: { self: m.players.self.deckCount, enemy: m.players.enemy.deckCount },   /* 巻き戻しの表示用（M7.9 第2段） */
         log: lines,
         board: CQBoardSpec.dump(m)
       });

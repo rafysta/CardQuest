@@ -1848,9 +1848,18 @@ function renderCollection() {
 /** 演出の速さの設定値（localStorage cq_fx）。★未設定は 'slow'（2026-09-05 本人指定：
  * 初めて遊ぶ人がいちばん困るのは「相手の手番で何が起きたか分からない」ことなので、
  * 既定を「ゆっくり」にしておく。js/layout.js の FX_SPEED_DEFAULT と揃えること） */
+function fxSettings() {
+  try { return JSON.parse(RUN_STORAGE.getItem('cq_fx') || '{}') || {}; } catch (_) { return {}; }
+}
 function fxSpeedSetting() {
-  try { const v = JSON.parse(RUN_STORAGE.getItem('cq_fx') || '{}').speed; return ['slow', 'normal', 'fast'].indexOf(v) >= 0 ? v : 'slow'; }
-  catch (_) { return 'slow'; }
+  const v = fxSettings().speed;
+  return ['slow', 'normal', 'fast'].indexOf(v) >= 0 ? v : 'slow';
+}
+/** 相手の手番の進め方（M7.9 第2段 B2）：'auto'＝自動で進む／'tap'＝タップで1手ずつ。既定は auto */
+function fxStepSetting() { return fxSettings().step === 'tap' ? 'tap' : 'auto'; }
+function fxSave(patch) {
+  try { RUN_STORAGE.setItem('cq_fx', JSON.stringify(Object.assign(fxSettings(), patch))); }
+  catch (_) { /* 保存できなくても続行 */ }
 }
 
 function renderSettings() {
@@ -1888,6 +1897,15 @@ function renderSettings() {
         <div class="set-acts">
           ${[['slow', 'ゆっくり'], ['normal', 'ふつう'], ['fast', '速い']].map(([v, label]) =>
             `<button class="btn ${fxSpeedSetting() === v ? 'ok' : 'ng'}" data-act="fx-speed" data-id="${v}">${label}</button>`).join('')}
+        </div>
+      </section>
+      <section class="set-box">
+        <h4>相手の手番の進め方</h4>
+        <p class="set-note">「タップで1手ずつ」にすると、相手の手番は宣言・判定・ＬＰの減少・憑依や傀儡・
+          盤面の変化のたびに止まり、画面のどこかを押すと次へ進みます。動きを確実に追いたいときに。</p>
+        <div class="set-acts">
+          ${[['auto', '自動で進める'], ['tap', 'タップで1手ずつ']].map(([v, label]) =>
+            `<button class="btn ${fxStepSetting() === v ? 'ok' : 'ng'}" data-act="fx-step" data-id="${v}">${label}</button>`).join('')}
         </div>
       </section>
       <section class="set-box">
@@ -2556,7 +2574,10 @@ function runAct(act, id, idx) {
     case 'backup-export':
       return backupExport();
     case 'fx-speed':                                  /* M7.9：演出の速さ（js/layout.js の fxMs が読む） */
-      try { RUN_STORAGE.setItem('cq_fx', JSON.stringify({ speed: id })); } catch (_) { /* 保存できなくても続行 */ }
+      fxSave({ speed: id });
+      return runRender();
+    case 'fx-step':                                   /* M7.9 第2段：コマ送り（js/layout.js の tapMode が読む） */
+      fxSave({ step: id });
       return runRender();
 
     /* ---- 記録画面（M7 WP10） ---- */

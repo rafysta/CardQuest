@@ -130,6 +130,10 @@
       if (chs.length > cap) errors.push(where + ' の ' + (cards ? cards[unit].n : unit) + ' はＣＨ' + cap + 'までです（いま ' + chs.length + '枚）');
       const ln = { unit: unit, ch: chs.slice(0, cap) };
       if (raw.stiff) ln.stiff = true;                /* 硬直（このターン動けない）。省略時は動ける */
+      /* M7.8 WP6：傀儡で相手陣営へ移されたユニットの元の陣営。これを運ばないと、
+       * 報告や巻き戻しから盤面を作り直したときに「傀儡が表なのに印が無い」＝もう一度
+       * 移動してしまう（2026-09-05 に巻き戻しの実装で判明） */
+      if (raw.puppeted === 'self' || raw.puppeted === 'enemy') ln.puppeted = raw.puppeted;
       out.lanes[String(i)] = ln;
     });
 
@@ -155,7 +159,7 @@
         const card = m.cards[c.id];
         if (card && card.t === 'C') return { card: c.id, up: true, mine: c.by === 'self', revealed: true, st: 'possess' };
         return { card: c.id, up: c.up, mine: c.by === 'self' };
-      }), m.cards);
+      }), m.cards, { puppeted: d.puppeted });
       ln.stiff = !!d.stiff;
       lanes.push(ln);
     }
@@ -213,6 +217,7 @@
         return { id: ch.card, up: !!ch.up, by: ch.mine ? 'self' : 'enemy' };
       }) };
       if (ln.stiff) d.stiff = true;
+      if (ln.puppeted) d.puppeted = ln.puppeted;
       out.lanes[String(i)] = d;
     }
     return out;
@@ -228,7 +233,8 @@
       const ch = d.ch.map(function (c) {
         return '{ "id": ' + c.id + ', "up": ' + c.up + ', "by": "' + c.by + '" }';
       }).join(', ');
-      return '    "' + k + '": { "unit": ' + d.unit + (d.stiff ? ', "stiff": true' : '') + ', "ch": [' + ch + '] }';
+      return '    "' + k + '": { "unit": ' + d.unit + (d.stiff ? ', "stiff": true' : '')
+        + (d.puppeted ? ', "puppeted": "' + d.puppeted + '"' : '') + ', "ch": [' + ch + '] }';
     });
     return '{\n'
       + '  "first": "' + s.first + '", "active": "' + s.active + '", "phase": "' + s.phase + '", "win": "' + s.win + '",\n'

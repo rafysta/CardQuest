@@ -1646,24 +1646,11 @@ td.nm{font-weight:800}
 /* ---- デバッグメニュー（js/debug.js・2026-08-29） ----
  * 使われていなかった「エンジン検証」「この案について」タブを外した代わりに、
  * 開発用のコマンドをここへ集約した。押さなければ何も起きないので常設のままにしてある。 */
-/* 🛠 デバッグメニューのボタンは既定で隠す（2026-09-05・本人指定）。
-   出すのは開発者モードのときだけ＝<html class="cq-dev">。JSで後から隠すのではなく
-   CSSで最初から消しておくことで、読み込みの一瞬だけ見えてしまう事故を防ぐ。
-   モードの切り替えは js/devmode.js。 */
-.dbg-btn{display:none}
-.cq-dev .dbg-btn{
-  display:block;
+.dbg-btn{
   margin-left:10px;flex:none;width:38px;height:38px;border-radius:10px;
   background:var(--panel2);border:1px solid var(--line);font-size:17px;line-height:1;
 }
-.cq-dev .dbg-btn:hover{border-color:var(--accent)}
-/* バージョン表記は開発者モードの隠し入口（7回連打）。指で押せる大きさにし、
-   連打で文字が選択反転しないようにしておく。 */
-#ver-label{
-  display:inline-block;padding:4px 6px;margin-left:2px;cursor:default;
-  user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
-  touch-action:manipulation;
-}
+.dbg-btn:hover{border-color:var(--accent)}
 .dbg-menu{
   position:absolute;right:12px;top:56px;z-index:1100;width:340px;
   background:var(--panel);border:1px solid var(--line);border-radius:14px;
@@ -2062,3 +2049,44 @@ td.nm{font-weight:800}
 /* 「ここまでの動き」の最新行（相手の手番中に1行ずつ増える） */
 .rep li.now{color:var(--accent);font-weight:800}
 .rep li:last-child{color:var(--accent)}
+
+/* ---- M7.9 第2段（2026-09-05 本人指定）：手番の帯・コマ送り・巻き戻し ---- */
+/* A5 手番の切り替わりの帯。画面を横切る黒い帯に「相手の手番」「あなたの手番」 */
+#turn-cut{
+  position:fixed;left:0;right:0;top:50%;transform:translateY(-50%) scaleY(0);z-index:540;
+  padding:18px 0;text-align:center;background:#000000e6;border-top:2px solid #1b2740;border-bottom:2px solid #1b2740;
+  pointer-events:none;transition:transform .18s cubic-bezier(.2,.85,.25,1),opacity .18s;opacity:0;
+}
+#turn-cut.on{transform:translateY(-50%) scaleY(1);opacity:1}
+#turn-cut .turn-cut-in{font-size:30px;font-weight:900;letter-spacing:.2em;color:#e9eef7;text-shadow:0 2px 8px #000}
+#turn-cut .turn-cut-who{font-size:34px}
+#turn-cut.foe .turn-cut-who{color:#ff9b9b}
+#turn-cut.mine .turn-cut-who{color:#9cc5ff}
+/* B2 コマ送りのタップ待ち。透明な幕で他の操作を止め、下に「タップで次へ」を出す */
+#tap-gate{position:fixed;inset:0;z-index:1200;cursor:pointer;display:none;background:transparent}
+#tap-gate.on{display:block}
+#tap-gate .tap-gate-hint{
+  position:absolute;left:50%;bottom:120px;transform:translateX(-50%);
+  background:#241c00ee;color:var(--accent);border:2px solid var(--accent);border-radius:12px;
+  padding:10px 24px;font-size:18px;font-weight:800;letter-spacing:.08em;
+  animation:cq-tapblink 1.1s ease-in-out infinite;
+}
+@keyframes cq-tapblink{0%,100%{opacity:1}50%{opacity:.55}}
+/* コマ送り中は判定の数字とＬＰの減少を消さずに残す（タップで次へ進んだら消える） */
+.cq-verdict.hold{animation:cq-verdict-hold .35s ease-out forwards}
+@keyframes cq-verdict-hold{0%{transform:translate(-50%,10px) scale(.6);opacity:0}100%{transform:translate(-50%,-10px) scale(1);opacity:1}}
+.cq-lp-float.hold{animation:cq-lpfloat-hold .35s ease-out forwards}
+@keyframes cq-lpfloat-hold{0%{transform:translateY(0);opacity:0}100%{transform:translateY(-20px);opacity:1}}
+/* B4 巻き戻して見る：盤面の上に出す案内バー */
+#replay-bar{
+  position:absolute;left:50%;top:8px;transform:translateX(-50%);z-index:150;
+  background:#0b1020ee;border:2px solid #c48cff;border-radius:12px;padding:8px 18px;
+  color:#f2e8ff;font-size:15px;font-weight:800;letter-spacing:.06em;box-shadow:0 8px 24px #000a;
+  display:flex;align-items:center;gap:14px;white-space:nowrap;
+}
+#replay-bar b{color:#ffd166;font-size:17px}
+.rep-nav{display:flex;gap:8px;margin:10px 0 4px}
+.rep-nav .tiny{flex:1;padding:8px 6px;font-size:14px}
+.rep-nav .tiny[disabled]{opacity:.4}
+.i-replay-h{font-size:15px;font-weight:800;color:#c48cff;margin:0 0 6px}
+.i-replay-turn{font-size:13px;color:var(--dim);margin-bottom:6px}

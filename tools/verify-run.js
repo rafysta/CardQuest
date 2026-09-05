@@ -58,10 +58,6 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     }
   });
   page.on('dialog', (d) => d.accept());   // retire の confirm() を自動でOK
-  /* 2026-09-05：🛠 デバッグメニューは既定で隠れる（js/devmode.js）。この検査は
-   * デバッグメニュー経由で開発用の画面へ入るので、開発者モードを立ててから開く。
-   * 「隠れていること」「7回連打で出ること」自体は、下の 5.5 で別の窓を開いて調べる。 */
-  await page.addInitScript(() => { try { localStorage.setItem('cq_dev', '1'); } catch (_) {} });
   await page.goto(URL);
   await page.waitForTimeout(400);   // 読み込み直後はフォント差し替え等でタブの位置がわずかに動くことがある
 
@@ -740,59 +736,11 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     String((await page.$$('.tab')).length) + '個');
   ok('ストーリー中はランタブが光ったまま（戦闘に入っても動かない）',
     await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
-  /* --- 2026-09-05（本人指定）：友人に渡すときのため 🛠 は既定で隠す ---------------
-   * 出す入口は2つだけ：バージョン表記(#ver-label)の7回連打と、URLの ?dev=1。
-   * どちらも localStorage の cq_dev を立てるだけ（js/devmode.js）。
-   * ここだけは「はじめて開いた人」の状態を見たいので、記憶を持たない別の窓で調べる
-   * ——この検査の本体(page)は addInitScript で cq_dev を立ててあり、常に出た状態で回る。 */
-  {
-    const guest = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await guest.goto(URL);
-    /* 起動時のローディング(#boot)は画面全体を覆うので、消えるまで待ってから押す */
-    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
-    const dbgShown = () => guest.$eval('#dbg-btn', (e) => e.offsetParent !== null);
-    ok('★はじめて開いた人には 🛠 デバッグメニューが見えない（2026-09-05 本人指定）', !(await dbgShown()));
-    for (let i = 0; i < 6; i++) await guest.click('#ver-label');
-    ok('★バージョン表記6回では出ない（7回に届くまで変わらない）', !(await dbgShown()));
-    ok('★4回目からは「あと何回」の案内が出る',
-      (await guest.$eval('#flash', (e) => e.textContent)).indexOf('あと1回') >= 0,
-      await guest.$eval('#flash', (e) => e.textContent));
-    await guest.click('#ver-label');
-    await guest.waitForTimeout(120);
-    ok('★バージョン表記を7回続けて押すと 🛠 が出る', await dbgShown());
-    ok('★出したことは端末に残る（localStorage の cq_dev）',
-      (await guest.evaluate(() => localStorage.getItem('cq_dev'))) === '1');
-    await guest.reload();
-    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
-    ok('★読み込み直しても 🛠 は出たまま', await dbgShown());
-    await guest.screenshot({ path: path.join(SHOT_DIR, '00_devmode-unlocked.png') });
-    /* 🙈 で隠すと、ボタンも記憶も消える */
-    await guest.click('#dbg-btn');
-    await guest.waitForTimeout(150);
-    for (const it of await guest.$$('.dbg-item')) {
-      const t = await it.$eval('b', (e) => e.textContent).catch(() => '');
-      if (t.indexOf('隠す') >= 0) { await it.click(); break; }
-    }
-    await guest.waitForTimeout(150);
-    ok('★「🙈 デバッグメニューを隠す」で 🛠 も記憶も消える',
-      !(await dbgShown()) && (await guest.evaluate(() => localStorage.getItem('cq_dev'))) === null);
-    /* 開発用の画面へは、隠している間は入れない（🛠 を消すだけでは道が残るため） */
-    await guest.evaluate(() => showScreen('screen-free'));
-    ok('★隠している間は開発用の画面へ入れない（ランへ受け流す）',
-      await guest.evaluate(() => document.getElementById('screen-run').classList.contains('on') &&
-        !document.getElementById('screen-free').classList.contains('on')));
-    /* URLの ?dev=1（PCでの検証・Playwright 用の入口） */
-    await guest.goto(URL + (URL.indexOf('?') < 0 ? '?' : '&') + 'dev=1');
-    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
-    ok('★URL に ?dev=1 を付けても出せる', await dbgShown());
-    await guest.close();
-  }
-
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
   ok('🛠 でデバッグメニューが開く', !!(await page.$('.dbg-menu')));
   /* 2026-09-02：道具は8つ（盤面を報告の追加ぶん。7のままだった検査を実装に合わせて更新） */
-  ok('デバッグメニューに9つの道具が並ぶ', (await page.$$('.dbg-item')).length === 9,
+  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
     String((await page.$$('.dbg-item')).length) + '個');
   await shot('debug-menu');
   /* ルーラー：80px方眼と座標番号が #app に重なる。もう一度押すと消える */
@@ -828,7 +776,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   /* --- 2026-08-29：デッキ編集とフリーバトルをデバッグメニューへ移した --- */
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
-  ok('デバッグメニューに9つの道具が並ぶ', (await page.$$('.dbg-item')).length === 9,
+  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
     String((await page.$$('.dbg-item')).length) + '個');
   /* 🃏 デッキ編集：アンロックに関係なく全169種から組めること・組んだ内容が残ること */
   await dbgClick('デッキ編集');
@@ -1369,7 +1317,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   const t0 = Date.now();
   await page.click('[data-bs="start"]');          /* startBoard は 1.1 秒待つので、ここでは待たずに追いかける */
   await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
-  const seen = { banner: false, bannerText: '', verdict: false, lp: false, lpText: '', telop: false, telopText: '' };
+  const seen = { banner: false, bannerText: '', verdict: false, lp: false, lpText: '', telop: false, telopText: '', turncut: '' };
   for (let n = 0; n < 200; n++) {                       /* 最長 8 秒ほど追いかける */
     await page.waitForTimeout(40);
     const st = await page.evaluate(() => ({
@@ -1377,8 +1325,10 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
       verdict: !!document.querySelector('.cq-verdict'),
       lp: (document.querySelector('.cq-lp-float') || {}).textContent || '',
       telop: (document.querySelector('.cq-telop.on') || {}).textContent || '',
+      turncut: (document.querySelector('#turn-cut.on') || {}).textContent || '',
       active: M.active, over: !!M.winner, busy: busy
     }));
+    if (st.turncut && !seen.turncut) { seen.turncut = st.turncut; await shot('m79-turncut'); }
     if (st.banner && /攻撃/.test(st.banner) && !seen.banner) { seen.banner = true; seen.bannerText = st.banner; await shot('m79-declare'); }
     if (st.verdict && !seen.verdict) {
       seen.verdict = true; await page.waitForTimeout(300);
@@ -1404,6 +1354,84 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('演出の後、盤面はエンジンどおり（相手のピッグマンが傀儡で自分の場に来ている・ＬＰ−4）',
     afterTurn.l0 === 8 && afterTurn.pup === 'enemy' && afterTurn.lp === 5, JSON.stringify(afterTurn));
   ok('「ここまでの動き」が残っている', afterTurn.report);
+  /* M7.9 第2段 A5：相手の手番が終わって自分の手番に移るとき「あなたの手番」の帯が出る */
+  ok('★手番の切り替わりに「あなたの手番」の帯が出る（M7.9 第2段 A5）',
+    /あなたの手番/.test(seen.turncut || ''), seen.turncut || '(帯を見ていない)');
+
+  /* M7.9 第2段 B4：決着後の「巻き戻して見る」。履歴は本物（いまの対戦の最後の数手）を使い、
+   * 決着だけを起こして結果画面のボタンから入る。 */
+  await page.evaluate(() => { M.winner = 'enemy'; M.phase = 'over'; UI.mode = 'over'; renderAll(); });
+  await page.waitForTimeout(200);
+  ok('★決着後に「巻き戻して見る」ボタンが出る（M7.9 第2段 B4）', !!(await page.$('#acts [data-act="replay"]')));
+  await page.click('#acts [data-act="replay"]');
+  await page.waitForTimeout(300);
+  const rp1 = await page.evaluate(() => ({
+    mode: UI.mode, bar: (document.querySelector('#replay-bar') || {}).textContent || '',
+    idx: REPLAY && REPLAY.idx, len: REPLAY && REPLAY.hist.length,
+    panel: /巻き戻して見る/.test(document.querySelector('#info-fix').textContent),
+    prev: !!document.querySelector('#acts [data-act="replay-prev"]'),
+    liveKept: !!(REPLAY && REPLAY.live && REPLAY.live.winner === 'enemy')
+  }));
+  ok('巻き戻しに入ると案内バーと「この手で起きたこと」が出る', rp1.mode === 'replay' && /いま/.test(rp1.bar) && rp1.panel && rp1.prev, JSON.stringify(rp1));
+  await shot('m79-replay-now');
+  await page.click('#acts [data-act="replay-prev"]');
+  await page.waitForTimeout(250);
+  const rp2 = await page.evaluate(() => ({
+    bar: (document.querySelector('#replay-bar') || {}).textContent || '', idx: REPLAY.idx,
+    l0: M.board.lanes[0].unit, lines: document.querySelectorAll('#info-fix .rep li').length,
+    hist: CQReport.history().length
+  }));
+  ok('「前の手」で1手前の盤面とログに戻る', /1手前/.test(rp2.bar) && rp2.idx === rp1.idx - 1 && rp2.lines > 0, JSON.stringify(rp2));
+  ok('巻き戻し中に履歴が増えない（仮の盤面を積まない）', rp2.hist === rp1.len, rp2.hist + ' vs ' + rp1.len);
+  await shot('m79-replay-prev');
+  /* 盤面は触れない（右のボタンだけ） */
+  await page.click('#board .card.unit', { force: true }).catch(() => {});
+  await page.waitForTimeout(150);
+  ok('巻き戻し中は盤面を押しても何も起きない', await page.evaluate(() => UI.mode === 'replay'));
+  await page.click('#acts [data-act="replay-exit"]');
+  await page.waitForTimeout(250);
+  const rp3 = await page.evaluate(() => ({ mode: UI.mode, winner: M.winner, bar: !!document.querySelector('#replay-bar'),
+    lp: M.players.self.lp, hist: CQReport.history().length }));
+  ok('「見返しを終える」で本物の対戦（決着済み）に戻る', rp3.mode === 'over' && rp3.winner === 'enemy' && !rp3.bar && rp3.lp === 5, JSON.stringify(rp3));
+
+  /* M7.9 第2段 B2：コマ送り。同じ場面を「タップで1手ずつ」で回し、節目ごとに止まること */
+  await page.evaluate(() => { localStorage.setItem('cq_fx', JSON.stringify({ speed: 'normal', step: 'tap' })); });
+  await reopenBoard();
+  await page.$eval('#bs-json', (el, v) => { el.value = v; }, JSON.stringify(Object.assign({}, BASE, {
+    win: 'field', active: 'enemy', lp: { self: 9, enemy: 10 },
+    lanes: { '0': { unit: 66, ch: [] }, '3': { unit: 8, ch: [] }, '4': { unit: 8, ch: [], stiff: true } } })));
+  await page.click('[data-bs="json-load"]');
+  await page.waitForTimeout(150);
+  await page.click('[data-bs="start"]');
+  await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+  const gates = [];
+  for (let n = 0; n < 300; n++) {
+    await page.waitForTimeout(50);
+    const st = await page.evaluate(() => ({
+      gate: !!document.querySelector('#tap-gate.on'),
+      banner: (document.querySelector('#fx-banner.on') || {}).textContent || '',
+      telop: (document.querySelector('.cq-telop.on') || {}).textContent || '',
+      pops: document.querySelectorAll('.cq-verdict').length,
+      active: M.active, busy: busy
+    }));
+    if (st.gate) {
+      gates.push((st.banner.replace(/\s+/g, ' ').trim() || st.telop || (st.pops ? 'pops' : '')) || '(盤面)');
+      if (gates.length === 1) await shot('m79-tap-gate');
+      await page.waitForTimeout(400);      /* 止まったままであることを見てから */
+      const still = await page.evaluate(() => !!document.querySelector('#tap-gate.on'));
+      if (!still) gates.push('!消えた');
+      await page.click('#tap-gate');
+    }
+    if (!st.busy && st.active === 'self') break;
+  }
+  ok('★コマ送り：相手の手番が節目ごとに止まり、タップで進む（M7.9 第2段 B2）',
+    gates.length >= 4 && gates.indexOf('!消えた') < 0, JSON.stringify(gates));
+  ok('コマ送り：宣言・判定・憑依・傀儡の節目で止まっている',
+    gates.some((g) => /に攻撃/.test(g)) && gates.some((g) => /攻撃成功/.test(g)) && gates.some((g) => /憑依/.test(g)) && gates.some((g) => /傀儡/.test(g)),
+    JSON.stringify(gates));
+  ok('コマ送りが終わった後の盤面はエンジンどおり',
+    await page.evaluate(() => M.board.lanes[0].unit === 8 && M.board.lanes[0].puppeted === 'enemy' && M.players.self.lp === 5));
+  await page.evaluate(() => { localStorage.setItem('cq_fx', JSON.stringify({ speed: 'normal', step: 'auto' })); });
   await reopenBoard();
   /* ストーリー側のセーブに触れていないこと（フリーバトルと同じ扱い） */
   ok('盤面セットアップはストーリーのセーブを壊さない',

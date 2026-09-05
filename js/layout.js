@@ -58,13 +58,7 @@ function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
  * 本人指定でタブは「ラン」だけに固定したので、画面の出し入れはこの関数が担い、
  * タブの見た目には触らない（ストーリー中はずっと「ラン」が光ったまま）。
  * デッキ編集・フリーバトルは開発用としてデバッグメニュー（js/debug.js）から呼ぶ。 */
-/* 開発用の画面（デバッグメニューからしか入らない）。開発者モードでないときに
- * 何かの経路で呼ばれても、ラン画面へ受け流す——🛠 を隠すだけだと、
- * 画面へ直に飛ぶ道（デッキ編集の「フリーバトルへ」など）が残ってしまうため。 */
-const DEV_SCREENS = ['screen-deck', 'screen-free', 'screen-board'];
-
 function showScreen(id) {
-  if (DEV_SCREENS.indexOf(id) >= 0 && typeof CQDev !== 'undefined' && !CQDev.isOn()) id = 'screen-run';
   document.querySelectorAll('.screen').forEach((x) => x.classList.remove('on'));
   const el = document.getElementById(id);
   if (el) el.classList.add('on');
@@ -923,7 +917,8 @@ const FX = { step: 460, deal: 90, out: 280,
   banner: 900,      /* 攻撃宣言のバナー（相手が攻撃したとき） */
   verdict: 700,     /* 判定の数字ポップ（Ａ600 vs Ｄ500） */
   lp: 600,          /* ＬＰ減少のフロート */
-  telop: 700 };     /* 憑依・傀儡のテロップ */
+  telop: 700,       /* 憑依・傀儡のテロップ */
+  turn: 700 };      /* 手番の切り替わりの帯（M7.9 第2段 A5） */
 /* 演出の速さ（設定画面「演出の速さ」。localStorage cq_fx）。停止時間に一律で掛ける倍率。
  * ★既定は「ゆっくり」（2026-09-05 本人指定）——初めて遊ぶ人は、相手の手番で何が起きているかを
  * 追えないまま負けるのがいちばん困る。慣れた人は設定で「ふつう」「速い」に変えられる。 */
@@ -934,6 +929,38 @@ function fxSpeed() {
   catch (_) { return FX_SPEED_DEFAULT; }
 }
 function fxMs(key) { return Math.round(FX[key] * FX_SPEED[fxSpeed()]); }
+/* M7.9 第2段 B2：コマ送り（設定「相手の手番：タップで1手ずつ」。cq_fx.step === 'tap'）。
+ * 相手の手番の節目（手番の帯・宣言・判定・ＬＰ・テロップ・盤面の変化）ごとに止まり、
+ * 画面のどこかを押すと次へ進む。人の手番と、決着後は止めない。 */
+function tapMode() {
+  try { return JSON.parse(localStorage.getItem('cq_fx') || '{}').step === 'tap'; }
+  catch (_) { return false; }
+}
+function gating() { return tapMode() && !!M && !M.winner && isAuto(M.active); }
+let tapResolve = null;
+function waitTap() {
+  return new Promise((res) => {
+    tapResolve = res;
+    let g = document.getElementById('tap-gate');
+    if (!g) {
+      g = document.createElement('div');
+      g.id = 'tap-gate';
+      g.innerHTML = '<div class="tap-gate-hint">タップで次へ ▶</div>';
+      g.addEventListener('click', onTapGate);
+      document.body.appendChild(g);
+    }
+    requestAnimationFrame(() => g.classList.add('on'));
+  });
+}
+function onTapGate() {
+  const g = document.getElementById('tap-gate');
+  if (g) g.classList.remove('on');
+  const r = tapResolve; tapResolve = null;
+  if (r) r();
+}
+/** 節目で止まる：コマ送りなら次のタップまで、そうでなければ ms だけ待つ */
+function hold(ms) { return gating() ? waitTap() : sleep(ms); }
+const HOLD_MS = 600000;   /* コマ送り中の表示物は「タップまで残す」（実質無期限） */
 let busy = false;
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -1125,8 +1152,11 @@ async function fxAct(fn) {
   const aimed = CQMagic.endAim(M);
   if (err) { CQMagic.strikeDoomed(M); throw err; }
   const w = await playChanges(prev);
-  if (aimed.length) { await playAimedDestroy(aimed); return ret; }
-  if (w) await sleep(Math.max(w, fxMs('step')));   /* 1手ごとに少し間を置いて、動きが目で追えるようにする */
+  if (aimed.length) { await playAimedDestroy(aimed); if (gating()) await waitTap(); return ret; }
+  if (w) {
+    await sleep(Math.max(w, fxMs('step')));   /* 1手ごとに少し間を置いて、動きが目で追えるようにする */
+    if (gating()) await waitTap();            /* コマ送り：盤面が変わったら、次の手はタップまで待つ */
+  }
   return ret;
 }
 
@@ -1152,20 +1182,42 @@ async function playChanges(prev) {
   if (battle && battle.atk != null && battle.def != null) await playVerdict(battle);
   /* A3 ＬＰの減少（フロート表示。両者ぶんを同時に） */
   let lpWait = 0;
+  const floats = [];
   ['self', 'enemy'].forEach((side) => {
     const d = M.players[side].lp - prev.lp[side];
-    if (d < 0) { floatLp(side, d); lpWait = fxMs('lp'); }
+    if (d < 0) { floats.push(floatLp(side, d)); lpWait = fxMs('lp'); }
   });
-  if (lpWait) await sleep(lpWait);
-  /* A4 憑依・傀儡のテロップ。傀儡（移動）は滑る演出と重ねて見せる */
+  if (lpWait) { await hold(lpWait); floats.forEach((f) => f && f.classList.add('done')); }
+  /* A4 憑依・傀儡のテロップ。傀儡（移動）は滑る演出と重ねて見せる（コマ送りではタップまで残す） */
   const telops = newLines.filter((l) => /^(憑依：|傀儡：|傀儡が解けた：)/.test(l));
   for (let i = 0; i < telops.length; i++) {
     const move = /へ移った/.test(telops[i]);
+    if (gating()) {
+      const t = showTelop(telops[i], HOLD_MS);
+      await waitTap();
+      hideTelop(t);
+      continue;
+    }
     showTelop(telops[i], move ? fxMs('telop') + 550 : fxMs('telop'));
     if (!move) await sleep(fxMs('telop'));
     else await sleep(Math.round(fxMs('telop') * 0.4));    /* 少し見せてから滑らせ始める */
   }
   return animateFx(prev);
+}
+
+/** A5（M7.9 第2段）：手番の切り替わりの帯。「相手の手番」「あなたの手番」を画面の中央に
+ * 横切る黒い帯で出し、消えるまで次へ進まない（コマ送りなら相手の手番はタップまで） */
+async function playTurnCut(side) {
+  if (!M || M.turn === 0) return;                  /* 最初の手番は先攻ルーレット／導入が兼ねる */
+  const mine = side === handSide();
+  let b = document.getElementById('turn-cut');
+  if (!b) { b = document.createElement('div'); b.id = 'turn-cut'; document.body.appendChild(b); }
+  b.className = mine ? 'mine' : 'foe';
+  b.innerHTML = `<div class="turn-cut-in"><span class="turn-cut-who">${mine ? 'あなた' : '相手'}</span>の手番</div>`;
+  requestAnimationFrame(() => b.classList.add('on'));
+  if (!mine && tapMode() && !M.winner) await waitTap();
+  else await sleep(fxMs('turn'));
+  b.classList.remove('on');
 }
 
 /** 相手の手番の最中にログを逐次表示するための、手番開始時点のログ位置（runStep が置く） */
@@ -1189,7 +1241,7 @@ function revealReport(lines) {
 }
 
 /** A1：攻撃宣言のバナー。攻撃側と防御側の2枚を強調し、消えるまで次へ進まない */
-function playDeclare(c, prev) {
+async function playDeclare(c, prev) {
   /* 名前は**操作前の控え（prev）**から取る——宣言→即判定で相手が既に壊れていることがある */
   const A = prev.lanes[c.attacker], D = prev.lanes[c.defender];
   const an = A && A.unit != null && CARD_BY_ID[A.unit] ? CARD_BY_ID[A.unit].n : '';
@@ -1201,47 +1253,59 @@ function playDeclare(c, prev) {
   if (atkEl) atkEl.classList.add('fx-atk');
   if (defEl) defEl.classList.add('fx-def');
   const ms = fxMs('banner');
+  const g = gating();
   showBanner(`<span class="fb-side">${aSide}の</span><b>${esc(an)}</b>
     <span class="fb-arrow">→</span>
-    <span class="fb-side">${dSide}の</span><b>${esc(dn)}</b><span class="fb-side"> に攻撃</span>`, ms + 200);
-  return sleep(ms);
+    <span class="fb-side">${dSide}の</span><b>${esc(dn)}</b><span class="fb-side"> に攻撃</span>`, g ? HOLD_MS : ms + 200);
+  await hold(ms);
+  if (g) hideBanner();
 }
 
 /** A2：判定の数字ポップ。攻撃側に「Ａ600」、防御側に「Ｄ500」を大きく出し、勝った側を色で示す */
-function playVerdict(b) {
+async function playVerdict(b) {
   const ok = !!b.success;
+  const g = gating();
+  const pops = [];
   const pop = (lane, text, cls) => {
     const el = document.querySelector('#board .card.unit[data-lane="' + lane + '"]');
     if (!el) return;
     const r = el.getBoundingClientRect();
     const p = document.createElement('div');
-    p.className = 'cq-verdict ' + cls;
+    p.className = 'cq-verdict ' + cls + (g ? ' hold' : '');
     p.textContent = text;
     Object.assign(p.style, { left: (r.left + r.width / 2) + 'px', top: (r.top - 34) + 'px' });   /* カードの上に浮かせる */
     document.body.appendChild(p);
-    setTimeout(() => p.remove(), fxMs('verdict') + 400);
+    pops.push(p);
+    if (!g) setTimeout(() => p.remove(), fxMs('verdict') + 400);
   };
   pop(b.attacker, 'Ａ' + b.atk, ok ? 'win' : 'lose');
   pop(b.defender, 'Ｄ' + b.def, ok ? 'lose' : 'win');
   showBanner(ok ? `<b class="fb-ok">攻撃成功</b><span class="fb-side">（${b.atk} ≧ ${b.def}）</span>`
                 : `<b class="fb-ng">攻撃失敗</b><span class="fb-side">（${b.atk} ＜ ${b.def}）</span>`,
-             fxMs('verdict') + 200);
-  return sleep(fxMs('verdict'));
+             g ? HOLD_MS : fxMs('verdict') + 200);
+  await hold(fxMs('verdict'));
+  if (g) { hideBanner(); pops.forEach((p) => p.remove()); }
 }
 
 /** A3：ＬＰが減ったことをハートの横に「−4」と浮かせて見せる。ハートも一瞬赤く光る */
 function floatLp(side, diff) {
   const el = document.getElementById(side === handSide() ? 'my-lp' : 'foe-lp');
-  if (!el) return;
+  if (!el) return null;
   const r = el.getBoundingClientRect();
   const f = document.createElement('div');
-  f.className = 'cq-lp-float' + (M.players[side].lp <= 0 ? ' fatal' : '');
+  const g = gating();
+  f.className = 'cq-lp-float' + (M.players[side].lp <= 0 ? ' fatal' : '') + (g ? ' hold' : '');
   f.textContent = '−' + (-diff);
   Object.assign(f.style, { left: (r.right + 4) + 'px', top: r.top + 'px' });
   document.body.appendChild(f);
   el.classList.add('hit');
   setTimeout(() => el.classList.remove('hit'), 700);
-  setTimeout(() => f.remove(), fxMs('lp') + 500);
+  if (!g) setTimeout(() => f.remove(), fxMs('lp') + 500);
+  else f.classList.add('hold');
+  /* コマ送り：タップ後に .done が付いたら消す（呼び出し側） */
+  const obs = new MutationObserver(() => { if (f.classList.contains('done')) { obs.disconnect(); f.remove(); } });
+  obs.observe(f, { attributes: true, attributeFilter: ['class'] });
+  return f;
 }
 
 /** A4：画面中央のテロップ（憑依・傀儡）。ms 後に消える。await はしない（呼ぶ側で待つ） */
@@ -1251,7 +1315,12 @@ function showTelop(text, ms) {
   t.textContent = text;
   document.body.appendChild(t);
   requestAnimationFrame(() => t.classList.add('on'));
-  setTimeout(() => { t.classList.remove('on'); setTimeout(() => t.remove(), 250); }, ms);
+  setTimeout(() => hideTelop(t), ms);
+  return t;
+}
+function hideTelop(t) {
+  if (!t || !t.parentNode) return;
+  t.classList.remove('on'); setTimeout(() => t.remove(), 250);
 }
 
 /** 盤面の上に出る帯（宣言・判定）。同時に1本だけ */
@@ -1261,10 +1330,12 @@ function showBanner(html, ms) {
   b.innerHTML = html;
   b.classList.add('on');
   clearTimeout(showBanner._t);
-  showBanner._t = setTimeout(() => {
-    b.classList.remove('on');
-    document.querySelectorAll('#board .fx-atk, #board .fx-def').forEach((e) => e.classList.remove('fx-atk', 'fx-def'));
-  }, ms);
+  showBanner._t = setTimeout(hideBanner, ms);
+}
+function hideBanner() {
+  const b = document.getElementById('fx-banner');
+  if (b) b.classList.remove('on');
+  document.querySelectorAll('#board .fx-atk, #board .fx-def').forEach((e) => e.classList.remove('fx-atk', 'fx-def'));
 }
 
 /* ---- 破壊の予約を演出して解決する（2026-08-30 本人指定） --------------------
@@ -1340,7 +1411,10 @@ async function runStep() {
       continue;
     }
     if (isAuto(M.active)) {                           /* 相手の手番（自動） */
-      if (M.phase === 'draw') { CQTurn.beginTurn(M); renderAll(); continue; }
+      if (M.phase === 'draw') {
+        await playTurnCut(M.active);                  /* A5：「相手の手番」の帯 */
+        CQTurn.beginTurn(M); renderAll(); continue;
+      }
       if (M.phase === 'discard') { CQAi.discardStep(M); continue; }
       if (M.phase === 'placement') {                  /* 1枚ずつ場に出して見せる */
         let n = 0;
@@ -1353,7 +1427,10 @@ async function runStep() {
       if (M.phase === 'main') { if (await fxAct(() => CQAi.mainStep(M))) continue; CQTurn.endTurn(M); continue; }
       break;
     }
-    if (M.phase === 'draw') { await fxAct(() => CQTurn.beginTurn(M)); continue; }   /* 人の手番：ドローは自動＋配布演出 */
+    if (M.phase === 'draw') {                         /* 人の手番：ドローは自動＋配布演出 */
+      await playTurnCut(M.active);                    /* A5：「あなたの手番」の帯 */
+      await fxAct(() => CQTurn.beginTurn(M)); continue;
+    }
     break;
   }
   liveLogMark = null;
@@ -1373,8 +1450,81 @@ async function runStep() {
  * ここに置くのは「エンジンのどの入口を通っても必ず最後にここへ来る」ため。読むだけなので
  * 対戦・乱数には影響しない（report.js 側で例外も握りつぶしてある）。 */
 function renderAll() {
-  if (typeof CQReport !== 'undefined') CQReport.tick();
+  /* 巻き戻し中は仮の対戦（REPLAY の盤面）を描いているので、履歴には積まない */
+  if (typeof CQReport !== 'undefined' && UI.mode !== 'replay') CQReport.tick();
   renderStatus(); renderBoard(); renderHand(); renderPanel();
+  renderReplayBar();
+}
+
+/* ================= M7.9 第2段 B4：巻き戻して見る（2026-09-05 本人指定） =================
+ * 決着後、「📮 盤面を報告」が持っている輪番バッファ（直近5手の盤面＋その手のログ。
+ * js/report.js の CQReport.history()）をそのまま使って、最後の手を盤面つきで1手ずつ見返す。
+ * 新しいデータは要らない。見ている間は本物の対戦（REPLAY.live）を脇に置き、その手の
+ * 盤面から作った仮の対戦を M に入れて描く。操作はすべて止め、終えると本物に戻す。 */
+let REPLAY = null;
+function replayEnter() {
+  const hist = (typeof CQReport !== 'undefined') ? CQReport.history() : [];
+  if (hist.length < 2) { flash('見返せる手がありません'); return; }
+  REPLAY = { live: M, hist: hist, idx: hist.length - 1, mode: UI.mode };
+  UI.mode = 'replay';
+  replayShow(REPLAY.idx);
+}
+function replayShow(idx) {
+  const r = REPLAY; if (!r) return;
+  r.idx = Math.max(0, Math.min(r.hist.length - 1, idx));
+  const h = r.hist[r.idx];
+  const live = r.live;
+  const m = CQTurn.createMatch({
+    cards: CARD_BY_ID, rng: CQRng.create(1),
+    selfDeck: [], enemyDeck: [],
+    first: h.board.first || 'self',
+    opponentId: live.opponentId,
+    fieldRules: live.fieldRules,
+    mode: h.board.win === 'field' ? 'field' : undefined,
+    enemyBoard: h.board.win === 'field' ? [1] : undefined,
+    hooks: {}
+  });
+  CQBoardSpec.apply(m, h.board);
+  m.turn = h.turn;
+  if (h.deck) { m.players.self.deckCount = h.deck.self; m.players.enemy.deckCount = h.deck.enemy; }
+  m.replay = true;
+  M = m;
+  renderAll();
+}
+function replayExit() {
+  const r = REPLAY; if (!r) return;
+  M = r.live;
+  UI.mode = r.mode === 'replay' ? 'over' : r.mode;
+  REPLAY = null;
+  const bar = document.getElementById('replay-bar');
+  if (bar) bar.remove();
+  renderAll();
+}
+function renderReplayBar() {
+  let bar = document.getElementById('replay-bar');
+  if (UI.mode !== 'replay' || !REPLAY) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div'); bar.id = 'replay-bar';
+    document.getElementById('board').parentNode.appendChild(bar);
+  }
+  const n = REPLAY.hist.length - 1 - REPLAY.idx;
+  bar.innerHTML = `巻き戻して見る　<b>${n === 0 ? 'いま' : n + '手前'}</b>　（${REPLAY.idx + 1}／${REPLAY.hist.length}）`;
+}
+function panelReplay() {
+  const r = REPLAY; if (!r) return panelIdle();
+  const h = r.hist[r.idx];
+  const n = r.hist.length - 1 - r.idx;
+  const who = h.active === handSide() ? 'あなた' : '相手';
+  const lines = (h.log || []).length ? h.log : ['（この手ではログが増えていない）'];
+  paint(`<div class="i-replay-h">巻き戻して見る（${n === 0 ? 'いま' : n + '手前'}）</div>
+    <div class="i-replay-turn">第 ${h.turn} ターン・${who}の手番</div>
+    <h3>この手で起きたこと</h3>
+    <ul class="rep">${lines.map((l, i) => `<li class="${i === lines.length - 1 ? 'now' : ''}">${esc(l)}</li>`).join('')}</ul>
+    <div class="rep-nav">
+      <button class="tiny" data-act="replay-prev" ${r.idx === 0 ? 'disabled' : ''}>◀ 前の手</button>
+      <button class="tiny" data-act="replay-next" ${r.idx >= r.hist.length - 1 ? 'disabled' : ''}>次の手 ▶</button>
+    </div>`,
+    `<p class="i-hint">盤面はその手が終わった時点のものです。右下の「見返しを終える」で戻ります。</p>`);
 }
 
 function renderStatus() {
@@ -1704,6 +1854,14 @@ function renderHand() {
   /* ステップを進めるボタン */
   const acts = document.getElementById('acts');
   let b = '';
+  if (UI.mode === 'replay') {
+    /* M7.9 第2段 B4：巻き戻し中は、手を進める・戻す・終える、だけ */
+    b = '<button class="act-btn sub" data-act="replay-prev">◀ 前の手</button>'
+      + '<button class="act-btn sub" data-act="replay-next">次の手 ▶</button>'
+      + '<button class="act-btn" data-act="replay-exit">見返しを<br>終える</button>';
+    acts.innerHTML = b;
+    return;
+  }
   if (M.winner || M.fled) {
     /* 2026-08-29：フリーバトルの決着後は「もう一度対戦する」に加えて「バトルを終える」も
      * 出す（本人指定）。押すとフリーバトルのトップ（相手選び）画面に戻る。
@@ -1711,6 +1869,10 @@ function renderHand() {
     b = RUN_ACTIVE ? '<button class="act-btn" data-act="run-over">ランへ<br>戻る</button>'
                    : '<button class="act-btn" data-act="new">もう一度<br>対戦する</button>' +
                      '<button class="act-btn sub" data-act="free-end">バトルを<br>終える</button>';
+    /* M7.9 第2段 B4：決着後に「なぜそうなったか」を最後の5手ぶん盤面つきで見返せる */
+    if (typeof CQReport !== 'undefined' && CQReport.history().length >= 2) {
+      b = '<button class="act-btn sub rep" data-act="replay">巻き戻して<br>見る</button>' + b;
+    }
   }
   else if (M.combat) {
     /* オープンフェイズを終えるボタンは、他のステップの「配置を終える」と同じ右下に置く。
@@ -1825,6 +1987,7 @@ function reportHTML(lines) {
 function renderPanel() {
   switch (UI.mode) {
     case 'over':      return panelOver();
+    case 'replay':    return panelReplay();
     case 'battle':    return panelBattle();
     case 'unit':      return panelUnit();
     case 'attack':    return panelAttack();
@@ -2439,6 +2602,14 @@ function resolveDrawPick(action) {
 }
 
 function panelAct(act, data) {
+  /* M7.9 第2段 B4：巻き戻し中は、その操作だけを受け付ける */
+  if (UI.mode === 'replay') {
+    if (act === 'replay-prev') return replayShow(REPLAY.idx - 1);
+    if (act === 'replay-next') return replayShow(REPLAY.idx + 1);
+    if (act === 'replay-exit') return replayExit();
+    return;
+  }
+  if (act === 'replay') return replayEnter();
   if (busy) return;                                  /* 演出中は操作を受け付けない */
   switch (act) {
     /* M6.7 WP3：引いた札から選ぶ。予見はカードそのもの、口寄せは2つのボタン。
@@ -2589,8 +2760,11 @@ let drag = null;
 
 document.getElementById('screen-battle').addEventListener('pointerdown', (ev) => {
   if (busy) return;                                  /* 演出中は操作を受け付けない */
+  if (UI.mode === 'replay') return;                  /* 巻き戻し中は盤面に触れない（右のボタンだけ） */
   /* 前のドラッグが何らかの理由で残っていたら、まず片付ける（保険） */
   if (drag) { clearDragVisuals(drag); drag = null; }
+  /* 岩でふさがれた列（2026-09-05）：岩を押したら戦場ルールの説明を出す（蓋と同じ） */
+  if (ev.target.closest('.lane-rocks')) { UI.mode = 'field'; return renderAll(); }
   const el = ev.target.closest('.card');
   if (!el) return;
   if (el.id === 'change-card') { if (canChange()) showChangeConfirm(); return; }
