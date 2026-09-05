@@ -4790,6 +4790,44 @@ t('伏せたＣＨは revealed が付かない（透視・予見の対象から�
   eq(!!m.board.lanes[3].channels[0].revealed, false, '見られていない札として置かれる');
 });
 
+t('★カース(91〜99)は憑依として置かれる（常に表・公開済み・st:possess。2026-09-05 本人指定）', () => {
+  const m = specMatch({ lanes: { '0': { unit: 8, ch: [{ id: 93, up: false, by: 'enemy' }] } } });
+  const ch = m.board.lanes[0].channels[0];
+  eq([ch.card, ch.up, ch.revealed, ch.st, ch.mine], [93, true, true, 'possess', false], '裏で書いても表の憑依になる');
+  eq(CQBoardSpec.normalize({ lanes: { '0': { unit: 8, ch: [{ id: 93, up: false }] } } }, CARD_BY_ID).spec.lanes['0'].ch[0].up,
+     true, 'normalize の時点で up が true に直る（書き出しても裏にならない）');
+});
+
+t('★カース92（傀儡化）を置いた盤面は、始めた瞬間にそのユニットが相手の場へ移っている（M7.8 WP6）', () => {
+  const m = specMatch({ lanes: {
+    '0': { unit: 8, ch: [{ id: 92, by: 'enemy' }, { id: 151, up: false, by: 'self' }] },
+    '3': { unit: 8, ch: [] }
+  } });
+  eq(m.board.lanes[0].unit, null, '自陣1は空になっている');
+  eq(m.board.lanes[4].unit, 8, '敵陣の空きレーン（4）に居る');
+  eq(m.board.lanes[4].puppeted, 'self', '元の陣営は自分');
+  eq(m.board.lanes[4].channels.map((c) => c.card), [92, 151], 'ＣＨも一緒に移っている');
+  /* 表向きの傀儡(169)でも同じ */
+  const m2 = specMatch({ lanes: { '3': { unit: 8, ch: [{ id: 169, up: true, by: 'self' }] } } });
+  eq(m2.board.lanes[3].unit, null, '敵陣から消え');
+  eq(m2.board.lanes[0].unit, 8, '自陣へ来ている');
+  eq(m2.board.lanes[0].puppeted, 'enemy', '元の陣営は相手');
+});
+
+t('★戦闘で憑依ユニット（ヘッドレス66）を倒すと、カース92が付いた自分のユニットは相手の場へ移る（通し）', () => {
+  const m = specMatch({ win: 'field', lanes: {
+    '0': { unit: 8, ch: [{ id: 151, up: true, by: 'self' }] },     // Ａ600
+    '3': { unit: 66, ch: [] }, '4': { unit: 8, ch: [] }
+  } });
+  const r = CQCombat.declareAttack(m, 0, 3);
+  eq(r.ok, true, '攻撃できる');
+  fin(m);
+  eq(m.board.lanes[3].unit === 8 && m.board.lanes[3].puppeted === 'self', true,
+     'ヘッドレスの跡地（レーン3）に自分のピッグマンが移っている');
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.st || '']), [[151, ''], [92, 'possess']], 'カース92が憑依として付いている');
+  eq(m.board.lanes[0].unit, null, '自陣1は空');
+});
+
 t('セットした盤面から魔法が普通に発動する（hooks の配線を含めた通し確認）', () => {
   /* 自陣に憑依解除(101)を伏せ、敵陣のＣＨを1枚だけにしておく。開ければそれが消える。 */
   const m = specMatch({ lanes: {

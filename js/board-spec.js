@@ -120,7 +120,10 @@
         if (cards && cards[id] && cards[id].t === 'X') { errors.push(where + ' の第' + (idx + 1) + '階層の ' + cards[id].n + ' はチャネリングできません'); return; }
         const by = e.by === undefined ? ownerOf(i) : e.by;
         if (!SIDES[by]) { errors.push(where + ' の第' + (idx + 1) + '階層の by は "self" か "enemy" です'); return; }
-        chs.push({ id: id, up: !!e.up, by: by });
+        /* カース(91〜99)＝憑依。取り憑いたカースは常に表向き（裏にはできない）なので up は
+         * 強制的に true（2026-09-05 本人指定：傀儡化(92)などの検証のために置けるようにした） */
+        const curse = !!(cards && cards[id] && cards[id].t === 'C');
+        chs.push({ id: id, up: curse ? true : !!e.up, by: by });
       });
       if (chs.length > cap) errors.push(where + ' の ' + (cards ? cards[unit].n : unit) + ' はＣＨ' + cap + 'までです（いま ' + chs.length + '枚）');
       const ln = { unit: unit, ch: chs.slice(0, cap) };
@@ -144,7 +147,11 @@
       if (!d) { lanes.push(S.emptyLane()); continue; }
       const ln = S.makeLane(d.unit, d.ch.map(function (c) {
         /* revealed:true ＝「一度は見られた札」。デバッグで置いた札は
-         * 相手の透視・予見の対象から外れないよう、伏せたままにしておく（revealed は付けない）。 */
+         * 相手の透視・予見の対象から外れないよう、伏せたままにしておく（revealed は付けない）。
+         * ただしカース(91〜99)は**憑依として**置く（表・公開済み・st:'possess'）＝戦闘で
+         * 憑依ユニットを倒したときに付くものと同じ形（combat.js applyPendingCurse）。 */
+        const card = m.cards[c.id];
+        if (card && card.t === 'C') return { card: c.id, up: true, mine: c.by === 'self', revealed: true, st: 'possess' };
         return { card: c.id, up: c.up, mine: c.by === 'self' };
       }), m.cards);
       ln.stiff = !!d.stiff;
@@ -178,6 +185,11 @@
     if (m.mode === 'field') m.fieldReady = true;   /* 敵が0体なら即勝ちになる。承知のうえ */
 
     Stats.recalc(m.board, { cards: m.cards });
+    /* 集計後の強制処理（M7.8 WP1・WP6：緊急抵抗・融合解除・**傀儡の物理移動**）も通しておく。
+     * 表向きの傀儡やカース92を置いた盤面は、始めた瞬間にそのユニットが相手の場へ移った状態になる
+     * （ゲーム中に起きるのと同じ盤面から始められる） */
+    const Combat = isNode ? require('./engine/combat.js') : global.CQCombat;
+    if (Combat && typeof Combat.enforcePost === 'function') Combat.enforcePost(m);
     return m;
   }
 

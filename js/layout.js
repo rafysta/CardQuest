@@ -573,7 +573,7 @@ function openBoardSetup() {
  * labels でグループ名を上書きできる（ＣＨ欄のモンスターに「リバース召還」と添えるため）。 */
 function bsOptions(kinds, selected, noneLabel, labels) {
   const LABEL = Object.assign(
-    { U: 'モンスター', M: '魔法', S: '技能', C: 'カース（憑依）', X: 'その他' }, labels || {});
+    { U: 'モンスター', M: '魔法', S: '技能', C: 'カース（憑依として置く・常に表）', X: 'その他' }, labels || {});
   let html = noneLabel ? `<option value="">${esc(noneLabel)}</option>` : '';
   kinds.forEach((k) => {
     const list = CARDS.filter((c) => c.t === k).sort((a, b) => a.id - b.id);
@@ -643,7 +643,9 @@ function renderBoardSetup() {
         <select data-bs="ch-card" data-l="${i}" data-k="${k}">${
           /* モンスターも置ける＝リバース召還（開かれるとその場に立つ）。よく使う魔法・技能を先に並べる */
           bsOptions(['M', 'S', 'C', 'U'], c.id, null, { U: 'モンスター（開くとリバース召還）' })}</select>
-        <button class="free-pick ${c.up ? 'on' : ''}" data-bs="ch-up" data-l="${i}" data-k="${k}">${c.up ? '表' : '裏'}</button>
+        ${CARD_BY_ID[c.id] && CARD_BY_ID[c.id].t === 'C'
+          ? '<span class="free-pick on" title="カースは憑依として置かれる（常に表向き。裏にはできない）">憑依（表）</span>'
+          : `<button class="free-pick ${c.up ? 'on' : ''}" data-bs="ch-up" data-l="${i}" data-k="${k}">${c.up ? '表' : '裏'}</button>`}
         <button class="free-pick ${c.by === 'self' ? 'on' : ''}" data-bs="ch-by" data-l="${i}" data-k="${k}">${c.by === 'self' ? '自が置いた' : '敵が置いた'}</button>
         <button class="free-pick del" data-bs="ch-del" data-l="${i}" data-k="${k}">✕</button>
       </div>`).join('') : '';
@@ -681,6 +683,7 @@ function renderBoardSetup() {
       <h2 class="free-h">盤面をセットして戦う<small>開発用。好きな盤面・手札から戦闘を始めます（ストーリーのセーブには触れません）</small></h2>
       ${bsetMsg ? `<p class="bs-msg">${esc(bsetMsg)}</p>` : ''}
       <div class="bs-lanes">${[0, 1, 2, 3, 4, 5].map(laneBox).join('')}</div>
+      <p class="bs-cap">ＣＨにはカース（91〜99）も置けます。カースは憑依として常に表向きで置かれ、傀儡化(92)なら始めた瞬間にそのユニットが相手の場へ移ります。表向きの傀儡(169)も同じです。</p>
       <div class="free-grid">
         <div class="free-box">
           <h3>手札</h3>
