@@ -58,6 +58,10 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     }
   });
   page.on('dialog', (d) => d.accept());   // retire の confirm() を自動でOK
+  /* 2026-09-05：🛠 デバッグメニューは既定で隠れる（js/devmode.js）。この検査は
+   * デバッグメニュー経由で開発用の画面へ入るので、開発者モードを立ててから開く。
+   * 「隠れていること」「7回連打で出ること」自体は、下の 5.5 で別の窓を開いて調べる。 */
+  await page.addInitScript(() => { try { localStorage.setItem('cq_dev', '1'); } catch (_) {} });
   await page.goto(URL);
   await page.waitForTimeout(400);   // 読み込み直後はフォント差し替え等でタブの位置がわずかに動くことがある
 
@@ -736,11 +740,59 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     String((await page.$$('.tab')).length) + '個');
   ok('ストーリー中はランタブが光ったまま（戦闘に入っても動かない）',
     await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
+  /* --- 2026-09-05（本人指定）：友人に渡すときのため 🛠 は既定で隠す ---------------
+   * 出す入口は2つだけ：バージョン表記(#ver-label)の7回連打と、URLの ?dev=1。
+   * どちらも localStorage の cq_dev を立てるだけ（js/devmode.js）。
+   * ここだけは「はじめて開いた人」の状態を見たいので、記憶を持たない別の窓で調べる
+   * ——この検査の本体(page)は addInitScript で cq_dev を立ててあり、常に出た状態で回る。 */
+  {
+    const guest = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await guest.goto(URL);
+    /* 起動時のローディング(#boot)は画面全体を覆うので、消えるまで待ってから押す */
+    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
+    const dbgShown = () => guest.$eval('#dbg-btn', (e) => e.offsetParent !== null);
+    ok('★はじめて開いた人には 🛠 デバッグメニューが見えない（2026-09-05 本人指定）', !(await dbgShown()));
+    for (let i = 0; i < 6; i++) await guest.click('#ver-label');
+    ok('★バージョン表記6回では出ない（7回に届くまで変わらない）', !(await dbgShown()));
+    ok('★4回目からは「あと何回」の案内が出る',
+      (await guest.$eval('#flash', (e) => e.textContent)).indexOf('あと1回') >= 0,
+      await guest.$eval('#flash', (e) => e.textContent));
+    await guest.click('#ver-label');
+    await guest.waitForTimeout(120);
+    ok('★バージョン表記を7回続けて押すと 🛠 が出る', await dbgShown());
+    ok('★出したことは端末に残る（localStorage の cq_dev）',
+      (await guest.evaluate(() => localStorage.getItem('cq_dev'))) === '1');
+    await guest.reload();
+    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
+    ok('★読み込み直しても 🛠 は出たまま', await dbgShown());
+    await guest.screenshot({ path: path.join(SHOT_DIR, '00_devmode-unlocked.png') });
+    /* 🙈 で隠すと、ボタンも記憶も消える */
+    await guest.click('#dbg-btn');
+    await guest.waitForTimeout(150);
+    for (const it of await guest.$$('.dbg-item')) {
+      const t = await it.$eval('b', (e) => e.textContent).catch(() => '');
+      if (t.indexOf('隠す') >= 0) { await it.click(); break; }
+    }
+    await guest.waitForTimeout(150);
+    ok('★「🙈 デバッグメニューを隠す」で 🛠 も記憶も消える',
+      !(await dbgShown()) && (await guest.evaluate(() => localStorage.getItem('cq_dev'))) === null);
+    /* 開発用の画面へは、隠している間は入れない（🛠 を消すだけでは道が残るため） */
+    await guest.evaluate(() => showScreen('screen-free'));
+    ok('★隠している間は開発用の画面へ入れない（ランへ受け流す）',
+      await guest.evaluate(() => document.getElementById('screen-run').classList.contains('on') &&
+        !document.getElementById('screen-free').classList.contains('on')));
+    /* URLの ?dev=1（PCでの検証・Playwright 用の入口） */
+    await guest.goto(URL + (URL.indexOf('?') < 0 ? '?' : '&') + 'dev=1');
+    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
+    ok('★URL に ?dev=1 を付けても出せる', await dbgShown());
+    await guest.close();
+  }
+
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
   ok('🛠 でデバッグメニューが開く', !!(await page.$('.dbg-menu')));
   /* 2026-09-02：道具は8つ（盤面を報告の追加ぶん。7のままだった検査を実装に合わせて更新） */
-  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
+  ok('デバッグメニューに9つの道具が並ぶ', (await page.$$('.dbg-item')).length === 9,
     String((await page.$$('.dbg-item')).length) + '個');
   await shot('debug-menu');
   /* ルーラー：80px方眼と座標番号が #app に重なる。もう一度押すと消える */
@@ -776,7 +828,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   /* --- 2026-08-29：デッキ編集とフリーバトルをデバッグメニューへ移した --- */
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
-  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
+  ok('デバッグメニューに9つの道具が並ぶ', (await page.$$('.dbg-item')).length === 9,
     String((await page.$$('.dbg-item')).length) + '個');
   /* 🃏 デッキ編集：アンロックに関係なく全169種から組めること・組んだ内容が残ること */
   await dbgClick('デッキ編集');

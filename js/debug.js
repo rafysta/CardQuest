@@ -16,7 +16,11 @@
  *                        元の画面に戻る（2026-08-29・本人指定。プレイヤーが後で振り返りたい
  *                        ときのためのメニュー。cq_meta.openingSeen やランの状態には触れない）。
  *
- * 製品には害が無い（押さなければ何も起きない）ので、当面は常設のままにしておく。
+ *   🙈 デバッグメニューを隠す … 人に見せるときのために 🛠 ごと消す（2026-09-05・本人指定）。
+ *
+ * 2026-09-05：友人に遊んでもらうことにしたので、**🛠 は既定で隠す**ようにした。
+ * 出し入れの仕組みは js/devmode.js（バージョン表記の7回連打／URLの ?dev=1）。
+ * このファイルは「開発者モードのときに何ができるか」だけを持ち、モードの状態は持たない。
  * DOM前提のコードなのでNode（tests/・tools/）からは読み込まれない。
  */
 'use strict';
@@ -35,8 +39,18 @@ const CQDebug = (function () {
     { icon: '📮', label: '盤面を報告', hint: 'いまの盤面と直前5手をメールで自分に送る', run: openReport },
     { icon: '🔄', label: '最新版のチェック', hint: '公開中・GitHubの版と見比べる', run: checkVersion },
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
-    { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene }
+    { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene },
+    { icon: '🙈', label: 'デバッグメニューを隠す', hint: '人に見せるとき用。バージョン表記の7回連打で戻る', run: hideDevMode }
   ];
+
+  /* 🙈 デバッグメニューを隠す（2026-09-05）。開発者モードを落として 🛠 を消す。
+   * 開発用の画面を開いたまま隠すと戻り道が無くなるので、先にラン画面へ戻しておく。
+   * 出し直しは js/devmode.js（バージョン表記を7回連打／URLに ?dev=1）。 */
+  function hideDevMode() {
+    close();
+    if (typeof showScreen === 'function') showScreen('screen-run');
+    if (typeof CQDev !== 'undefined') CQDev.set(false);
+  }
 
   /* ---- 🗡 フリーバトル ／ 🃏 デッキ編集 -------------------------------------
    * どちらも 2026-08-29 にタブから移してきた開発用の画面。ストーリー（ラン）中に

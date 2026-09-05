@@ -1646,11 +1646,24 @@ td.nm{font-weight:800}
 /* ---- デバッグメニュー（js/debug.js・2026-08-29） ----
  * 使われていなかった「エンジン検証」「この案について」タブを外した代わりに、
  * 開発用のコマンドをここへ集約した。押さなければ何も起きないので常設のままにしてある。 */
-.dbg-btn{
+/* 🛠 デバッグメニューのボタンは既定で隠す（2026-09-05・本人指定）。
+   出すのは開発者モードのときだけ＝<html class="cq-dev">。JSで後から隠すのではなく
+   CSSで最初から消しておくことで、読み込みの一瞬だけ見えてしまう事故を防ぐ。
+   モードの切り替えは js/devmode.js。 */
+.dbg-btn{display:none}
+.cq-dev .dbg-btn{
+  display:block;
   margin-left:10px;flex:none;width:38px;height:38px;border-radius:10px;
   background:var(--panel2);border:1px solid var(--line);font-size:17px;line-height:1;
 }
-.dbg-btn:hover{border-color:var(--accent)}
+.cq-dev .dbg-btn:hover{border-color:var(--accent)}
+/* バージョン表記は開発者モードの隠し入口（7回連打）。指で押せる大きさにし、
+   連打で文字が選択反転しないようにしておく。 */
+#ver-label{
+  display:inline-block;padding:4px 6px;margin-left:2px;cursor:default;
+  user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
 .dbg-menu{
   position:absolute;right:12px;top:56px;z-index:1100;width:340px;
   background:var(--panel);border:1px solid var(--line);border-radius:14px;

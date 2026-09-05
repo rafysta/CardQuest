@@ -60,6 +60,8 @@ const SPEC = {
       })
     });
   });
+  /* 2026-09-05：🛠 は既定で隠れる（js/devmode.js）。この検査は 🛠 から開くので立てておく */
+  await page.addInitScript(() => { try { localStorage.setItem('cq_dev', '1'); } catch (_) {} });
   await page.goto(URL);
   await page.waitForFunction(() => typeof CQReport !== 'undefined' && typeof startBoardBattle === 'function');
 
