@@ -771,6 +771,32 @@ td.nm{font-weight:800}
 .card.lane-lid span{font-size:15px;font-weight:800;letter-spacing:.16em}
 .lane.locked{opacity:.85}
 
+/* 岩でふさがれた列（laneCap・2026-09-05 本人指定）。使えない階層のぶんだけレーンの上から
+ * 岩を積んで、「この列はここまでしか積めない」ことを盤面だけで分かるようにする。
+ * 押すと戦場ルールの説明（.lane-lid と同じ data-act="field-info"）が出る。 */
+.lane-rocks{
+  position:absolute;left:2px;right:2px;top:0;z-index:112;cursor:pointer;
+  border-radius:10px 10px 3px 3px;
+  border:2px solid #6d5f45;border-bottom:4px solid #8a7857;
+  background:
+    /* 岩の塊（明るめの粒を重ねて「積み上がった岩」に見せる） */
+    radial-gradient(circle at 24% 84%, #9a8b6d 0 15px, #6f624a 16px, transparent 18px),
+    radial-gradient(circle at 66% 90%, #8d7f62 0 18px, #665a44 19px, transparent 21px),
+    radial-gradient(circle at 88% 74%, #93856a 0 13px, #6b5f48 14px, transparent 16px),
+    radial-gradient(circle at 42% 56%, #8a7c60 0 17px, #63583f 18px, transparent 20px),
+    radial-gradient(circle at 10% 44%, #93856a 0 14px, #6b5f48 15px, transparent 17px),
+    radial-gradient(circle at 80% 34%, #857a5c 0 16px, #605540 17px, transparent 19px),
+    radial-gradient(circle at 30% 18%, #8d7f62 0 15px, #665a44 16px, transparent 18px),
+    radial-gradient(circle at 62% 10%, #7f7457 0 13px, #5b5039 14px, transparent 16px),
+    linear-gradient(#4a4231,#3a3427);
+  box-shadow:inset 0 -10px 16px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.55);
+  display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;
+}
+.lane-rocks-cap{
+  font-size:12px;font-weight:800;letter-spacing:.08em;color:#ffe9c2;
+  background:#000000bb;border:1px solid #8a7857;border-radius:8px;padding:2px 8px;white-space:nowrap;
+}
+
 /* 情報パネルに出す戦場ルールの説明 */
 .i-field{border-top:1px solid var(--line);padding-top:8px;margin-top:10px}
 .i-field:first-of-type{border-top:none;margin-top:0}
@@ -844,14 +870,6 @@ td.nm{font-weight:800}
 .area-clear{margin-left:8px;font-size:12px;background:var(--accent);color:#241c00;border-radius:8px;padding:2px 8px}
 .area-tile-lock{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   text-align:center;padding:0 16px;font-size:14px;color:#e2c98c}
-
-/* 「最初からやり直す」（M6.6 WP2）。確認用の開発機能なので、隅に小さく・目立たない色で置く。
- * #run-root は position:relative（css先頭）なのでこの絶対配置はエリア選択画面の右下に収まる。 */
-.area-reset-btn{
-  position:absolute;right:0;bottom:0;background:none;border:1px solid var(--line);
-  border-radius:8px;padding:5px 10px;font-size:11px;color:var(--dim);cursor:pointer;opacity:.6;
-}
-.area-reset-btn:hover{opacity:1;color:#e2a0a0;border-color:#7a2b2b}
 
 /* ---- ホーム画面（ジェイルタウン・M7 WP5） ----
  * オープニング後・リザルト後の着地点。背景画像＋施設ボタン6つ。アンバーの吹き出しは
@@ -1455,6 +1473,81 @@ td.nm{font-weight:800}
     transform:translate(calc(-50% + var(--cx,0px)), var(--cy,-70px)) scale(1) rotate(var(--cr,0deg));
     opacity:0;
   }
+}
+
+/* ---- ？のマスの演出（2026-09-05 本人指定） --------------------------------
+ * 宝箱・休憩と同じ四角（.event-intro-cut）の中で完結する短い演出。出来事ごとに
+ * 泉＝ハート／落とし穴＝割れたハートが落ちる／巾着＝宝箱と同じ金貨／門番＝金貨が落ちる／
+ * ログの欠片＝カードが現れてきらめく、と見え方を変えている。 */
+.event-q-icon{
+  position:absolute;left:50%;top:6px;transform:translateX(-50%);
+  font-size:66px;line-height:1;filter:drop-shadow(0 8px 10px rgba(0,0,0,.55));
+  opacity:0;animation:battleIntroFade .4s ease-out .3s forwards;
+}
+/* コマと並べるとき：頭に重ならないよう小さく左上へ寄せる */
+.event-q-icon.side{ left:20%;top:10px;font-size:48px; }
+/* 落とし穴：足元の暗い穴（絵文字に頼らずＣＳＳで描く） */
+.event-q-hole{
+  position:absolute;left:50%;bottom:6px;width:150px;height:44px;margin-left:-75px;
+  border-radius:50%;background:radial-gradient(ellipse at 50% 40%, #000 0 52%, #1b1a17 72%, transparent 74%);
+  box-shadow:0 0 22px 8px rgba(0,0,0,.7);
+  opacity:0;animation:battleIntroFade .4s ease-out .25s forwards;
+}
+/* 巾着（Ｇを拾う）は金貨のはじけ元になるので、宝箱と同じ位置・大きさに置く */
+.event-q-purse{
+  position:absolute;left:50%;bottom:4px;transform:translateX(-50%);
+  width:140px;height:140px;font-size:110px;line-height:140px;text-align:center;
+  filter:drop-shadow(0 10px 10px rgba(0,0,0,.5));
+}
+/* 損失（ＬＰ−・Ｇ−）は「下へ落ちる」で表す */
+@keyframes eventQFall{
+  0%{ transform:translate(calc(-50% + var(--qx,0px)),0) scale(.7) rotate(0); opacity:0; }
+  20%{ opacity:1; }
+  100%{ transform:translate(calc(-50% + var(--qx,0px)),150px) scale(1) rotate(var(--qr,14deg)); opacity:0; }
+}
+.event-q-fall{
+  position:absolute;left:50%;top:34px;font-weight:800;
+  animation:eventQFall 1.25s cubic-bezier(.4,0,.8,1) .35s forwards;
+}
+.event-q-fall-heart{ font-size:46px;--qr:-16deg; }
+.event-q-fall-coin{ font-size:24px;color:#b9a86e;text-shadow:0 2px 5px rgba(0,0,0,.6); }
+/* 落とし穴：コマが揺れる */
+@keyframes eventQShake{
+  0%,100%{ transform:translateX(0) rotate(0); }
+  15%{ transform:translateX(-7px) rotate(-5deg); }
+  35%{ transform:translateX(6px) rotate(4deg); }
+  55%{ transform:translateX(-4px) rotate(-3deg); }
+  75%{ transform:translateX(3px) rotate(2deg); }
+}
+.event-q-shake{ animation:eventQShake .7s ease-out .15s both; }
+/* ログの欠片：カードがふわりと現れる */
+@keyframes eventQCard{
+  0%{ transform:translateX(-50%) scale(.5) rotate(-12deg); opacity:0; }
+  55%{ transform:translateX(-50%) scale(1.06) rotate(3deg); opacity:1; }
+  100%{ transform:translateX(-50%) scale(1) rotate(0); opacity:1; }
+}
+.event-q-card{
+  position:absolute;left:50%;bottom:10px;width:124px;height:124px;
+  border:2px solid var(--accent);border-radius:12px;overflow:hidden;background:#0a1120;
+  box-shadow:0 10px 22px rgba(0,0,0,.55),0 0 18px rgba(250,204,21,.35);
+  animation:eventQCard .8s cubic-bezier(.2,.85,.25,1) .2s both;
+}
+.event-q-card img{ width:100%;height:100%;object-fit:cover;display:block; }
+.event-q-card-fallback{ font-size:74px;line-height:124px;text-align:center; }
+.event-q-card-name{
+  position:absolute;left:0;right:0;bottom:0;background:#000000cc;color:#fff;
+  font-size:12px;font-weight:800;text-align:center;padding:3px 4px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+@keyframes eventQSpark{
+  0%{ transform:translate(-50%,0) scale(.3); opacity:0; }
+  35%{ opacity:1; }
+  100%{ transform:translate(calc(-50% + var(--qx,0px)), var(--qy,-40px)) scale(1.1); opacity:0; }
+}
+.event-q-spark{
+  position:absolute;left:50%;bottom:70px;font-size:26px;color:var(--accent);
+  text-shadow:0 0 10px rgba(250,204,21,.6);
+  animation:eventQSpark 1s ease-out both;
 }
 
 /* ---- フリーバトルの設定画面（開発用・2026-08-29） ----

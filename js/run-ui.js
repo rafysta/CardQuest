@@ -332,8 +332,9 @@ function renderAreaSelect() {
     </div>
     <button class="area-back-btn" data-act="go-home">← ホームへ</button>
     <h2 class="run-h2">冒険に出る</h2>
-    <div class="area-grid">${tiles}</div>
-    <button class="area-reset-btn" data-act="reset-progress">最初からやり直す</button>`;
+    <div class="area-grid">${tiles}</div>`;
+  /* ★2026-09-05 本人指定：ここにあった「最初からやり直す」は削除した（誤爆が怖いうえ、
+   * ホームの「設定」に同じものがバックアップの案内つきで置いてある）。 */
 }
 
 /* ================= 開始マス（M6.6 WP4） =================
@@ -1216,7 +1217,9 @@ function renderNode() {
   /* M6.6 WP8：宝箱・休憩も、敵のマスと同じように「触れた時点で」自動的に演出へ入る
    * （「開ける」「休む」のクリックは無くした）。効果の確定と自動でマップへ戻る処理は
    * renderEventIntro() 側で行う。 */
-  if (n.type === 'chest' || n.type === 'rest') {
+  /* ★2026-09-05 本人指定：？のマスも宝箱・休憩と同じ「黒い四角＋短い演出＋自動でマップへ」に
+   * 揃えた（従来は文章と「進む」ボタンのパネルで、クリックを求めていた）。 */
+  if (n.type === 'chest' || n.type === 'rest' || n.type === 'question') {
     RUI.eventIntroNodeId = RUI.nodeId;
     RUI.eventIntroLeaving = false;
     RUI.eventIntroKind = n.type;
@@ -1226,7 +1229,6 @@ function renderNode() {
   }
   if (n.type === 'shop') return renderShopNode(run, n);
   if (n.type === 'exchange') return renderBuyoutNode(run, n);   /* M7 WP8：中身は買い取り所（マスの型名は互換のため据え置き） */
-  if (n.type === 'question') return renderQuestionNode(run, n);
 }
 
 /* ================= 戦闘導入カットイン（M6.6 WP5） =================
@@ -1343,7 +1345,9 @@ function renderEventIntro() {
   const run = RUI.run, n = run.map.nodes[RUI.eventIntroNodeId];
   const kind = RUI.eventIntroKind;
   if (!RUI.eventIntroResult) {
-    RUI.eventIntroResult = kind === 'chest' ? CQRun.openChest(run, n) : CQRun.rest(run, n);
+    RUI.eventIntroResult = kind === 'chest' ? CQRun.openChest(run, n)
+      : kind === 'question' ? (CQRun.resolveQuestion(run, n) || { text: n.event && n.event.text })
+      : CQRun.rest(run, n);
     runSave();
   }
   const r = RUI.eventIntroResult;
@@ -1352,12 +1356,16 @@ function renderEventIntro() {
   const ov = document.createElement('div');
   ov.className = 'event-intro';
   ov.dataset.act = 'event-intro-skip';
-  const title = kind === 'chest' ? (n.rare ? '大きな宝箱' : '宝箱') : '休憩';
-  const stageHTML = kind === 'chest' ? chestIntroStageHTML() : restIntroStageHTML();
+  const q = kind === 'question' ? questionIntroParts(n, r) : null;
+  const title = kind === 'chest' ? (n.rare ? '大きな宝箱' : '宝箱')
+    : kind === 'question' ? q.title : '休憩';
+  const stageHTML = kind === 'chest' ? chestIntroStageHTML()
+    : kind === 'question' ? q.stage : restIntroStageHTML();
   /* 2026-08-29 本人指定：獲得量の数字は一目で分かるよう大きく強調する。 */
   const msg = kind === 'chest'
     ? `<span class="event-intro-amount event-intro-amount-gold">${r.gold}Ｇ</span>を取得した。`
       + (r.cardId != null ? `<br>${esc(CARD_BY_ID[r.cardId].n)}を入手した。` : '')
+    : kind === 'question' ? q.msg
     : (r.healed > 0
         ? `ＬＰが<span class="event-intro-amount event-intro-amount-lp">${r.healed}</span>回復した。`
         : 'ＬＰはすでに満タンだった。');
@@ -1368,11 +1376,108 @@ function renderEventIntro() {
       <div class="event-intro-msg">${msg}</div>
     </div>`;
   runRoot().appendChild(ov);
+  /* ★2026-09-05：この演出ごとの通し番号。前の演出のタイマーが後の演出を閉じてしまわないよう
+   * （タップで早送りした直後に次のマスへ入ると、前の 4秒タイマーがまだ生きている）、
+   * タイマーは自分が始めた演出のときだけ働かせる。 */
+  const token = (RUI.eventIntroToken || 0) + 1;
+  RUI.eventIntroToken = token;
   setTimeout(function () {
+    if (RUI.eventIntroToken !== token) return;
     const cut = ov.querySelector('.event-intro-cut');
     if (cut) cut.classList.add('closing');
   }, EVENT_INTRO_MS - 400);
-  setTimeout(leaveEventIntro, EVENT_INTRO_MS);
+  setTimeout(function () {
+    if (RUI.eventIntroToken !== token) return;
+    leaveEventIntro();
+  }, EVENT_INTRO_MS);
+}
+
+/* ---- ？のマスの演出（2026-09-05 本人指定） --------------------------------
+ * ？で起きる5つの出来事に、それぞれ短い演出を割り当てる。宝箱・休憩と同じ四角の中で
+ * 完結し、クリックは求めない（EVENT_INTRO_MS で自動的にマップへ戻る）。
+ *
+ *   spring 泉    ＬＰ+1   … 休憩と同じハートがコマへ飛び込む（回復＝同じ見え方に揃える）
+ *   trap   落とし穴 ＬＰ-1 … コマが揺れ、割れたハートが落ちる（損失＝下向き・赤）
+ *   coin   巾着   Ｇ+150  … **宝箱と同じ金貨の演出**（本人指定。巾着の絵からＧがはじける）
+ *   toll   門番   Ｇ-100  … 金貨が財布から下へこぼれ落ちる（損失＝下向き・くすんだ色）
+ *   stray  ログの欠片 カード … カードが1枚ふわりと現れて光る
+ *
+ * 中央に置く絵はマップの？アイコンではなく、出来事ごとの絵文字（大きく1つ）にしてある
+ * ——？のままだと「何が起きたか」が絵から分からないため。 */
+const QUESTION_FX = {
+  spring: { title: '澄んだ泉', icon: '⛲' },
+  /* 落とし穴の絵文字（🕳）は端末によって字形を持たず白い箱になるので使わない。
+   * かわりに足元へＣＳＳで暗い穴を描く（questionIntroParts の trap を参照）。 */
+  trap:   { title: '落とし穴', icon: '' },
+  coin:   { title: '落とし物の巾着', icon: '👛' },
+  toll:   { title: '怪しい門番', icon: '💂' },
+  stray:  { title: 'ログの欠片', icon: '✨' }
+};
+
+/** ？のマスの題名・演出・結果メッセージを組み立てる。r は CQRun.resolveQuestion の戻り値
+ * （再描画で null が返る場合に備え、呼び出し側が {text} だけの形に丸めて渡してくる）。 */
+function questionIntroParts(n, r) {
+  const ev = n.event || {}, eff = ev.effect || {};
+  const fx = QUESTION_FX[ev.id] || { title: '？', icon: '❓' };
+  /* コマと並べる出来事の絵は、コマの頭に重ならないよう小さく左上へ寄せる（.side） */
+  const icon = function (side) {
+    return fx.icon ? `<div class="event-q-icon${side ? ' side' : ''}">${fx.icon}</div>` : '';
+  };
+  let stage = icon(false), msg = esc(ev.text || '');
+  if (eff.lp > 0) {                                   /* 泉：回復（休憩と同じハート） */
+    stage = `<div class="event-rest-hero">
+        <img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()">
+      </div>${questionHeartsHTML()}${icon(true)}`;
+    msg += `<br>ＬＰが<span class="event-intro-amount event-intro-amount-lp">${eff.lp}</span>回復した。`;
+  } else if (eff.lp < 0) {                            /* 落とし穴：ＬＰが減る */
+    stage = `<div class="event-q-hole"></div>
+      <div class="event-rest-hero event-q-shake">
+        <img src="assets/map/player.png" alt="" draggable="false" onerror="this.remove()">
+      </div><span class="event-q-fall event-q-fall-heart" style="--qx:64px">💔</span>${icon(true)}`;
+    msg += `<br>ＬＰが<span class="event-intro-amount event-intro-amount-lp">${-eff.lp}</span>減った。`;
+  } else if (eff.gold > 0) {                          /* 巾着：宝箱と同じ金貨がはじける */
+    stage = `<div class="event-q-purse">${fx.icon}</div>${chestCoinsHTML()}`;
+    msg += `<br><span class="event-intro-amount event-intro-amount-gold">${eff.gold}Ｇ</span>を手に入れた。`;
+  } else if (eff.gold < 0) {                          /* 門番：金貨がこぼれ落ちる */
+    stage = `${icon(false)}${questionCoinsFallHTML()}`;
+    msg += `<br><span class="event-intro-amount event-intro-amount-gold">${-eff.gold}Ｇ</span>を支払った。`;
+  } else if (eff.draftCard && n.cardId != null) {     /* ログの欠片：カードが現れる */
+    stage = `<div class="event-q-card">${cardArtHTML(n.cardId)}</div>${questionSparklesHTML()}`;
+    msg += `<br>${esc(CARD_BY_ID[n.cardId].n)}を入手した。`;
+  }
+  void r;
+  return { title: fx.title, stage: stage, msg: msg };
+}
+
+/** 泉のハート（休憩の飛び込みを2つだけ使う。回復量が1なので控えめにする） */
+function questionHeartsHTML() {
+  return [{ side: 'l', delay: 0 }, { side: 'r', delay: .18 }].map(function (h) {
+    return `<span class="event-rest-heart event-rest-heart-${h.side}" style="animation-delay:${h.delay}s">♥</span>`;
+  }).join('');
+}
+
+/** 門番：金貨が下へこぼれ落ちる（獲得のはじけ飛びと逆向き・くすんだ色） */
+function questionCoinsFallHTML() {
+  return [{ x: -46, d: 0 }, { x: 8, d: .18 }, { x: 52, d: .33 }, { x: -14, d: .48 }].map(function (c) {
+    return `<span class="event-q-fall event-q-fall-coin" style="animation-delay:${c.d}s;--qx:${c.x}px">Ｇ</span>`;
+  }).join('');
+}
+
+/** ログの欠片：カードの周りにきらめきが散る */
+function questionSparklesHTML() {
+  return [{ x: -78, y: -20, d: 0 }, { x: 74, y: -46, d: .2 }, { x: -58, y: -70, d: .38 },
+          { x: 62, y: 12, d: .52 }].map(function (k) {
+    return `<span class="event-q-spark" style="animation-delay:${k.d}s;--qx:${k.x}px;--qy:${k.y}px">✦</span>`;
+  }).join('');
+}
+
+/** ？で手に入れたカードの絵（バトル画面と同じ ART_DIR／artSrcId の規約に揃える。
+ * 絵が無ければ札の絵文字にフォールバックする） */
+function cardArtHTML(cardId) {
+  const c = CARD_BY_ID[cardId];
+  return `<img src="${ART_DIR}${artSrcId(c)}${ART_EXT}" alt="" draggable="false"
+      onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'event-q-card-fallback',textContent:'🎴'}))">
+    <span class="event-q-card-name">${esc(c ? c.n : '')}</span>`;
 }
 
 /** 休憩の演出：中央に立つ自分のコマ（戦闘導入の.battle-intro-heroと同じ大きさ）へ、
@@ -1396,6 +1501,15 @@ function restIntroStageHTML() {
  * 大きさ）から、金貨（Ｇ）が大量にはじけて派手に舞い上がる（2026-08-29 本人指定）。
  * マップ側が画像読み込み失敗時に絵文字へフォールバックするのと同じやり方に揃えてある。 */
 function chestIntroStageHTML() {
+  return `<div class="event-chest-box">
+      <img src="assets/map/icon_chest.png" alt="" draggable="false"
+        onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'event-chest-box-fallback',textContent:'🎁'}))">
+    </div>${chestCoinsHTML()}`;
+}
+
+/** はじけ飛ぶ金貨（宝箱と、？の「落とし物の巾着」が共有する。2026-09-05 本人指定：
+ * ？でＧを拾ったときも宝箱と同じ演出にする） */
+function chestCoinsHTML() {
   const coins = [
     { cx: -70, cy: -104, cr: -30, delay: 0,   size: 20 },
     { cx: -46, cy: -132, cr: 18,  delay: .05, size: 24 },
@@ -1412,10 +1526,7 @@ function chestIntroStageHTML() {
   ].map(function (c) {
     return `<span class="event-chest-coin" style="animation-delay:${c.delay}s;font-size:${c.size}px;--cx:${c.cx}px;--cy:${c.cy}px;--cr:${c.cr}deg">Ｇ</span>`;
   }).join('');
-  return `<div class="event-chest-box">
-      <img src="assets/map/icon_chest.png" alt="" draggable="false"
-        onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'event-chest-box-fallback',textContent:'🎁'}))">
-    </div>${coins}`;
+  return coins;
 }
 
 /** カットインを終えて自動でマップへ戻る。タイマー経由・タップスキップ経由のどちらから
@@ -1734,10 +1845,12 @@ function renderCollection() {
  * 読み込んだあとは必ずリロードする——画面が持っている RUI.meta・中断中のランを
  * 中途半端に作り替えるより、最初から読み直すほうが確実。 */
 
-/** 演出の速さの設定値（localStorage cq_fx）。未設定は 'normal' */
+/** 演出の速さの設定値（localStorage cq_fx）。★未設定は 'slow'（2026-09-05 本人指定：
+ * 初めて遊ぶ人がいちばん困るのは「相手の手番で何が起きたか分からない」ことなので、
+ * 既定を「ゆっくり」にしておく。js/layout.js の FX_SPEED_DEFAULT と揃えること） */
 function fxSpeedSetting() {
-  try { const v = JSON.parse(RUN_STORAGE.getItem('cq_fx') || '{}').speed; return ['slow', 'normal', 'fast'].indexOf(v) >= 0 ? v : 'normal'; }
-  catch (_) { return 'normal'; }
+  try { const v = JSON.parse(RUN_STORAGE.getItem('cq_fx') || '{}').speed; return ['slow', 'normal', 'fast'].indexOf(v) >= 0 ? v : 'slow'; }
+  catch (_) { return 'slow'; }
 }
 
 function renderSettings() {
@@ -1770,7 +1883,8 @@ function renderSettings() {
       <section class="set-box">
         <h4>演出の速さ</h4>
         <p class="set-note">戦闘中の「攻撃の宣言」「判定の数字」「ＬＰの減少」「憑依・傀儡」を
-          止まって見せる時間を変えます。何が起きたか追いにくいときは「ゆっくり」に。</p>
+          止まって見せる時間を変えます。<b>はじめは「ゆっくり」</b>です。相手の手番の流れが
+          分かるようになったら「ふつう」「速い」にすると、さくさく進みます。</p>
         <div class="set-acts">
           ${[['slow', 'ゆっくり'], ['normal', 'ふつう'], ['fast', '速い']].map(([v, label]) =>
             `<button class="btn ${fxSpeedSetting() === v ? 'ok' : 'ng'}" data-act="fx-speed" data-id="${v}">${label}</button>`).join('')}
@@ -2077,25 +2191,6 @@ function renderBulkSell() {
       </div>
     </div>`;
   keepScrollRestore('logshop:bulk');
-}
-
-function renderQuestionNode(run, n) {
-  if (!n.resolved) {
-    CQRun.resolveQuestion(run, n);
-    runSave();
-  }
-  const eff = n.event.effect || {};
-  const parts = [];
-  if (eff.lp) parts.push('ＬＰ ' + (eff.lp > 0 ? '+' : '') + eff.lp);
-  if (eff.gold) parts.push('Ｇ ' + (eff.gold > 0 ? '+' : '') + eff.gold);
-  if (eff.draftCard && n.cardId != null) parts.push(esc(CARD_BY_ID[n.cardId].n) + ' を入手');
-  runRoot().innerHTML = `
-    <div class="node-panel">
-      <h3>？</h3>
-      <div class="bubble">${esc(n.event.text)}</div>
-      ${parts.length ? `<p>${parts.join('・')}</p>` : ''}
-      <button class="btn ok" data-act="node-done">進む</button>
-    </div>`;
 }
 
 /* ================= 戦利品の振り分け（M6.6 WP7） ================= */

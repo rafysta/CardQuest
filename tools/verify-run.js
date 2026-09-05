@@ -63,6 +63,15 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
 
   const results = [];
   const ok = (name, cond, extra) => results.push([cond ? 'PASS' : 'FAIL', name, extra || '']);
+  /* ★M7.9（2026-09-05）：演出の速さの既定は「ゆっくり」（初めて遊ぶ人向け）。
+   * まず既定であることを確かめてから、この検査の残りは「ふつう」に固定して回す
+   * ——検査は固定の待ち時間で状態を見るので、1.5倍の停止が入ると追随できない。 */
+  const fxDefault = await page.evaluate(() => [fxSpeed(), fxSpeedSetting()]);
+  ok('★演出の速さの既定は「ゆっくり」（初めて遊ぶ人向け・2026-09-05 本人指定）',
+    fxDefault[0] === 'slow' && fxDefault[1] === 'slow', JSON.stringify(fxDefault));
+  await page.evaluate(() => { localStorage.setItem('cq_fx', JSON.stringify({ speed: 'normal' })); });
+  ok('演出の速さを「ふつう」に設定できる（以降の検査はこの速さで回す）',
+    (await page.evaluate(() => [fxSpeed(), fxSpeedSetting()])).join(',') === 'normal,normal');
   const wait = async (fn, ms) => {
     const t0 = Date.now();
     while (Date.now() - t0 < (ms || 10000)) {
@@ -542,10 +551,10 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   if (nonBattle) {
     const t = await nodeType(nonBattle);
     await page.click(`.map-node[data-id="${nonBattle}"]`, { force: true });
-    if (t === 'chest' || t === 'rest') {
+    if (t === 'chest' || t === 'rest' || t === 'question') {
       /* M6.6 WP8：宝箱・休憩はクリック不要で自動的にカットイン（.event-intro）へ入り、
        * 終わったら自動でマップへ戻る（戦闘導入＝.battle-introと同じ「四角の後ろに
-       * マップが見えたまま」の形）。 */
+       * マップが見えたまま」の形）。★2026-09-05 本人指定で ？ のマスも同じ形にした。 */
       await wait(() => page.$('.event-intro'));
       ok('非戦闘マス(' + t + ')は自動でカットインに入る（M6.6 WP8）', !!(await page.$('.event-intro')), t);
       ok('カットインの後ろにマップが見えている', !!(await page.$('.event-intro')) && !!(await page.$('.run-map')));
@@ -574,7 +583,6 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
       await wait(() => page.$('.node-panel'));
       ok('非戦闘マス(' + t + ')の解決パネルが出る', !!(await page.$('.node-panel')), t);
       await shot('node-' + t);
-      if (t === 'question') { await page.click('[data-act="node-done"]'); }
     }
     await wait(() => page.$('.run-map'));
     ok('非戦闘マスを解決するとマップへ戻る', !!(await page.$('.run-map')));
@@ -1410,6 +1418,91 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await shot('home-after-result');
   await passHomeToAreaSelect();
   ok('ホームから「冒険に出る」でエリア選択に戻れる', !!(await page.$('.area-grid')));
+  /* ★2026-09-05 本人指定：エリア選択の「最初からやり直す」は削除した（ホームの設定にある） */
+  ok('★エリア選択に「最初からやり直す」は無い（設定へ集約）', !(await page.$('[data-act="reset-progress"]')));
+
+  /* --- 6-c) ★？のマスの演出（2026-09-05 本人指定・5種すべて） ---
+   * ？で起きる出来事は5つ（泉＝ＬＰ+1／落とし穴＝ＬＰ-1／巾着＝Ｇ+150／門番＝Ｇ-100／
+   * ログの欠片＝カード1枚）。どれも宝箱・休憩と同じ「黒い四角＋短い演出＋自動でマップへ」で、
+   * クリックを求めないこと。ランを1本始め、マップ上のマスを？に書き換えて1種類ずつ通す
+   * （マスを踏むと先へ進んでしまうので、演出そのものは renderNode と同じ入口を
+   * 直接呼んで確かめる——RUI の状態遷移は宝箱・休憩の検査と同じ経路）。 */
+  {
+    const grass = await page.$$eval('.area-tile', (els) => els.findIndex((e) => e.dataset.id === 'grassland'));
+    (await page.$$('.area-tile'))[grass].click();
+  }
+  await wait(() => page.$('.map-node') || page.$('.amber-overlay') || page.$('.cg-head'));
+  {
+    let guard = 0;
+    while (guard++ < 40 && !(await page.$('.run-map'))) {
+      const skip = await page.$('[data-act="opening-next"], [data-act="amber-skip"], [data-act="carry-go"], [data-act="draft-skip"]');
+      if (skip) { await skip.click(); await page.waitForTimeout(200); continue; }
+      await page.waitForTimeout(200);
+    }
+  }
+  ok('？の演出：草原のランを1本始められた', !!(await page.$('.run-map')));
+  const qKinds = ['spring', 'trap', 'coin', 'toll', 'stray'];
+  for (const kind of qKinds) {
+    await page.evaluate(() => { RUI.run.lp = 8; RUI.run.gold = 500; });
+    const before = await page.evaluate(() => ({ lp: RUI.run.lp, gold: RUI.run.gold }));
+    await page.evaluate((k) => {
+      const EV = {
+        spring: { id: 'spring', text: '澄んだ泉を見つけた。', effect: { lp: 1 } },
+        trap: { id: 'trap', text: '落とし穴を踏み抜いた。', effect: { lp: -1 } },
+        coin: { id: 'coin', text: '巾着を拾った。', effect: { gold: 150 } },
+        toll: { id: 'toll', text: '通行料を払った。', effect: { gold: -100 } },
+        stray: { id: 'stray', text: 'ログの欠片を回収した。', effect: { draftCard: true } }
+      };
+      const id = Object.keys(RUI.run.map.nodes)[1];
+      const n = RUI.run.map.nodes[id];
+      n.type = 'question'; n.event = EV[k]; n.resolved = false; n.cleared = false;
+      if (k === 'stray') n.cardId = 101;
+      RUI.run.lp = 8; RUI.run.gold = 500;    /* 泉が回復でき、落とし穴で死なない余地を作る */
+      RUI.eventIntroToken = (RUI.eventIntroToken || 0) + 1;   /* 前の演出のタイマーを無効にする */
+      /* renderNode() が？のマスに対して行うのと同じ状態遷移（M6.6 WP8 の宝箱・休憩と共通） */
+      RUI.nodeId = id;
+      RUI.eventIntroNodeId = id; RUI.eventIntroLeaving = false;
+      RUI.eventIntroKind = 'question'; RUI.eventIntroResult = null;
+      RUI.view = 'event-intro';
+      renderEventIntro();
+    }, kind);
+    await wait(() => page.$('.event-intro'));
+    ok('？（' + kind + '）はクリック不要でカットインに入る', !!(await page.$('.event-intro')));
+    ok('？（' + kind + '）のカットインの後ろにマップが見えている',
+      !!(await page.$('.event-intro')) && !!(await page.$('.run-map')));
+    ok('？（' + kind + '）に「進む」ボタンは無い（クリックを求めない）',
+      !(await page.$('[data-act="node-done"]')));
+    await page.waitForTimeout(800);        /* 演出が動いている途中の絵を撮る */
+    const fx = await page.evaluate(() => ({
+      title: (document.querySelector('.event-intro-title') || {}).textContent || '',
+      msg: (document.querySelector('.event-intro-msg') || {}).textContent || '',
+      coins: document.querySelectorAll('.event-chest-coin').length,
+      hearts: document.querySelectorAll('.event-rest-heart').length,
+      falls: document.querySelectorAll('.event-q-fall').length,
+      card: !!document.querySelector('.event-q-card'),
+      lp: RUI.run.lp, gold: RUI.run.gold
+    }));
+    await shot('q-' + kind);
+    const want = { spring: fx.hearts > 0, trap: fx.falls > 0, coin: fx.coins > 0,
+                   toll: fx.falls > 0, stray: fx.card }[kind];
+    ok('？（' + kind + '）に出来事に合った演出が出る', want, JSON.stringify(fx));
+    const effOk = { spring: fx.lp === before.lp + 1, trap: fx.lp === before.lp - 1,
+                    coin: fx.gold === before.gold + 150, toll: fx.gold === before.gold - 100,
+                    stray: true }[kind];
+    ok('？（' + kind + '）の効果がランに反映される', effOk, JSON.stringify(fx));
+    ok('？（' + kind + '）の題名と結果の文が出る', !!fx.title && !!fx.msg, fx.title + '／' + fx.msg);
+    const ovEl = await page.$('.event-intro');
+    if (ovEl) await ovEl.click().catch(() => {});   /* タップで早送り（自動で閉じ終わっていたら何もしない） */
+    await wait(() => page.evaluate(() => !document.querySelector('.event-intro')));
+    ok('？（' + kind + '）はクリックしなくても自動でマップへ戻る', !!(await page.$('.run-map')));
+  }
+  await page.click('[data-act="retire"]');
+  await wait(() => page.$('[data-act="cq-confirm-yes"]'));
+  await page.click('[data-act="cq-confirm-yes"]');
+  await wait(() => page.$('[data-act="back-home"]'));
+  await page.click('[data-act="back-home"]');
+  await wait(() => page.$('.home-scene'));
+  await passHomeToAreaSelect();
 
   // --- 7) 霧の出た森のマップ（M6.5b） ---
   /* 森を解放した状態にして、霧が出るまでランを引き直す（森の霧は50%なので数回で当たる）。

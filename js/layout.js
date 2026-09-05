@@ -918,11 +918,14 @@ const FX = { step: 460, deal: 90, out: 280,
   verdict: 700,     /* 判定の数字ポップ（Ａ600 vs Ｄ500） */
   lp: 600,          /* ＬＰ減少のフロート */
   telop: 700 };     /* 憑依・傀儡のテロップ */
-/* 演出の速さ（設定画面「演出の速さ」。localStorage cq_fx）。停止時間に一律で掛ける倍率 */
+/* 演出の速さ（設定画面「演出の速さ」。localStorage cq_fx）。停止時間に一律で掛ける倍率。
+ * ★既定は「ゆっくり」（2026-09-05 本人指定）——初めて遊ぶ人は、相手の手番で何が起きているかを
+ * 追えないまま負けるのがいちばん困る。慣れた人は設定で「ふつう」「速い」に変えられる。 */
 const FX_SPEED = { slow: 1.5, normal: 1, fast: 0.6 };
+const FX_SPEED_DEFAULT = 'slow';
 function fxSpeed() {
-  try { const v = JSON.parse(localStorage.getItem('cq_fx') || '{}').speed; return FX_SPEED[v] ? v : 'normal'; }
-  catch (_) { return 'normal'; }
+  try { const v = JSON.parse(localStorage.getItem('cq_fx') || '{}').speed; return FX_SPEED[v] ? v : FX_SPEED_DEFAULT; }
+  catch (_) { return FX_SPEED_DEFAULT; }
 }
 function fxMs(key) { return Math.round(FX[key] * FX_SPEED[fxSpeed()]); }
 let busy = false;
@@ -1549,6 +1552,15 @@ function laneHTML(i) {
     inner += unitHTML(i);
   } else {
     inner = '<div class="card empty-unit" data-lane="' + i + '">空き</div>';
+  }
+  /* ★2026-09-05 本人指定：M6 戦場ルール laneCap（🪨 岩でふさがれた列）を**絵で見せる**。
+   * それまで岩の列は数字（ＣＨ上限）が下がるだけで、盤面を見ても塞がれていることが分からなかった
+   * （チップの説明を読まないと気づけない）。使えない階層のぶんだけ、レーンの上から岩を積む。 */
+  const fcap = M.board.fieldCap && M.board.fieldCap[i];
+  if (fcap != null && fcap < LAYERS) {
+    inner += `<div class="lane-rocks" data-act="field-info"
+        style="height:calc(${LAYERS - fcap} * var(--vstep))">
+      <span class="lane-rocks-cap">ＣＨ ${fcap} まで</span></div>`;
   }
   return `<div class="lane ${cls.join(' ')}" data-lane="${i}">${inner}</div>`;
 }
