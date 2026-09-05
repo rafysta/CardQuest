@@ -131,7 +131,10 @@ function startRunBattle(setup, onOver) {
     rng: CQRng.create(setup.seed),
     hooks: { onMagicOpen: CQMagic.onMagicOpen, onUnitOpen: CQUnits.onUnitOpen }
   }));
-  M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };
+  /* M7.10 WP1：ラン中の戦闘は setup.aiPreset（CQRun.battleSetup が仕様どおりに決めた強さ。
+   * 通常戦闘＝free／ボス＝エリアのbossRank）を使う。単発戦闘モード（フリーバトル・下のaiRank）
+   * から呼ばれたときは setup.aiPreset が無いので、そちらの切り替えがそのまま効く（開発用・従来どおり）。 */
+  M.aiConfig = { enemy: CQAi.PRESETS[setup.aiPreset || aiRank] };
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
   /* M6.6 WP5：先攻／後攻は m.first に対局のあいだ保持されている（m.active は手番ごとに

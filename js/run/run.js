@@ -321,6 +321,9 @@
        * マスター戦（ボス）だけは従来どおりのＬＰ勝負なので mode を付けない（§2-6）。 */
       mode: isBoss ? undefined : 'field',
       enemyBoard: isBoss ? undefined : enemyBoardOf(n),
+      /* M7.10 WP1：ゲーム仕様書§4.2・§5どおりのＡＩ強さ。通常戦闘は弱ＡＩ設定（free）固定、
+       * ボスはエリアの帯（bossRank）。js/layout.js の startRunBattle() がこれを見て aiConfig を組む。 */
+      aiPreset: isBoss ? area.bossRank : 'free',
       seed: battleSeed(run, n)
     };
   }

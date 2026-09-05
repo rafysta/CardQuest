@@ -1,11 +1,19 @@
 /* CardQuest — ラン（分岐マップ）のヘッドレス自動プレイ（M6）
  *
- *   node tools/simulate-run.js [試行回数=300]
+ *   node tools/simulate-run.js [試行回数=300] [1キャリアのラン数=2] [--real]
  *
  * 「キャリア」＝同じ cq_meta を使い続けて2ラン連続で遊ぶ（1本目は必ず草原、2本目は
  * 解放されていれば森も選ぶ）。各マスの選択はランダム（分岐・ドラフト・購入・売却・
  * リタイヤも一定確率で）。戦闘は既存の敵ＡＩ同士（tools/simulate.js と同じ駆動）で
  * 自動決着させる。例外・不変条件違反が無いことを確認する回帰チェック。
+ *
+ * 敵ＡＩの強さ（M7.10 WP4）：既定は速い近似——通常戦闘（フリーユニット戦）の敵は
+ * 本番と同じ行動制限（最初の2手番は攻撃しない・マリガン無し＝CQAi.PRESETS.free相当）を
+ * eval方策に載せたもの、ボスは旧Ｃ級（heuristic）。大量の試行（1000キャリア×10ランなど）
+ * を速く回すための近似で、本番の思考方策（search）そのものではない。
+ * `--real` を付けると CQRun.battleSetup() が実際に決める aiPreset（通常＝free／
+ * ボス＝エリアのbossRank。どちらも search 方策）で回す——遅いので300キャリア程度の
+ * 確認用に使う（1000キャリア×10ランの基準値は既定の近似のまま比較する）。
  */
 'use strict';
 const fs = require('fs');
@@ -71,6 +79,11 @@ const BSTAT = {
  * ＡＩ同士の対戦では**合計するとほぼ打ち消し合う**（実際 1000キャリアで 43.6%→44.2% と
  * 誤差程度しか動かなかった）。効いているかどうかは、先攻・後攻に分けて初めて分かる。 */
 const FSTAT = { first: { n: 0, win: 0 }, second: { n: 0, win: 0 } };
+/* 2026-09-05 追加（先攻・後攻差の切り分け）：上の FSTAT は通常戦闘とボス戦を混ぜて数えている。
+ * 通常戦闘（フリーユニット戦）だけが「敵が最初から場に立っている」非対称を持つので、
+ * ボス戦（両者とも場が空から始まる）と分けて見ると、差が初期配置由来かどうかが分かる。 */
+const FSTAT_B = { field: { first: { n: 0, win: 0 }, second: { n: 0, win: 0 } },
+                  boss:  { first: { n: 0, win: 0 }, second: { n: 0, win: 0 } } };
 /* 1ランあたりの経済（マップ仕様書§7・追補§7-1の確認用）。
  * WP6で通常戦闘のＧが無くなったので、宝箱が主収入になっているかを見る。 */
 const ESTAT = { runs: 0, goldEnd: 0, goldKept: 0, goldCut: 0, cards: 0 };  /* goldKept/goldCut は M6.6 WP11 の清算の減額ぶん */
@@ -182,10 +195,19 @@ function wantsToFlee(m, node) {
   return playable.length === 0;
 }
 
+/* M7.10 WP4：本番と同じ行動制限を敵ＡＩの既定にする（自陣＝self は近似のまま常にheuristic。
+ * 実機の人は評価関数方策ではないので、絶対値ではなく現行との相対比較・実機確認で判断する§1-1）。 */
+const REAL_AI = process.argv.indexOf('--real') >= 0;
+const FIELD_AI_APPROX = Object.assign({}, CQAi.PRESETS.heuristic,
+  { noAttackTurns: 2, mulligan: false, label: 'フリー(近似)' });
+function enemyAiConfigFor(setup) {
+  if (REAL_AI) return CQAi.PRESETS[setup.aiPreset] || CQAi.PRESETS.heuristic;
+  return setup.mode === 'field' ? FIELD_AI_APPROX : CQAi.PRESETS.heuristic;
+}
 function autoBattle(setup, maxTurns, fleeNode) {
   const rng = CQRng.create(setup.seed);
   const m = CQTurn.createMatch(Object.assign({}, setup, { rng: rng, hooks: HOOKS }));
-  m.aiConfig = { self: CQAi.PRESETS.heuristic, enemy: CQAi.PRESETS.heuristic };
+  m.aiConfig = { self: CQAi.PRESETS.heuristic, enemy: enemyAiConfigFor(setup) };
   let guard = 0;
   while (!m.winner && !m.fled && m.turn < maxTurns && guard++ < 5000) {
     /* 逃走は「自分の配置ステップで、まだ何もしていないうち」だけ＝ターンの頭で判断する。
@@ -271,6 +293,9 @@ function playRun(areaId, seed, meta, rng) {
           const fb = (M.first === 'self') ? FSTAT.first : FSTAT.second;
           fb.n++;
           if (M.winner === 'self') fb.win++;
+          const fb2 = FSTAT_B[n.type === 'boss' ? 'boss' : 'field'][(M.first === 'self') ? 'first' : 'second'];
+          fb2.n++;
+          if (M.winner === 'self') fb2.win++;
         }
         /* M6.6 WP12：逃走で終わった戦闘は勝敗が付いていない。マスは cleared にならないので、
          * このループはもう一度同じマスに入る＝再挑戦になる（本物の操作と同じ）。 */
@@ -456,6 +481,7 @@ for (let seed = 1; seed <= trials; seed++) {
     stat.errors.push('seed ' + seed + ': ' + e.message);
   }
 }
+console.log(`敵ＡＩ：${REAL_AI ? '本番のランク（search方策・--real）' : '近似（eval方策・既定）'}`);
 console.log(`${trials} キャリア（草原→森）：勝ち ${stat.win} / 負け ${stat.lose} / リタイヤ ${stat.retire}`
   + `（うち森に到達 ${stat.forestRuns} 回）`);
 console.log(`戦闘 ${stat.battles} 回・平均 ${(stat.turns / Math.max(1, stat.battles)).toFixed(1)} ターン/戦`);
@@ -474,6 +500,13 @@ console.log(`  先攻・後攻べつ（全戦闘）：先攻 ${pct(FSTAT.first.w
   + `　差 ${(FSTAT.first.n && FSTAT.second.n
       ? (FSTAT.first.win / FSTAT.first.n * 100 - FSTAT.second.win / FSTAT.second.n * 100).toFixed(1)
       : '—')} ポイント`);
+['field', 'boss'].forEach((k) => {
+  const g = FSTAT_B[k];
+  const d = (g.first.n && g.second.n)
+    ? (g.first.win / g.first.n * 100 - g.second.win / g.second.n * 100).toFixed(1) : '—';
+  console.log(`    ├ ${k === 'field' ? '通常戦闘のみ' : 'ボス戦のみ　'}：先攻 ${pct(g.first.win, g.first.n)}（${g.first.n}回）`
+    + ` / 後攻 ${pct(g.second.win, g.second.n)}（${g.second.n}回）　差 ${d} ポイント`);
+});
 console.log(`  1ランあたり：獲得カード ${(ESTAT.cards / Math.max(1, ESTAT.runs)).toFixed(2)} 枚`
   + ` / 清算前の所持Ｇ ${(ESTAT.goldEnd / Math.max(1, ESTAT.runs)).toFixed(0)}`
   + ` / 清算後 ${(ESTAT.goldKept / Math.max(1, ESTAT.runs)).toFixed(0)}`

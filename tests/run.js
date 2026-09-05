@@ -3109,6 +3109,39 @@ t('マップ生成：同じシードなら常に同じ結果（決定的）', ()
   eq(JSON.stringify(a), JSON.stringify(b), '同一シード・同一入力は同一マップ');
 });
 
+t('敵の体数はエリアの設定どおり（M7.10 WP3・経済追補§5-4）', () => {
+  eq(CQAreas.DEFS.grassland.enemyCount.normal, [1, 1], '草原の普通敵は1体固定（案B）');
+  eq(CQAreas.DEFS.forest.enemyCount.normal, [1, 2], '森の普通敵は1〜2体（案A）');
+  const seenNormal = { grassland: new Set(), forest: new Set() };
+  for (const areaId of ['grassland', 'forest']) {
+    for (let seed = 1; seed <= 80; seed++) {
+      const m = CQMap.generate({ cards: CARD_BY_ID, areaId, seed, ownedIds: [] });
+      Object.values(m.nodes).forEach((n) => {
+        if (n.type !== 'battle' || !n.enemy) return;
+        if (n.strength === 'normal') {
+          seenNormal[areaId].add(n.enemy.count);
+          const [lo, hi] = CQAreas.DEFS[areaId].enemyCount.normal;
+          eq(n.enemy.count >= lo && n.enemy.count <= hi, true,
+             areaId + ' seed ' + seed + '：普通敵の体数が範囲外(' + n.enemy.count + ')');
+        } else if (n.strength === 'strong') {
+          eq(n.enemy.count, CQAreas.DEFS[areaId].enemyCount.strong, areaId + '：強敵の体数');
+        } else if (n.strength === 'elite') {
+          eq(n.enemy.count, CQAreas.DEFS[areaId].enemyCount.elite, areaId + '：精鋭の体数');
+        }
+      });
+    }
+  }
+  eq(Array.from(seenNormal.grassland).sort(), [1], '草原の普通敵は常に1体');
+  eq(Array.from(seenNormal.forest).sort(), [1, 2], '森の普通敵は1体も2体もある（十分な試行で両方出る）');
+});
+
+t('rollEnemy：area.enemyCount が無いエリアIDでも既定値に落ちる（後方互換）', () => {
+  const pool = CQAreas.enemyPool(CARD_BY_ID, 'grassland');
+  const rng = CQRng.create(1);
+  const r = CQMap.rollEnemy(rng, pool, { priceMax: 999999, eliteMin: 0 }, 'normal');
+  eq(r.count, CQMap.DEFAULT_ENEMY_COUNT.normal, '未設定エリアは従来どおり普通敵2体');
+});
+
 t('関門（第3セグメント）にだけ精鋭が出現しうる', () => {
   let sawElite2 = false, eliteOutside = false;
   for (let seed = 1; seed <= 60; seed++) {
@@ -3830,6 +3863,20 @@ t('battleSetup：通常戦闘はfieldモード＋編成、ボスは従来どお�
   const bs = CQRun.battleSetup(run, CARD_BY_ID, boss);
   eq(bs.mode, undefined, 'ボスはfieldモードではない');
   eq(bs.enemyBoard, undefined, 'ボスは初期配置なし');
+});
+
+t('battleSetup：ＡＩ強さの配線（M7.10 WP1・ゲーム仕様書§4.2・§5）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 61, freshMeta());
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle');
+  const s = CQRun.battleSetup(run, CARD_BY_ID, n);
+  eq(s.aiPreset, 'free', '通常戦闘は仕様どおりフリー（弱ＡＩ設定）');
+  eq(CQAi.PRESETS.free.noAttackTurns, 2, 'フリーは最初の2手番攻撃しない（§4.2）');
+  const boss = run.map.nodes[run.map.boss];
+  const bs = CQRun.battleSetup(run, CARD_BY_ID, boss);
+  const area = CQAreas.get(run.areaId);
+  eq(bs.aiPreset, area.bossRank, 'ボスはエリアのbossRank');
+  eq(bs.aiPreset, 'rankC', '草原のボスはＣ級（ゲーム仕様書§5）');
+  eq(CQAreas.get('forest').bossRank, 'rankC', '森もＣ級（草原と同じ帯）');
 });
 
 t('敵デッキ：召還できないので支援シェル中心・ユニットは少量（§7-5）', () => {

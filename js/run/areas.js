@@ -66,7 +66,9 @@
       eliteMin: 1200,               // 精鋭プールの下限
       rareTier: 'starter',          // 貴重カード閾値の帯（M7 WP2・経済追補§3-4）
       bossLp: 20, bossPriceMax: 4000, bossName: 'マスター・草原の門番',
-      fieldRuleChance: 0.25         // 戦闘マスに戦場ルールが付く確率（追補§6・初期値）
+      fieldRuleChance: 0.25,        // 戦闘マスに戦場ルールが付く確率（追補§6・初期値）
+      bossRank: 'rankC',            // マスター戦のＡＩ強さ（M7.10 WP1・ゲーム仕様書§5の帯）
+      enemyCount: { normal: [1, 1], strong: 2, elite: 3 }  // 通常戦闘の敵体数（M7.10 WP3）
     },
     forest: {
       id: 'forest', name: '森', tag: '森', order: 1,
@@ -81,7 +83,9 @@
       eliteMin: 1800,
       rareTier: 'starter',          // 森も草原と同じ帯（経済追補§3-4）
       bossLp: 24, bossPriceMax: 8000, bossName: 'マスター・森の隠者',
-      fieldRuleChance: 0.35
+      fieldRuleChance: 0.35,
+      bossRank: 'rankC',            // マスター戦のＡＩ強さ（M7.10 WP1・草原・森は同じ帯）
+      enemyCount: { normal: [1, 2], strong: 2, elite: 3 }  // 通常戦闘の敵体数（M7.10 WP3）
     }
   };
   const ORDER = ['grassland', 'forest'];

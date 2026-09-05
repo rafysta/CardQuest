@@ -60,6 +60,19 @@
   }
 
   /* ---- 敵編成のロール ---------------------------------------------------- */
+  /* 体数の既定（area.enemyCount が無いエリア用の後方互換値）。M7.10 WP3 以前と同じ。 */
+  const DEFAULT_ENEMY_COUNT = { normal: 2, strong: 3, elite: 3 };
+
+  /** その強さの体数を決める（M7.10 WP3・経済追補§5-4）。area.enemyCount にエリアごとの設定を持つ
+   * （js/run/areas.js）。値が配列なら [下限, 上限] の範囲から rng で抽選（rngを1回消費する）、
+   * 数値ならその体数で固定。未設定のエリアは DEFAULT_ENEMY_COUNT にフォールバックする。 */
+  function enemyCountFor(rng, area, strength) {
+    const spec = (area && area.enemyCount && area.enemyCount[strength] != null)
+      ? area.enemyCount[strength] : DEFAULT_ENEMY_COUNT[strength];
+    if (Array.isArray(spec)) return rng.int(spec[0], spec[1]);
+    return spec;
+  }
+
   /** strength に応じてプールから1体選ぶ（normal＝下位6割・strong＝上位4割・elite＝eliteMin以上） */
   function rollEnemy(rng, pool, area, strength) {
     if (!pool.length) return null;
@@ -76,7 +89,7 @@
       cand = pool.slice(0, cut);
     }
     const pick = rng.pick(cand);
-    const count = strength === 'elite' ? 3 : strength === 'strong' ? 3 : 2;
+    const count = enemyCountFor(rng, area, strength);
     return { id: pick.id, price: pick.price, count: count };
   }
 
@@ -321,7 +334,7 @@
     };
   }
 
-  const api = { TEMPLATES, GATE_TEMPLATE, EVENTS, generate, rollFieldRules, rollEnemy };
+  const api = { TEMPLATES, GATE_TEMPLATE, EVENTS, generate, rollFieldRules, rollEnemy, enemyCountFor, DEFAULT_ENEMY_COUNT };
   global.CQMap = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
