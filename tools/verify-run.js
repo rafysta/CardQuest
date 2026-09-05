@@ -1294,6 +1294,56 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   /* 自分のもう1体で、移ったユニットを攻撃できる（相手のレーンとして狙える） */
   const pupTargets = await page.evaluate(() => CQCombat.attackTargets(M, 1).join(','));
   ok('移った自軍ユニットは自分の攻撃対象になる', pupTargets.split(',').indexOf('4') >= 0, pupTargets);
+
+  /* ⑪ ★M7.9（2026-09-05 本人指定）：相手の手番を追えるように、節目で止まって見せる。
+   * 相手のピッグマン(8)が自分のヘッドレス(66)を攻撃 → 判定 → ＬＰ−4 → 憑依（カース92）→
+   * 傀儡で相手のピッグマンが自分の場へ滑って来る。この間に宣言バナー・判定ポップ・ＬＰフロート・
+   * テロップが順に出て、手番の所要が数秒に延びていること。 */
+  await reopenBoard();
+  await page.$eval('#bs-json', (el, v) => { el.value = v; }, JSON.stringify(Object.assign({}, BASE, {
+    win: 'field', active: 'enemy', lp: { self: 9, enemy: 10 },
+    lanes: { '0': { unit: 66, ch: [] },                       /* 狙える相手はヘッドレスだけにする */
+             '3': { unit: 8, ch: [] }, '4': { unit: 8, ch: [], stiff: true } } })));
+  await page.click('[data-bs="json-load"]');
+  await page.waitForTimeout(150);
+  const t0 = Date.now();
+  await page.click('[data-bs="start"]');          /* startBoard は 1.1 秒待つので、ここでは待たずに追いかける */
+  await wait(() => page.evaluate(() => document.getElementById('screen-battle').classList.contains('on')));
+  const seen = { banner: false, bannerText: '', verdict: false, lp: false, lpText: '', telop: false, telopText: '' };
+  for (let n = 0; n < 200; n++) {                       /* 最長 8 秒ほど追いかける */
+    await page.waitForTimeout(40);
+    const st = await page.evaluate(() => ({
+      banner: (document.querySelector('#fx-banner.on') || {}).textContent || '',
+      verdict: !!document.querySelector('.cq-verdict'),
+      lp: (document.querySelector('.cq-lp-float') || {}).textContent || '',
+      telop: (document.querySelector('.cq-telop.on') || {}).textContent || '',
+      active: M.active, over: !!M.winner, busy: busy
+    }));
+    if (st.banner && /攻撃/.test(st.banner) && !seen.banner) { seen.banner = true; seen.bannerText = st.banner; await shot('m79-declare'); }
+    if (st.verdict && !seen.verdict) {
+      seen.verdict = true; await page.waitForTimeout(300);
+      seen.pops = await page.evaluate(() => Array.from(document.querySelectorAll('.cq-verdict')).map((p) =>
+        p.textContent + ' op=' + (+getComputedStyle(p).opacity).toFixed(2) + ' top=' + Math.round(p.getBoundingClientRect().top)).join(' / '));
+      await shot('m79-verdict');
+    }
+    if (st.lp && !seen.lp) { seen.lp = true; seen.lpText = st.lp; }
+    if (st.telop && !seen.telop) { seen.telop = true; seen.telopText = st.telop; }
+    if (!st.busy && (st.active === 'self' || st.over)) break;   /* 演出が終わって手番が渡るまで追う */
+  }
+  const elapsed = Date.now() - t0;
+  ok('★相手の攻撃は「宣言バナー」で誰が誰を狙ったか分かる', seen.banner && /ピッグマン/.test(seen.bannerText) && /ヘッドレス/.test(seen.bannerText), seen.bannerText);
+  ok('★判定の数字ポップ（Ａ／Ｄ）が出る', seen.verdict, seen.pops || '');
+  ok('★ＬＰの減少がフロート表示される', seen.lp && /4/.test(seen.lpText), seen.lpText);
+  ok('★憑依・傀儡のテロップが出る', seen.telop && /(憑依|傀儡)/.test(seen.telopText), seen.telopText);
+  ok('★相手の手番が数秒かけて進む（速すぎない）', elapsed >= 2500, elapsed + 'ms');
+  const afterTurn = await page.evaluate(() => ({
+    /* ヘッドレスの跡地（レーン0＝いちばん若い空き）に、傀儡化した相手のピッグマンが来る */
+    l0: M.board.lanes[0] && M.board.lanes[0].unit, pup: M.board.lanes[0] && M.board.lanes[0].puppeted,
+    lp: M.players.self.lp, report: !!(UI.report && UI.report.length)
+  }));
+  ok('演出の後、盤面はエンジンどおり（相手のピッグマンが傀儡で自分の場に来ている・ＬＰ−4）',
+    afterTurn.l0 === 8 && afterTurn.pup === 'enemy' && afterTurn.lp === 5, JSON.stringify(afterTurn));
+  ok('「ここまでの動き」が残っている', afterTurn.report);
   await reopenBoard();
   /* ストーリー側のセーブに触れていないこと（フリーバトルと同じ扱い） */
   ok('盤面セットアップはストーリーのセーブを壊さない',

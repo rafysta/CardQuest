@@ -138,6 +138,7 @@ function startRunBattle(setup, onOver) {
    * 入れ替わるので、step() が非同期に手番を進めた後だと当てにならない）。 */
   const first = M.first;
   showScreen('screen-battle');     /* タブは「ラン」のまま動かさない（2026-08-29） */
+  renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
   step();
   /* バトル画面が表示されると同時に先攻ルーレットを見せる。結果はもう決定済み（上のfirst。
    * CQRun.battleSetup の first＝戦闘シードから決定的に決まっている）なので、ここでは
@@ -498,6 +499,7 @@ function startFreeBattle() {
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
   showScreen('screen-battle');
+  renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
   step();
 }
 
@@ -776,6 +778,7 @@ function startBoardBattle() {
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null; UI.pick = null; UI.chainFx = null;
   showScreen('screen-battle');
+  renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
   step();
 }
 
@@ -909,7 +912,19 @@ function markLog() { if (logMark === null) logMark = M.log.length; }
  *   ・ユニット破壊＝カードが粉々に割れて飛び散る
  * 演出中は busy が立ち、盤面・手札・パネルの操作を受け付けない（短時間なので待てばよい）。
  * エンジンには一切手を入れず、画面側だけで完結させる。乱数も見た目専用なので Math.random でよい。 */
-const FX = { step: 460, deal: 90, out: 280 };
+const FX = { step: 460, deal: 90, out: 280,
+  /* M7.9（2026-09-05 本人指定）：相手の手番を追えるようにするための「節目の停止」 */
+  banner: 900,      /* 攻撃宣言のバナー（相手が攻撃したとき） */
+  verdict: 700,     /* 判定の数字ポップ（Ａ600 vs Ｄ500） */
+  lp: 600,          /* ＬＰ減少のフロート */
+  telop: 700 };     /* 憑依・傀儡のテロップ */
+/* 演出の速さ（設定画面「演出の速さ」。localStorage cq_fx）。停止時間に一律で掛ける倍率 */
+const FX_SPEED = { slow: 1.5, normal: 1, fast: 0.6 };
+function fxSpeed() {
+  try { const v = JSON.parse(localStorage.getItem('cq_fx') || '{}').speed; return FX_SPEED[v] ? v : 'normal'; }
+  catch (_) { return 'normal'; }
+}
+function fxMs(key) { return Math.round(FX[key] * FX_SPEED[fxSpeed()]); }
 let busy = false;
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -920,7 +935,12 @@ function snapFx() {
       chs: ln.channels.map((c) => ({ card: c.card, up: !!c.up }))
     })),
     hand: M.players[handSide()].hand.length,
-    handSide: handSide()
+    handSide: handSide(),
+    /* M7.9：節目の演出（宣言・判定・ＬＰ・テロップ）が「この操作で何が起きたか」を知るための控え */
+    lp: { self: M.players.self.lp, enemy: M.players.enemy.lp },
+    logLen: M.log.length,
+    lastBattle: M.lastBattle,
+    combat: !!M.combat
   };
 }
 let FXPREV = null;
@@ -1095,10 +1115,147 @@ async function fxAct(fn) {
   try { ret = fn(); } catch (e) { err = e; }
   const aimed = CQMagic.endAim(M);
   if (err) { CQMagic.strikeDoomed(M); throw err; }
-  const w = await animateFx(prev);
+  const w = await playChanges(prev);
   if (aimed.length) { await playAimedDestroy(aimed); return ret; }
-  if (w) await sleep(Math.max(w, FX.step));   /* 1手ごとに少し間を置いて、動きが目で追えるようにする */
+  if (w) await sleep(Math.max(w, fxMs('step')));   /* 1手ごとに少し間を置いて、動きが目で追えるようにする */
   return ret;
+}
+
+/* ================= M7.9：節目の演出（2026-09-05 本人指定） =================
+ * 「相手の手番が速すぎて何が起きたか分からないまま負ける」への対処。エンジンの1手ごとに
+ * 差分を見て、宣言 → 判定の数字 → ＬＰの減少 → 憑依・傀儡のテロップ → 盤面の変化（割れる・
+ * 滑る）の順に、**止まって見せる**。停止時間は FX と設定「演出の速さ」で決まる。
+ * エンジンには一切触れない（宣言は M.combat／M.lastBattle、ＬＰは M.players、憑依と傀儡は
+ * M.log の行から読む）。 */
+
+/** 1手の差分をすべて演出して描き直す。戻り値＝animateFx と同じ「待つべきミリ秒」 */
+async function playChanges(prev) {
+  if (!prev) { renderAll(); return 0; }
+  const newLines = M.log.slice(prev.logLen);
+  const battle = (M.lastBattle && M.lastBattle !== prev.lastBattle) ? M.lastBattle : null;
+  /* この1手で戦闘が宣言されたか：まだ戦闘中なら M.combat、宣言→即判定なら lastBattle */
+  const declared = !prev.combat ? (M.combat || battle) : null;
+  /* B1 ログの逐次表示：相手の手番の最中も「ここまでの動き」を1行ずつ足す */
+  if (liveLogMark !== null && M.log.length > liveLogMark) revealReport(M.log.slice(liveLogMark));
+  /* A1 攻撃宣言のバナー（相手が攻撃したときだけ。自分の攻撃は自分で選んでいる） */
+  if (declared && isAuto(declared.attackerSide)) await playDeclare(declared, prev);
+  /* A2 判定の数字ポップ（まだ描き直していないので、両方のカードが画面に残っている） */
+  if (battle && battle.atk != null && battle.def != null) await playVerdict(battle);
+  /* A3 ＬＰの減少（フロート表示。両者ぶんを同時に） */
+  let lpWait = 0;
+  ['self', 'enemy'].forEach((side) => {
+    const d = M.players[side].lp - prev.lp[side];
+    if (d < 0) { floatLp(side, d); lpWait = fxMs('lp'); }
+  });
+  if (lpWait) await sleep(lpWait);
+  /* A4 憑依・傀儡のテロップ。傀儡（移動）は滑る演出と重ねて見せる */
+  const telops = newLines.filter((l) => /^(憑依：|傀儡：|傀儡が解けた：)/.test(l));
+  for (let i = 0; i < telops.length; i++) {
+    const move = /へ移った/.test(telops[i]);
+    showTelop(telops[i], move ? fxMs('telop') + 550 : fxMs('telop'));
+    if (!move) await sleep(fxMs('telop'));
+    else await sleep(Math.round(fxMs('telop') * 0.4));    /* 少し見せてから滑らせ始める */
+  }
+  return animateFx(prev);
+}
+
+/** 相手の手番の最中にログを逐次表示するための、手番開始時点のログ位置（runStep が置く） */
+let liveLogMark = null;
+/** B1：「ここまでの動き」を1行ずつ増やして見せる（演出の進みと歩調を合わせる）。
+ * 新しい行が来たら、前回までの行は即座に全部出し、増えた分だけを間隔を置いて足す */
+let revealTimer = null;
+function revealReport(lines) {
+  clearTimeout(revealTimer); revealTimer = null;
+  const have = (UI.report && UI.report.length) || 0;
+  let k = Math.min(have, lines.length);
+  const tick = () => {
+    k += 1;
+    UI.report = lines.slice(0, k);
+    renderPanel();
+    if (k < lines.length) revealTimer = setTimeout(tick, Math.round(380 * FX_SPEED[fxSpeed()]));
+    else revealTimer = null;
+  };
+  if (k < lines.length) tick();
+  else { UI.report = lines.slice(); renderPanel(); }
+}
+
+/** A1：攻撃宣言のバナー。攻撃側と防御側の2枚を強調し、消えるまで次へ進まない */
+function playDeclare(c, prev) {
+  /* 名前は**操作前の控え（prev）**から取る——宣言→即判定で相手が既に壊れていることがある */
+  const A = prev.lanes[c.attacker], D = prev.lanes[c.defender];
+  const an = A && A.unit != null && CARD_BY_ID[A.unit] ? CARD_BY_ID[A.unit].n : '';
+  const dn = D && D.unit != null && CARD_BY_ID[D.unit] ? CARD_BY_ID[D.unit].n : '';
+  const aSide = c.attackerSide === handSide() ? 'あなた' : '相手';
+  const dSide = c.attackerSide === handSide() ? '相手' : 'あなた';
+  const atkEl = document.querySelector('#board .card.unit[data-lane="' + c.attacker + '"]');
+  const defEl = document.querySelector('#board .card.unit[data-lane="' + c.defender + '"]');
+  if (atkEl) atkEl.classList.add('fx-atk');
+  if (defEl) defEl.classList.add('fx-def');
+  const ms = fxMs('banner');
+  showBanner(`<span class="fb-side">${aSide}の</span><b>${esc(an)}</b>
+    <span class="fb-arrow">→</span>
+    <span class="fb-side">${dSide}の</span><b>${esc(dn)}</b><span class="fb-side"> に攻撃</span>`, ms + 200);
+  return sleep(ms);
+}
+
+/** A2：判定の数字ポップ。攻撃側に「Ａ600」、防御側に「Ｄ500」を大きく出し、勝った側を色で示す */
+function playVerdict(b) {
+  const ok = !!b.success;
+  const pop = (lane, text, cls) => {
+    const el = document.querySelector('#board .card.unit[data-lane="' + lane + '"]');
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'cq-verdict ' + cls;
+    p.textContent = text;
+    Object.assign(p.style, { left: (r.left + r.width / 2) + 'px', top: (r.top - 34) + 'px' });   /* カードの上に浮かせる */
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), fxMs('verdict') + 400);
+  };
+  pop(b.attacker, 'Ａ' + b.atk, ok ? 'win' : 'lose');
+  pop(b.defender, 'Ｄ' + b.def, ok ? 'lose' : 'win');
+  showBanner(ok ? `<b class="fb-ok">攻撃成功</b><span class="fb-side">（${b.atk} ≧ ${b.def}）</span>`
+                : `<b class="fb-ng">攻撃失敗</b><span class="fb-side">（${b.atk} ＜ ${b.def}）</span>`,
+             fxMs('verdict') + 200);
+  return sleep(fxMs('verdict'));
+}
+
+/** A3：ＬＰが減ったことをハートの横に「−4」と浮かせて見せる。ハートも一瞬赤く光る */
+function floatLp(side, diff) {
+  const el = document.getElementById(side === handSide() ? 'my-lp' : 'foe-lp');
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const f = document.createElement('div');
+  f.className = 'cq-lp-float' + (M.players[side].lp <= 0 ? ' fatal' : '');
+  f.textContent = '−' + (-diff);
+  Object.assign(f.style, { left: (r.right + 4) + 'px', top: r.top + 'px' });
+  document.body.appendChild(f);
+  el.classList.add('hit');
+  setTimeout(() => el.classList.remove('hit'), 700);
+  setTimeout(() => f.remove(), fxMs('lp') + 500);
+}
+
+/** A4：画面中央のテロップ（憑依・傀儡）。ms 後に消える。await はしない（呼ぶ側で待つ） */
+function showTelop(text, ms) {
+  const t = document.createElement('div');
+  t.className = 'cq-telop';
+  t.textContent = text;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('on'));
+  setTimeout(() => { t.classList.remove('on'); setTimeout(() => t.remove(), 250); }, ms);
+}
+
+/** 盤面の上に出る帯（宣言・判定）。同時に1本だけ */
+function showBanner(html, ms) {
+  let b = document.getElementById('fx-banner');
+  if (!b) { b = document.createElement('div'); b.id = 'fx-banner'; document.body.appendChild(b); }
+  b.innerHTML = html;
+  b.classList.add('on');
+  clearTimeout(showBanner._t);
+  showBanner._t = setTimeout(() => {
+    b.classList.remove('on');
+    document.querySelectorAll('#board .fx-atk, #board .fx-def').forEach((e) => e.classList.remove('fx-atk', 'fx-def'));
+  }, ms);
 }
 
 /* ---- 破壊の予約を演出して解決する（2026-08-30 本人指定） --------------------
@@ -1163,8 +1320,9 @@ function step() {
 async function runStep() {
   const mark = logMark === null ? M.log.length : logMark;
   logMark = null;
+  liveLogMark = mark;                                   /* B1：この手番のログを逐次表示するための起点 */
   const pv = FXPREV; FXPREV = null;
-  if (pv) { const w = await animateFx(pv); if (w) await sleep(w); }   /* 人の操作直後の変化をまず見せる */
+  if (pv) { const w = await playChanges(pv); if (w) await sleep(w); }   /* 人の操作直後の変化をまず見せる */
   let guard = 0;
   while (M && !M.winner && !M.fled && guard++ < 500) {   /* M.fled＝逃走成功。勝敗は付かないが対局は終わり */
     if (M.combat) {                                   /* 戦闘中のオープンフェイズ */
@@ -1189,6 +1347,8 @@ async function runStep() {
     if (M.phase === 'draw') { await fxAct(() => CQTurn.beginTurn(M)); continue; }   /* 人の手番：ドローは自動＋配布演出 */
     break;
   }
+  liveLogMark = null;
+  clearTimeout(revealTimer); revealTimer = null;      /* 逐次表示の途中なら、ここで全部出す */
   const lines = M.log.slice(mark);
   if (lines.length) UI.report = lines;
   if (M.winner || M.fled) UI.mode = 'over';
@@ -1639,8 +1799,9 @@ function askHTML(q, body, kind) {
   return `<div class="i-ask ${kind || ''}"><span class="q">${q}</span>${body}</div>`;
 }
 function reportHTML(lines) {
+  const shown = lines.slice(-14);
   return `<h3>ここまでの動き</h3>
-    <ul class="rep">${lines.slice(-14).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`;
+    <ul class="rep">${shown.map((l, i) => `<li class="${i === shown.length - 1 ? 'now' : ''}">${esc(l)}</li>`).join('')}</ul>`;
 }
 
 function renderPanel() {

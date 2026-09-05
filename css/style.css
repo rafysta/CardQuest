@@ -1904,3 +1904,55 @@ td.nm{font-weight:800}
 .cqr-row-t small{font-size:11px;color:var(--dim)}
 .cqr-row .tiny{padding:6px 10px}
 .cqr-row .tiny.del{color:#ff9a8b}
+
+/* ---- M7.9 節目の演出（2026-09-05 本人指定：相手の手番を追えるようにする） ----
+ * js/layout.js の playChanges が出す。宣言バナー／判定の数字ポップ／ＬＰのフロート／テロップ */
+/* 宣言中の攻撃側・防御側の強調（バナーが消えるまで） */
+#board .card.unit.fx-atk{box-shadow:0 0 0 3px #ff8585,0 0 18px #ff6b6bcc;z-index:7}
+#board .card.unit.fx-def{box-shadow:0 0 0 3px #7db4ff,0 0 18px #6aa6ffcc;z-index:7}
+/* 盤面の上に出る帯（宣言・判定） */
+#fx-banner{
+  position:fixed;left:50%;top:22%;transform:translate(-50%,-8px);z-index:520;
+  min-width:280px;max-width:92vw;padding:12px 26px;border-radius:12px;text-align:center;
+  background:#0b1020ee;border:2px solid var(--accent);box-shadow:0 8px 30px #000a;
+  color:#fff;font-size:19px;font-weight:800;letter-spacing:.04em;
+  opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;
+}
+#fx-banner.on{opacity:1;transform:translate(-50%,0)}
+#fx-banner .fb-side{font-size:14px;font-weight:600;color:#c9d6ee}
+#fx-banner .fb-arrow{margin:0 10px;color:var(--accent)}
+#fx-banner .fb-ok{color:#ff9b9b;font-size:22px}
+#fx-banner .fb-ng{color:#9cc5ff;font-size:22px}
+/* 判定の数字ポップ（カードの上に浮かぶ） */
+@keyframes cq-verdict{0%{transform:translate(-50%,10px) scale(.6);opacity:0}
+  25%{transform:translate(-50%,-6px) scale(1.15);opacity:1}
+  80%{transform:translate(-50%,-10px) scale(1);opacity:1}100%{transform:translate(-50%,-22px);opacity:0}}
+.cq-verdict{
+  position:fixed;transform:translate(-50%,0);z-index:530;pointer-events:none;
+  padding:4px 12px;border-radius:9px;background:#000c;border:2px solid;
+  font-size:24px;font-weight:900;letter-spacing:.04em;
+  animation:cq-verdict 1.1s ease-out forwards;
+}
+.cq-verdict.win{color:#ffd166;border-color:#ffd166;text-shadow:0 0 10px #ffb300}
+.cq-verdict.lose{color:#aab6cc;border-color:#5a6a88}
+/* ＬＰの減少 */
+@keyframes cq-lpfloat{0%{transform:translateY(0);opacity:0}15%{opacity:1}
+  100%{transform:translateY(-34px);opacity:0}}
+.cq-lp-float{
+  position:fixed;z-index:530;pointer-events:none;color:#ff6b6b;font-size:22px;font-weight:900;
+  text-shadow:0 0 8px #ff000088;animation:cq-lpfloat 1.1s ease-out forwards;
+}
+.cq-lp-float.fatal{font-size:30px;color:#ff3b3b}
+@keyframes cq-lphit{0%,100%{color:inherit;transform:none}30%{color:#ff3b3b;transform:scale(1.35)}}
+.lp.hit{animation:cq-lphit .7s ease-out;display:inline-block}
+/* テロップ（憑依・傀儡） */
+.cq-telop{
+  position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);z-index:525;
+  padding:14px 30px;border-radius:12px;background:#1a0f2eee;border:2px solid #c48cff;
+  box-shadow:0 8px 30px #000a;color:#f2e8ff;font-size:18px;font-weight:800;
+  max-width:92vw;text-align:center;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;
+}
+.cq-telop.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+/* 「ここまでの動き」の最新行（相手の手番中に1行ずつ増える） */
+.rep li.now{color:var(--accent);font-weight:800}
+.rep li:last-child{color:var(--accent)}

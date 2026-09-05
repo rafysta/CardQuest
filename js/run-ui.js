@@ -1734,6 +1734,12 @@ function renderCollection() {
  * 読み込んだあとは必ずリロードする——画面が持っている RUI.meta・中断中のランを
  * 中途半端に作り替えるより、最初から読み直すほうが確実。 */
 
+/** 演出の速さの設定値（localStorage cq_fx）。未設定は 'normal' */
+function fxSpeedSetting() {
+  try { const v = JSON.parse(RUN_STORAGE.getItem('cq_fx') || '{}').speed; return ['slow', 'normal', 'fast'].indexOf(v) >= 0 ? v : 'normal'; }
+  catch (_) { return 'normal'; }
+}
+
 function renderSettings() {
   const meta = RUI.meta;
   const st = RUI.backupState || {};
@@ -1760,6 +1766,15 @@ function renderSettings() {
         <p class="set-note">読み込むと、いまのセーブは<b>書き出したときの状態に置き換わります</b>
           （中断中の探索も含めて丸ごと戻ります）。壊れたファイルを読ませても、いまのセーブは
           そのままです。</p>
+      </section>
+      <section class="set-box">
+        <h4>演出の速さ</h4>
+        <p class="set-note">戦闘中の「攻撃の宣言」「判定の数字」「ＬＰの減少」「憑依・傀儡」を
+          止まって見せる時間を変えます。何が起きたか追いにくいときは「ゆっくり」に。</p>
+        <div class="set-acts">
+          ${[['slow', 'ゆっくり'], ['normal', 'ふつう'], ['fast', '速い']].map(([v, label]) =>
+            `<button class="btn ${fxSpeedSetting() === v ? 'ok' : 'ng'}" data-act="fx-speed" data-id="${v}">${label}</button>`).join('')}
+        </div>
       </section>
       <section class="set-box">
         <h4>最初からやり直す</h4>
@@ -2445,6 +2460,9 @@ function runAct(act, id, idx) {
       return enterHome();
     case 'backup-export':
       return backupExport();
+    case 'fx-speed':                                  /* M7.9：演出の速さ（js/layout.js の fxMs が読む） */
+      try { RUN_STORAGE.setItem('cq_fx', JSON.stringify({ speed: id })); } catch (_) { /* 保存できなくても続行 */ }
+      return runRender();
 
     /* ---- 記録画面（M7 WP10） ---- */
     case 'home-record':
