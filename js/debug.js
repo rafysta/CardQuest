@@ -5,13 +5,12 @@
  *
  *   ⚔ バトルをスキップ … いま戦っている戦闘を「勝利」で即終了させる。マップ側の流れ
  *                        （戦利品の振り分け→マップ復帰→次のマス）を検証するためのもの。
- *   🔄 最新版のチェック … いま読み込まれている版が、公開中のもの・GitHubのものと同じかを見る。
  *   📐 ルーラー         … 画面に80px方眼の点線と番号を重ねる。「x:3, y:5 から縦3・横5」の
  *                        ような位置指定ができるようになる。もう一度押すと消える。
- *   📮 盤面を報告      … いまの盤面と直前5手の動きをＪＳＯＮにして、Androidの共有機能で
- *                        自分あてにメールで送る（2026-08-31・本人指定。ランの最中に
- *                        「いまのカードの動きが気になる」と思ったとき、手を止めずに
- *                        後で見返せるように残しておくためのもの）。js/report.js。
+ *
+ * ★2026-09-06（本人指定）：「📮 盤面を報告」と「🔄 最新版のチェック」は、遊ぶ人が
+ *   いつでも使えるべきものなので **⚙ メニュー（js/menu.js）へ移した**。友人が遊んでいて
+ *   おかしいと思ったときの報告手段が、開発者モードの中にあっては届かないため。
  *   🎬 目覚めの場面     … 冒頭、アンバーと初めて出会って話す場面だけを最初から見返して
  *                        元の画面に戻る（2026-08-29・本人指定。プレイヤーが後で振り返りたい
  *                        ときのためのメニュー。cq_meta.openingSeen やランの状態には触れない）。
@@ -36,8 +35,6 @@ const CQDebug = (function () {
     { icon: '🃏', label: 'デッキ編集', hint: '全169種から自由に組む（フリーバトル用）', run: openDeckEdit },
     { icon: '🧪', label: '盤面をセットして戦う', hint: 'レーン・ＣＨ・手札を指定して戦闘を始める', run: openBoardSetupScreen },
     { icon: '⚔', label: 'バトルをスキップ（勝利）', hint: 'いまの戦闘を勝ちで終わらせる', run: skipBattle },
-    { icon: '📮', label: '盤面を報告', hint: 'いまの盤面と直前5手をメールで自分に送る', run: openReport },
-    { icon: '🔄', label: '最新版のチェック', hint: '公開中・GitHubの版と見比べる', run: checkVersion },
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
     { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene },
     { icon: '🙈', label: 'デバッグメニューを隠す', hint: '人に見せるとき用。バージョン表記の7回連打で戻る', run: hideDevMode }
@@ -87,14 +84,6 @@ const CQDebug = (function () {
       if (typeof RUN_ACTIVE !== 'undefined') { RUN_ACTIVE = false; runOverHook = null; }
       openBoardSetup();
     });
-  }
-
-  /* 📮 盤面を報告（2026-08-31）。中身は js/report.js。ランの状態にも対戦の状態にも触れない
-   * （読むだけ）ので、フリーバトルのような「移ると戦闘が失われる」確認は要らない。 */
-  function openReport() {
-    close();
-    if (typeof CQReport === 'undefined' || !CQReport.open) return out('報告の仕組みが読み込まれていません。');
-    CQReport.open();
   }
 
   function close() { if (panel) { panel.remove(); panel = null; } }
@@ -156,62 +145,6 @@ const CQDebug = (function () {
 
   /* ---- 🔄 最新版のチェック -------------------------------------------------- */
 
-  const RAW_VERSION_URL = 'https://raw.githubusercontent.com/rafysta/CardQuest/main/version.json';
-
-  /** いま動いている版（APP_VERSION）を、①公開中のサイトの version.json、
-   * ②GitHubのmainブランチの version.json と見比べる。
-   * ①と違えば「更新ボタンを押せば新しくなる」、①と②が違えば「pushはしたが公開が
-   * まだ／pushしていない」ことが分かる。 */
-  /** version.json を1つ取りに行く。**必ず時間切れで諦める**——GitHubへ出られない環境
-   * （オフラインのタブレット、通信が絞られた検証環境）では fetch が延々と返らないことがあり、
-   * 待ちっぱなしだと「確認しています…」のまま結果が出ない。 */
-  async function fetchVersionAt(url, ms) {
-    const ac = (typeof AbortController === 'function') ? new AbortController() : null;
-    const timer = setTimeout(function () { if (ac) ac.abort(); }, ms || 4000);
-    try {
-      const r = await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now(),
-        Object.assign({ cache: 'no-store' }, ac ? { signal: ac.signal } : {}));
-      if (!r.ok) return null;
-      return (await r.json()).version || null;
-    } catch (_) {
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  async function checkVersion() {
-    const mine = (typeof APP_VERSION === 'string') ? APP_VERSION : '?';
-    out('確認しています…');
-    const rows = ['<div class="dbg-row"><span>いま読み込まれている版</span><b>v' + mine + '</b></div>'];
-    /* 2つを同時に投げる（片方が時間切れでも全体は4秒ほどで返る） */
-    const pair = await Promise.all([
-      fetchVersionAt('version.json', 4000),
-      fetchVersionAt(RAW_VERSION_URL, 4000)
-    ]);
-    const served = pair[0], github = pair[1];
-    rows.push(row('公開中のサイト', served, mine));
-    rows.push(row('GitHub（main）', github, mine));
-    let verdict;
-    if (served && served !== mine) {
-      verdict = '<b class="dbg-warn">古い版を読み込んでいます。</b>画面上部の「更新」ボタンで新しくなります。';
-    } else if (github && served && github !== served) {
-      verdict = '<b class="dbg-warn">GitHubのほうが新しいです。</b>公開（GitHub Pages）の反映待ちの可能性があります。';
-    } else if (served && github) {
-      verdict = '<b class="dbg-ok">最新版です。</b>';
-    } else {
-      verdict = '一部を取得できませんでした（オフラインか、通信が遮られています）。';
-    }
-    out(rows.join('') + '<div class="dbg-verdict">' + verdict + '</div>');
-
-    function row(name, v, mineV) {
-      if (!v) return '<div class="dbg-row"><span>' + name + '</span><b class="dbg-dim">取得できず</b></div>';
-      const same = v === mineV;
-      return '<div class="dbg-row"><span>' + name + '</span><b class="' +
-        (same ? 'dbg-ok' : 'dbg-warn') + '">v' + v + (same ? '（同じ）' : '（違う）') + '</b></div>';
-    }
-  }
-
   /* ---- 📐 ルーラー ---------------------------------------------------------- */
 
   /* #app は 1280×800 固定なので、80px の方眼をきっちり 16列×10行 で割り切れる。
@@ -269,5 +202,5 @@ const CQDebug = (function () {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
-  return { toggle, close, skipBattle, checkVersion, toggleRuler, playOpeningScene, openReport };
+  return { toggle, close, skipBattle, toggleRuler, playOpeningScene };
 })();

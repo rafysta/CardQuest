@@ -58,7 +58,15 @@ function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
  * 本人指定でタブは「ラン」だけに固定したので、画面の出し入れはこの関数が担い、
  * タブの見た目には触らない（ストーリー中はずっと「ラン」が光ったまま）。
  * デッキ編集・フリーバトルは開発用としてデバッグメニュー（js/debug.js）から呼ぶ。 */
+/* 開発用の画面（デバッグメニューからしか入らない）。開発者モードでないときに
+ * 何かの経路で呼ばれても、ラン画面へ受け流す——🛠 を隠すだけだと、
+ * 画面へ直に飛ぶ道（デッキ編集の「フリーバトルへ」など）が残ってしまうため。
+ * ※ 2026-09-06：v0.17.2（M7.9 第2段）でこのファイルが古い内容で上書きされ、
+ *   2026-09-05 に入れたこの受け流しが消えていたので戻した。 */
+const DEV_SCREENS = ['screen-deck', 'screen-free', 'screen-board'];
+
 function showScreen(id) {
+  if (DEV_SCREENS.indexOf(id) >= 0 && typeof CQDev !== 'undefined' && !CQDev.isOn()) id = 'screen-run';
   document.querySelectorAll('.screen').forEach((x) => x.classList.remove('on'));
   const el = document.getElementById(id);
   if (el) el.classList.add('on');

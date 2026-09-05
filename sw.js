@@ -29,6 +29,7 @@ const APP_SHELL = [
   './js/board-spec.js',
   './js/boot.js',
   './js/devmode.js',
+  './js/menu.js',
   './js/debug.js',
   './js/report.js',
   './js/version.js',

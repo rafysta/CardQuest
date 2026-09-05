@@ -1865,7 +1865,9 @@ function fxSpeedSetting() {
   const v = fxSettings().speed;
   return ['slow', 'normal', 'fast'].indexOf(v) >= 0 ? v : 'slow';
 }
-/** 相手の手番の進め方（M7.9 第2段 B2）：'auto'＝自動で進む／'tap'＝タップで1手ずつ。既定は auto */
+/** 相手の手番の進め方（M7.9 第2段 B2）：'auto'＝自動で進む／'tap'＝タップで1手ずつ。既定は auto
+ * ★この3つ（fxSettings/fxSpeedSetting/fxStepSetting）と fxSave は、2026-09-06 以降
+ *   **⚙ メニュー（js/menu.js）から呼ばれる**。設定の置き場所を二重に持たないための共有。 */
 function fxStepSetting() { return fxSettings().step === 'tap' ? 'tap' : 'auto'; }
 function fxSave(patch) {
   try { RUN_STORAGE.setItem('cq_fx', JSON.stringify(Object.assign(fxSettings(), patch))); }
@@ -1900,23 +1902,10 @@ function renderSettings() {
           そのままです。</p>
       </section>
       <section class="set-box">
-        <h4>演出の速さ</h4>
-        <p class="set-note">戦闘中の「攻撃の宣言」「判定の数字」「ＬＰの減少」「憑依・傀儡」を
-          止まって見せる時間を変えます。<b>はじめは「ゆっくり」</b>です。相手の手番の流れが
-          分かるようになったら「ふつう」「速い」にすると、さくさく進みます。</p>
-        <div class="set-acts">
-          ${[['slow', 'ゆっくり'], ['normal', 'ふつう'], ['fast', '速い']].map(([v, label]) =>
-            `<button class="btn ${fxSpeedSetting() === v ? 'ok' : 'ng'}" data-act="fx-speed" data-id="${v}">${label}</button>`).join('')}
-        </div>
-      </section>
-      <section class="set-box">
-        <h4>相手の手番の進め方</h4>
-        <p class="set-note">「タップで1手ずつ」にすると、相手の手番は宣言・判定・ＬＰの減少・憑依や傀儡・
-          盤面の変化のたびに止まり、画面のどこかを押すと次へ進みます。動きを確実に追いたいときに。</p>
-        <div class="set-acts">
-          ${[['auto', '自動で進める'], ['tap', 'タップで1手ずつ']].map(([v, label]) =>
-            `<button class="btn ${fxStepSetting() === v ? 'ok' : 'ng'}" data-act="fx-step" data-id="${v}">${label}</button>`).join('')}
-        </div>
+        <h4>演出の速さ・相手の手番の進め方</h4>
+        <p class="set-note">この2つは<b>画面右上の ⚙ からいつでも変えられます</b>
+          （探索の途中でも、戦闘の最中でも）。2026-09-06 に、ここから ⚙ のメニューへ移しました
+          ——ランに出てしまうとこの設定画面に来られず、変えたいときに変えられなかったためです。</p>
       </section>
       <section class="set-box">
         <h4>最初からやり直す</h4>
@@ -2583,12 +2572,6 @@ function runAct(act, id, idx) {
       return enterHome();
     case 'backup-export':
       return backupExport();
-    case 'fx-speed':                                  /* M7.9：演出の速さ（js/layout.js の fxMs が読む） */
-      fxSave({ speed: id });
-      return runRender();
-    case 'fx-step':                                   /* M7.9 第2段：コマ送り（js/layout.js の tapMode が読む） */
-      fxSave({ step: id });
-      return runRender();
 
     /* ---- 記録画面（M7 WP10） ---- */
     case 'home-record':

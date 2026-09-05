@@ -19,11 +19,18 @@
          （以前は戦闘のたびに「バトル画面（検証）」へ光が移っていたが、プレイヤーが
          自分で行き来する意味が無いため）。デッキ編集とフリーバトルは開発用なので
          右の 🛠 デバッグメニューから開く。 -->
+    <!-- 2026-09-06 本人指定：この「ラン」タブは開発用の画面（デッキ編集・フリーバトル・
+         盤面をセットして戦う）からストーリーへ戻るためだけのボタンで、通常モードでは
+         押す意味が無く「何のボタンか分からない」ものになっていた。CSSで開発者モード
+         （html.cq-dev）のときだけ出す。 -->
     <div class="tabs">
       <button class="tab on" data-screen="screen-run">ラン</button>
     </div>
     <!-- 開発用の専用コマンド置き場（2026-08-29）。使われていなかった「エンジン検証」
          「この案について」タブを外し、代わりにここへ検証用の道具をまとめた。 -->
+    <!-- ⚙ メニュー（js/menu.js・2026-09-06）：遊ぶ人がいつでも開ける。演出の速さ・
+         相手の手番の進め方・盤面を報告・バージョン情報。通常モードでも常に出す。 -->
+    <button class="menu-btn" id="menu-btn" title="メニュー">⚙</button>
     <button class="dbg-btn" id="dbg-btn" title="デバッグメニュー">🛠</button>
   </div>
 
@@ -143,6 +150,7 @@
 <script src="js/run-ui.js?v=0.17.4"></script>
 <script src="js/report.js?v=0.17.4"></script>
 <script src="js/devmode.js?v=0.17.4"></script>
+<script src="js/menu.js?v=0.17.4"></script>
 <script src="js/debug.js?v=0.17.4"></script>
 <script src="js/update.js?v=0.17.4"></script>
 </body>

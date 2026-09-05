@@ -72,14 +72,17 @@ const SPEC = {
   }, SPEC);
   await page.waitForTimeout(1200);
 
-  /* --- 1) 🛠メニューから開く／閉じる --- */
-  await page.click('#dbg-btn');
-  const items = await page.$$eval('.dbg-item .dbg-item-t b', (a) => a.map((e) => e.textContent));
-  ok('🛠メニューに「盤面を報告」がある', items.indexOf('盤面を報告') >= 0, items.join('／'));
-  await page.click(`.dbg-item:nth-child(${items.indexOf('盤面を報告') + 2})`);
+  /* --- 1) ⚙メニューから開く／閉じる ---
+   * 2026-09-06（本人指定）：「盤面を報告」は 🛠 デバッグメニューから ⚙ メニューへ移した。
+   * 友人が遊んでいて「おかしい」と思ったときの報告手段なので、開発者モードの中にあっては
+   * 届かないため。通常モードでも ⚙ は常に出ている。 */
+  await page.click('#menu-btn');
+  const items = await page.$$eval('.app-menu .am-item-t b', (a) => a.map((e) => e.textContent));
+  ok('⚙メニューに「盤面を報告」がある', items.indexOf('盤面を報告') >= 0, items.join('／'));
+  await page.click('.app-menu [data-act="report"]');
   ok('ダイアログが開く', await page.$('.cqr-overlay') !== null);
   ok('コメント欄がある', await page.$('#cqr-comment') !== null);
-  ok('メニューは閉じている', await page.$('.dbg-menu') === null);
+  ok('メニューは閉じている', await page.$('.app-menu') === null);
 
   await page.fill('#cqr-comment', 'レーン3の敵が硬直しているはずなのに動いた');
 
@@ -152,9 +155,12 @@ const SPEC = {
     const r = await CQReport.share(CQReport.build('共有のテスト'));
     return { seen, how: r.how };
   });
-  ok('共有にＪＳＯＮが添付される',
-     shared.seen.files.length === 1 && /\.json$/.test(shared.seen.files[0].name) &&
-     shared.seen.files[0].type === 'application/json' && shared.seen.files[0].size > 200,
+  /* 2026-09-06：Chrome の Web Share は .json を受け付けず「permission denied」で落ちるため、
+   * 2026-09-05 の修正で **.txt（text/plain・中身はＪＳＯＮのまま）** を第1候補にした。
+   * 検査のほうが古いままだったので実装に合わせる（中身がＪＳＯＮであることは下の往復検査で見る）。 */
+  ok('共有にＪＳＯＮが添付される（.txt・中身はＪＳＯＮ）',
+     shared.seen.files.length === 1 && /\.txt$/.test(shared.seen.files[0].name) &&
+     shared.seen.files[0].type === 'text/plain' && shared.seen.files[0].size > 200,
      JSON.stringify(shared.seen.files));
   ok('件名にコメントが入る', /共有のテスト/.test(shared.seen.title), shared.seen.title);
   ok('本文に「気になったこと」が入る', /【気になったこと】/.test(shared.seen.text));
@@ -213,9 +219,10 @@ const SPEC = {
     meta: localStorage.getItem('cq_meta') !== null || true,   /* 触っていなければ存在有無は変わらない */
     keys: Object.keys(localStorage).sort()
   }));
+  /* cq_dev はこの検査自身が addInitScript で立てているもの（開発者モードで開くため）なので数えない */
   ok('cq_reports 以外の保存領域を増やしていない',
      untouched.keys.filter((k) => k.indexOf('cq_') === 0 &&
-       ['cq_meta', 'cq_run', 'cq_reports', 'cq_debug_board'].indexOf(k) < 0).length === 0,
+       ['cq_meta', 'cq_run', 'cq_reports', 'cq_debug_board', 'cq_dev'].indexOf(k) < 0).length === 0,
      untouched.keys.join('／'));
 
   /* --- 9) 往復：報告のＪＳＯＮを「盤面をセットして戦う」に貼って、その場面を作り直す ---

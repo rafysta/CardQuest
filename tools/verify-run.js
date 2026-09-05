@@ -58,6 +58,11 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     }
   });
   page.on('dialog', (d) => d.accept());   // retire の confirm() を自動でOK
+  /* 2026-09-05：🛠 デバッグメニューは既定で隠れる（js/devmode.js）。この検査は
+   * デバッグメニュー経由で開発用の画面へ入るので、開発者モードを立ててから開く。
+   * 「隠れていること」「7回連打で出ること」自体は、下で別の窓（guest）を開いて調べる。
+   * ※ この行は v0.17.2 でこのファイルが古い内容に上書きされて消えていた（2026-09-06 復元）。 */
+  await page.addInitScript(() => { try { localStorage.setItem('cq_dev', '1'); } catch (_) {} });
   await page.goto(URL);
   await page.waitForTimeout(400);   // 読み込み直後はフォント差し替え等でタブの位置がわずかに動くことがある
 
@@ -671,6 +676,52 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
       tabInBattle.battle && !tabInBattle.run && tabInBattle.live, JSON.stringify(tabInBattle));
     ok('★戦闘の裏でラン画面はマップの状態で待っている', tabInBattle.view === 'map', tabInBattle.view);
 
+    /* ★2026-09-06 本人指定：演出の速さ・相手の手番の進め方は、ランの途中でも変えたい。
+     * ホームの「設定」はランに出ると開けないので、⚙ メニュー（js/menu.js）へ移した。
+     * ここでは**戦闘の最中に**開いて切り替わること、切り替えが演出側（js/layout.js の
+     * fxSpeed()／tapMode()）にその場で効くことを見る。 */
+    await page.click('#menu-btn');
+    await wait(() => page.$('.app-menu'));
+    ok('★戦闘の最中でも ⚙ メニューが開く（2026-09-06 本人指定）', !!(await page.$('.app-menu')));
+    ok('★メニューに「演出の速さ」「相手の手番の進め方」がある',
+      (await page.$$eval('.app-menu .am-sec h5', (a) => a.map((e) => e.textContent).join('／')))
+        === '演出の速さ／相手の手番の進め方');
+    await shot('app-menu-in-battle');
+    await page.click('.app-menu [data-act="fx-speed"][data-v="fast"]');
+    await page.waitForTimeout(120);
+    ok('★その場で演出の速さが変わる（次の演出から効く）',
+      await page.evaluate(() => fxSpeed() === 'fast' && fxSpeedSetting() === 'fast'));
+    await page.click('.app-menu [data-act="fx-step"][data-v="tap"]');
+    await page.waitForTimeout(120);
+    ok('★その場で「タップで1手ずつ」に変わる', await page.evaluate(() => tapMode() === true));
+    /* 検査の続きは固定の待ち時間で状態を見るので、「ふつう・自動」に戻してから閉じる */
+    await page.click('.app-menu [data-act="fx-speed"][data-v="normal"]');
+    await page.click('.app-menu [data-act="fx-step"][data-v="auto"]');
+    await page.waitForTimeout(120);
+    ok('★戻すこともできる（ふつう・自動で進める）',
+      await page.evaluate(() => fxSpeed() === 'normal' && tapMode() === false));
+    /* バージョン情報：版・更新履歴・最新版のチェック（🛠 から移設） */
+    await page.click('.app-menu [data-act="version"]');
+    await page.waitForTimeout(150);
+    const verView = await page.evaluate(() => ({
+      mine: (document.querySelector('.app-menu .am-row b') || {}).textContent || '',
+      logs: document.querySelectorAll('.app-menu .am-log-e').length,
+      check: !!document.querySelector('.app-menu [data-act="check"]')
+    }));
+    ok('★バージョン情報にいまの版・更新履歴・最新版のチェックが出る',
+      verView.mine.indexOf('v' + (await page.evaluate(() => APP_VERSION))) === 0 &&
+      verView.logs > 5 && verView.check, JSON.stringify(verView));
+    await shot('app-menu-version');
+    await page.click('.app-menu [data-act="back"]');
+    await page.waitForTimeout(100);
+    ok('★「← 戻る」でメニューの本体に戻る', !!(await page.$('.app-menu .am-sec')));
+    await page.click('#menu-btn');                    /* もう一度押して閉じる */
+    await page.waitForTimeout(100);
+    ok('★もう一度 ⚙ を押すと閉じる', !(await page.$('.app-menu')));
+    /* 戦闘はメニューを開いていた間も壊れていない（決着していないこと） */
+    ok('★メニューを開いても戦闘はそのまま続いている',
+      await page.evaluate(() => !!M && !M.winner && !M.fled));
+
     /* --- M6.6 WP12：逃げる・諦める --- */
     ok('ラン中の戦闘には「諦める」が常に出る（M6.6 WP12）', !!(await page.$('[data-act="give-up"]')));
     /* 通常戦闘（フリーユニット戦）の配置ステップなら「逃げる」も出ているはず。
@@ -773,12 +824,76 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     String((await page.$$('.tab')).length) + '個');
   ok('ストーリー中はランタブが光ったまま（戦闘に入っても動かない）',
     await page.$eval('.tab[data-screen="screen-run"]', (e) => e.classList.contains('on')));
+  /* --- 2026-09-05（本人指定）：友人に渡すときのため 🛠 は既定で隠す ---------------
+   * 出す入口は2つだけ：バージョン表記(#ver-label)の7回連打と、URLの ?dev=1。
+   * どちらも localStorage の cq_dev を立てるだけ（js/devmode.js）。
+   * ここだけは「はじめて開いた人」の状態を見たいので、記憶を持たない別の窓で調べる
+   * ——この検査の本体(page)は addInitScript で cq_dev を立ててあり、常に出た状態で回る。
+   * ※ この節は v0.17.2 でこのファイルが古い内容に上書きされて丸ごと消えていた
+   *   （＝🛠 が誰にでも見えたままなのに検査が気づけない状態だった。2026-09-06 復元）。 */
+  {
+    const guest = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await guest.goto(URL);
+    /* 起動時のローディング(#boot)は画面全体を覆うので、消えるまで待ってから押す */
+    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
+    const dbgShown = () => guest.$eval('#dbg-btn', (e) => e.offsetParent !== null);
+    ok('★はじめて開いた人には 🛠 デバッグメニューが見えない（2026-09-05 本人指定）', !(await dbgShown()));
+    /* ★2026-09-06 本人指定：「ラン」タブは開発用の画面から戻るためだけのボタンなので、
+     * 通常モードでは出さない。代わりに ⚙ メニューは通常モードでも常に出ている。 */
+    ok('★通常モードでは「ラン」タブが出ない（2026-09-06 本人指定）',
+      !(await guest.$eval('.tab[data-screen="screen-run"]', (e) => e.offsetParent !== null)));
+    ok('★通常モードでも ⚙ メニューのボタンは出ている',
+      await guest.$eval('#menu-btn', (e) => e.offsetParent !== null));
+    for (let i = 0; i < 6; i++) await guest.click('#ver-label');
+    ok('★バージョン表記6回では出ない（7回に届くまで変わらない）', !(await dbgShown()));
+    ok('★4回目からは「あと何回」の案内が出る',
+      (await guest.$eval('#flash', (e) => e.textContent)).indexOf('あと1回') >= 0,
+      await guest.$eval('#flash', (e) => e.textContent));
+    await guest.click('#ver-label');
+    await guest.waitForTimeout(120);
+    ok('★バージョン表記を7回続けて押すと 🛠 が出る', await dbgShown());
+    ok('★開発者モードでは「ラン」タブも出る（開発用の画面から戻るため）',
+      await guest.$eval('.tab[data-screen="screen-run"]', (e) => e.offsetParent !== null));
+    ok('★出したことは端末に残る（localStorage の cq_dev）',
+      (await guest.evaluate(() => localStorage.getItem('cq_dev'))) === '1');
+    await guest.reload();
+    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
+    ok('★読み込み直しても 🛠 は出たまま', await dbgShown());
+    await guest.screenshot({ path: path.join(SHOT_DIR, '00_devmode-unlocked.png') });
+    /* 🙈 で隠すと、ボタンも記憶も消える */
+    await guest.click('#dbg-btn');
+    await guest.waitForTimeout(150);
+    for (const it of await guest.$$('.dbg-item')) {
+      const t = await it.$eval('b', (e) => e.textContent).catch(() => '');
+      if (t.indexOf('隠す') >= 0) { await it.click(); break; }
+    }
+    await guest.waitForTimeout(150);
+    ok('★「🙈 デバッグメニューを隠す」で 🛠 も記憶も消える',
+      !(await dbgShown()) && (await guest.evaluate(() => localStorage.getItem('cq_dev'))) === null);
+    /* 開発用の画面へは、隠している間は入れない（🛠 を消すだけでは道が残るため） */
+    await guest.evaluate(() => showScreen('screen-free'));
+    ok('★隠している間は開発用の画面へ入れない（ランへ受け流す）',
+      await guest.evaluate(() => document.getElementById('screen-run').classList.contains('on') &&
+        !document.getElementById('screen-free').classList.contains('on')));
+    /* URLの ?dev=1（PCでの検証・Playwright 用の入口） */
+    await guest.goto(URL + (URL.indexOf('?') < 0 ? '?' : '&') + 'dev=1');
+    for (let i = 0; i < 100 && await guest.$('#boot'); i++) await guest.waitForTimeout(100);
+    ok('★URL に ?dev=1 を付けても出せる', await dbgShown());
+    await guest.close();
+  }
+
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
   ok('🛠 でデバッグメニューが開く', !!(await page.$('.dbg-menu')));
-  /* 2026-09-02：道具は8つ（盤面を報告の追加ぶん。7のままだった検査を実装に合わせて更新） */
-  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
+  /* 2026-09-06：「盤面を報告」「最新版のチェック」は ⚙ メニュー（js/menu.js）へ移したので7つ */
+  ok('デバッグメニューに7つの道具が並ぶ', (await page.$$('.dbg-item')).length === 7,
     String((await page.$$('.dbg-item')).length) + '個');
+  {
+    const names = await page.$$eval('.dbg-item .dbg-item-t b', (a) => a.map((e) => e.textContent));
+    ok('★「盤面を報告」は 🛠 から ⚙ へ移った（2026-09-06 本人指定）',
+      names.indexOf('盤面を報告') < 0, names.join('／'));
+    ok('★「最新版のチェック」も ⚙ のバージョン情報へ移った', names.indexOf('最新版のチェック') < 0);
+  }
   await shot('debug-menu');
   /* ルーラー：80px方眼と座標番号が #app に重なる。もう一度押すと消える */
   await dbgClick('ルーラー');
@@ -789,10 +904,17 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   await dbgClick('ルーラー');
   await page.waitForTimeout(150);
   ok('もう一度押すとルーラーが消える', !(await page.$('.dbg-ruler')));
-  /* 最新版のチェック：version.json を読んで結果行が出る（GitHub側は通信環境により取得不可でもよい） */
-  await dbgClick('最新版のチェック');
-  await wait(() => page.$('.dbg-verdict'), 8000);
-  ok('最新版のチェックが結果を返す', !!(await page.$('.dbg-verdict')));
+  /* 最新版のチェックは ⚙ メニューのバージョン情報へ移した（2026-09-06 本人指定）。
+   * version.json を読んで結果行が出ること（GitHub側は通信環境により取得不可でもよい）。 */
+  await page.click('#menu-btn');
+  await wait(() => page.$('.app-menu'));
+  await page.click('.app-menu [data-act="version"]');
+  await page.waitForTimeout(120);
+  await page.click('.app-menu [data-act="check"]');
+  await wait(() => page.$('.am-verdict'), 8000);
+  ok('★最新版のチェックが結果を返す（⚙ のバージョン情報）', !!(await page.$('.am-verdict')));
+  await page.click('#menu-btn');
+  await page.waitForTimeout(100);
   /* 2026-08-29：「目覚めの場面を見返す」——アンバーとの出会いの場面だけを最初から再生し、
    * 終わったら元の画面へ戻る（openingSeen・ランの状態には触れない）。 */
   const viewBefore = await page.evaluate(() => RUI.view);
@@ -813,7 +935,7 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   /* --- 2026-08-29：デッキ編集とフリーバトルをデバッグメニューへ移した --- */
   await page.click('#dbg-btn');
   await wait(() => page.$('.dbg-menu'));
-  ok('デバッグメニューに8つの道具が並ぶ', (await page.$$('.dbg-item')).length === 8,
+  ok('デバッグメニューに7つの道具が並ぶ', (await page.$$('.dbg-item')).length === 7,
     String((await page.$$('.dbg-item')).length) + '個');
   /* 🃏 デッキ編集：アンロックに関係なく全169種から組めること・組んだ内容が残ること */
   await dbgClick('デッキ編集');

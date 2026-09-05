@@ -72,7 +72,12 @@ input,textarea{-webkit-user-select:text;user-select:text}
 }
 .logo{font-size:22px;font-weight:800;letter-spacing:.04em;white-space:nowrap}
 .logo small{font-size:13px;color:var(--dim);font-weight:400;margin-left:8px}
-.tabs{display:flex;gap:8px;margin-left:auto}
+/* 「ラン」タブは開発用の画面（デッキ編集・フリーバトル・盤面をセットして戦う）から
+   ストーリーへ戻るためだけのボタン（2026-09-06 本人指定）。通常モードでは押す意味が無く
+   「何のボタンか分からない」ので、開発者モード（html.cq-dev・js/devmode.js）のときだけ出す。
+   右上のボタンの寄せ方も切り替える——タブが居ないときは ⚙ が右寄せの起点になる。 */
+.tabs{display:none;gap:8px;margin-left:auto}
+.cq-dev .tabs{display:flex}
 .tab{
   height:40px;padding:0 16px;border-radius:9px;font-size:16px;font-weight:700;
   background:var(--panel2);border:2px solid var(--line);color:var(--dim);white-space:nowrap;
@@ -1646,11 +1651,35 @@ td.nm{font-weight:800}
 /* ---- デバッグメニュー（js/debug.js・2026-08-29） ----
  * 使われていなかった「エンジン検証」「この案について」タブを外した代わりに、
  * 開発用のコマンドをここへ集約した。押さなければ何も起きないので常設のままにしてある。 */
-.dbg-btn{
+/* ⚙ メニュー（js/menu.js・2026-09-06 本人指定）。遊ぶ人がいつでも開ける常設のボタン。
+   演出の速さ・相手の手番の進め方・盤面を報告・バージョン情報が入っている。
+   タブを隠した通常モードでは、これが右寄せの起点になる。 */
+.menu-btn{
+  margin-left:auto;flex:none;width:38px;height:38px;border-radius:10px;
+  background:var(--panel2);border:1px solid var(--line);font-size:17px;line-height:1;
+}
+.cq-dev .menu-btn{margin-left:10px}
+.menu-btn:hover{border-color:var(--accent)}
+/* 🛠 デバッグメニューのボタンは既定で隠す（2026-09-05・本人指定）。
+   出すのは開発者モードのときだけ＝<html class="cq-dev">。JSで後から隠すのではなく
+   CSSで最初から消しておくことで、読み込みの一瞬だけ見えてしまう事故を防ぐ。
+   モードの切り替えは js/devmode.js。
+   ※ 2026-09-06：v0.17.2（M7.9 第2段）でこのファイルが古い内容で上書きされ、この3つの
+     決まり（🛠の非表示・cq-devでの表示・#ver-labelの押しやすさ）が消えていたので戻した。 */
+.dbg-btn{display:none}
+.cq-dev .dbg-btn{
+  display:block;
   margin-left:10px;flex:none;width:38px;height:38px;border-radius:10px;
   background:var(--panel2);border:1px solid var(--line);font-size:17px;line-height:1;
 }
-.dbg-btn:hover{border-color:var(--accent)}
+.cq-dev .dbg-btn:hover{border-color:var(--accent)}
+/* バージョン表記は開発者モードの隠し入口（7回連打）。指で押せる大きさにし、
+   連打で文字が選択反転しないようにしておく。 */
+#ver-label{
+  display:inline-block;padding:4px 6px;margin-left:2px;cursor:default;
+  user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
 .dbg-menu{
   position:absolute;right:12px;top:56px;z-index:1100;width:340px;
   background:var(--panel);border:1px solid var(--line);border-radius:14px;
@@ -1681,6 +1710,66 @@ td.nm{font-weight:800}
 .dbg-warn{color:#ffcf6b}
 .dbg-dim{color:#6b7c99}
 .dbg-verdict{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
+
+/* ---- ⚙ メニュー（js/menu.js・2026-09-06・本人指定） ----
+   遊ぶ人がいつでも開けるメニュー。位置と枠は 🛠 のメニューに揃えるが、こちらは
+   設定の選択肢と更新履歴が入るぶん少し広く、縦に伸びたら中でスクロールする。 */
+.app-menu{
+  position:absolute;right:12px;top:56px;z-index:1100;width:380px;
+  max-height:calc(100% - 76px);overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  box-shadow:0 18px 50px rgba(0,0,0,.6);padding:10px;
+}
+.am-h{
+  display:flex;align-items:baseline;gap:8px;font-size:13px;font-weight:800;color:var(--dim);
+  padding:2px 6px 8px;border-bottom:1px solid var(--line);margin-bottom:6px;
+}
+.am-v{margin-left:auto;font-weight:700;color:var(--accent)}
+.am-back{font-size:12px;font-weight:700;color:var(--dim);padding:2px 6px;border-radius:7px}
+.am-back:hover{background:var(--panel2);color:var(--fg)}
+.am-sec{padding:4px 8px 10px}
+.am-sec h5{margin:0 0 2px;font-size:13px;font-weight:800}
+.am-note{margin:0 0 6px;font-size:11px;line-height:1.5;color:var(--dim)}
+.am-pick{display:flex;gap:6px;flex-wrap:wrap}
+.am-btn{
+  padding:7px 12px;border-radius:9px;font-size:13px;font-weight:700;
+  background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+}
+.am-btn.on{background:var(--accent);border-color:var(--accent);color:#241c00}
+.am-btn:hover{border-color:var(--accent)}
+.am-btn.wide{width:100%;margin:6px 0 2px}
+.am-item{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:9px 8px;border-radius:9px;border-top:1px solid var(--line);
+}
+.am-item:hover{background:var(--panel2)}
+.am-item-ic{font-size:18px;width:24px;text-align:center;flex:none}
+.am-item-t{display:flex;flex-direction:column;gap:1px;min-width:0}
+.am-item-t b{font-size:14px;font-weight:700}
+.am-item-t small{font-size:11px;color:var(--dim)}
+/* バージョン情報（版・最新版チェック・更新履歴） */
+.am-ver{padding:2px 8px 8px;font-size:12px;line-height:1.6}
+.am-row{display:flex;gap:8px;padding:2px 0}
+.am-row span{flex:1;color:var(--dim)}
+.am-row small{font-weight:600;color:var(--dim);margin-left:4px}
+.am-out{font-size:12px;line-height:1.6;color:var(--dim)}
+.am-out:empty{display:none}
+.am-ok{color:#7ee0a0}
+.am-warn{color:#ffcf6b}
+.am-dim{color:#6b7c99}
+.am-verdict{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
+.am-log-h{
+  margin:2px 8px 4px;font-size:12px;font-weight:800;color:var(--dim);
+  border-top:1px solid var(--line);padding-top:8px;
+}
+.am-log{padding:0 8px 4px}
+.am-log-e{padding:6px 0;border-bottom:1px dashed var(--line)}
+.am-log-v{font-size:12px;font-weight:800;color:var(--accent)}
+.am-log-v small{font-weight:600;color:var(--dim);margin-left:6px}
+.am-log-i{display:flex;gap:6px;margin:3px 0 0;font-size:11px;line-height:1.55;color:var(--fg)}
+.am-log-i > span:first-child{flex:none}   /* 印。本文(.am-log-t)まで flex:none にすると折り返さない */
+.am-log-t{flex:1;min-width:0;overflow-wrap:anywhere}
+.am-log-t code{font-size:10px;background:var(--panel2);padding:1px 4px;border-radius:4px}
 
 /* ルーラー：80px方眼の点線＋座標番号。「x:3, y:5 から縦3・横5」の言い方を可能にする */
 .dbg-ruler{
