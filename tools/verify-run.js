@@ -968,7 +968,9 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   };
   const BASE = { first: 'self', active: 'self', phase: 'main', win: 'lp', hand: { self: [], enemy: [] } };
 
-  /* ① lane 型：124凍結。ＣＨを持つ他ユニットだけが候補（CE0216 EJECT） */
+  /* ① lane 型：124凍結。**まだ硬直していない他ユニット全部**が候補。
+   * ★M7.8 WP4：原作 §124 は `V212 >= 1`（ユニット行以上）しか見ておらず、ＣＨの有無を
+   * 問わないので、ＣＨ0のレーン1も光るのが正しい（従来は EJECT＝ＣＨ1枚以上に絞っていた）。 */
   await startBoard(Object.assign({}, BASE, { lanes: {
     '0': { unit: 8, ch: [{ id: 124, up: false, by: 'self' }] },
     '1': { unit: 8, ch: [] },
@@ -976,8 +978,8 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     '4': { unit: 8, ch: [{ id: 151, up: false, by: 'enemy' }] } } }));
   await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
   await page.waitForTimeout(250);
-  ok('★対象を選ぶ魔法は候補のレーンだけが光る（124凍結・EJECT）',
-    (await page.$$eval('.lane.pick-lane', (els) => els.map((e) => e.dataset.lane).join(','))) === '3,4',
+  ok('★対象を選ぶ魔法は候補のレーンだけが光る（124凍結・ＣＨ0の1も候補）',
+    (await page.$$eval('.lane.pick-lane', (els) => els.map((e) => e.dataset.lane).join(','))) === '3,4,1',
     await page.$$eval('.lane.pick-lane', (els) => els.map((e) => e.dataset.lane).join(',')));
   await shot('wp5-pick-lane');
   await page.click('.lane[data-lane="4"] .card.unit', { position: { x: 8, y: 8 } });
@@ -1162,8 +1164,14 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     spentDoomed && spentShards
       && await page.evaluate(() => !M.board.lanes[0].channels.some((c) => c.card === 139)),
     JSON.stringify({ d: spentDoomed, s: spentShards }));
+  /* ★139が砕ける演出のあいだにクリックすると空振りする（この検査が時々落ちていた原因）。
+   * 「117が第1階層まで下りてきた」ことを見届けてから押し、開くまで待ってから判定する。 */
+  await wait(() => page.evaluate(() => M.board.lanes[0].channels.length === 1
+    && M.board.lanes[0].channels[0].card === 117));
+  await page.waitForTimeout(300);
   await page.click('.card.ch[data-lane="0"][data-layer="1"]', { position: { x: 8, y: 8 } });
-  await page.waitForTimeout(1000);
+  await wait(() => page.evaluate(() => M.board.lanes[0].channels.some((c) => c.card === 117 && c.up)));
+  await page.waitForTimeout(400);
   ok('★持続型の魔法（117障壁）は表のまま残る（「表で居ること」が効果だから）',
     await page.evaluate(() => M.board.lanes[0].channels.some((c) => c.card === 117 && c.up)
       && M.board.lanes[0].def >= 750),

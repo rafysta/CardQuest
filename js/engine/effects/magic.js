@@ -317,10 +317,12 @@
   /* ================= 101〜110 ================= */
 
   function h101(m, ctx) {                                     // 憑依解除：ＣＨ１つを破壊
-    // 発動中の自分自身は対象から除く（連唱で2回発動したときに自壊して不整合になるのを避ける）
-    const pool = allChannels(m, function (ch, lane, idx) {
-      return !(lane === ctx.laneIndex && idx === ctx.layer - 1);
-    });
+    /* ★M7.8 WP4：対象スコープを原作に合わせた（`05_magic.md` §101 の
+     * `if (V211 == V213) reject`＝**自分の乗っているレーンは丸ごと選べない**／
+     * `if (SW359 && V211 != V406) reject`＝**戦闘中は相手の当事者だけ**）。
+     * 従来は「自分自身の階層だけ」を除いていたので、同じレーンの味方ＣＨまで壊せていた。
+     * `data.js` のテキスト「自分の居る列は選べない」も、これで実装と一致する。 */
+    const pool = allChannels(m, function (ch, lane) { return inScope(m, ctx, lane); });
     // 本人操作時は破壊対象を選べる（2026-08-24 本人の指定）。ctx.choice はレイアウト側が
     // 発動前に選んでおいた {lane, idx}。連唱で2回目が発動するときは1回目の対象が既に
     // 破壊済みで pool に無いので、自動的に pick() へフォールバックする
@@ -386,21 +388,32 @@
       if (!ln || ln.unit == null || ln.count >= ln.cap) break;
       const id = drawDirect(m, enemy);
       if (id == null) break;
-      pushChannel(m, ctx.laneIndex, { card: id, up: false, mine: ctx.caster === 'self', revealed: false });
+      /* ★M7.8 WP4：敵デッキ由来のカードは原作では「**相手が置いた**」扱い（`SW519 = ON`）＝
+       * 自分からは中身が見えない（原作§103）。自己認識(166)があるレーンなら
+       * 集計の㉔で自動的に既知になるので、ここでは revealed を立てない。 */
+      pushChannel(m, ctx.laneIndex, { card: id, up: false, mine: enemy === 'self', revealed: false });
       filled += 1;
     }
     recalc(m);
     note(m, '渇望：相手の山札から' + filled + '枚のＣＨを得た');
   }
 
-  function h105(m, ctx) {                                     // 歪曲：ＣＨ位置を上下反転
-    const ln = m.board.lanes[ctx.laneIndex];
+  /** 歪曲：**選んだ他ユニット**のＣＨ位置を上下反転させる（原作§105 の `CE0264 反転`）。
+   * ★M7.8 WP4：従来は自分の乗っているレーンを反転していたが、原作は `CE0216 EJECT` で
+   * 他ユニットを1体選ぶカード。本人指定#7 により、候補は自陣・敵陣を問わない。 */
+  function h105(m, ctx) {
+    const t = decide(m, ctx, 105);                            // EJECT（ＣＨを持つ他ユニット）
+    if (t == null) { note(m, '歪曲：反転できるユニットが無い'); return; }
+    const ln = m.board.lanes[t];
     if (!ln || !ln.channels.length) return;
     ln.channels.reverse();
-    // 原作バグ（仕様書§14.1・§8.4「105歪曲」）：レーン1・ＣＨ6枚のとき最上段のカードが消滅する
-    if (ctx.laneIndex === 0 && ln.channels.length === 6) {
-      const gone = ln.channels.pop();
-      note(m, '歪曲：（原作バグ再現）最上段の ' + nameOf(m, gone.card) + ' が消滅した');
+    /* 原作バグ（`05_magic.md` §105 の ⚠）：レーン1・ＣＨ6枚のときだけ、最初の組の
+     * 「1に入れる」呼び出しが抜けている＝**元レベル6にあったカードが消滅**し、
+     * レベル1が空いてＣＨ整理で詰められる。反転後の配列では先頭がその元レベル6なので
+     * shift() で落とす（★従来は pop() ＝元レベル1を落としていて、消える札が逆だった）。 */
+    if (t === 0 && ln.channels.length === 6) {
+      const gone = ln.channels.shift();
+      note(m, '歪曲：（原作バグ再現）元レベル6の ' + nameOf(m, gone.card) + ' が消滅した');
     }
     ln.count = ln.channels.length;
     ln.reversePtr = 0;
@@ -408,10 +421,14 @@
     note(m, '歪曲：' + nameOf(m, ln.unit) + ' のＣＨ位置を反転');
   }
 
-  function h107(m, ctx) {                                     // 逃走：ＣＨ数4以下ならユニットを手札に戻す（戦闘中×）
+  function h107(m, ctx) {                                     // 逃走：ＣＨ上限4以下ならユニットを手札に戻す（戦闘中×）
     const ln = m.board.lanes[ctx.laneIndex];
     if (!ln || ln.unit == null) return;
-    if (ln.count > 4) { note(m, '逃走：ＣＨが5枚以上のため戻せない'); return; }
+    /* ★M7.8 WP4（#15／L-107 決着）：判定は**ＣＨ上限**（膨張(158)・五つ星(157)・
+     * 白の聖霊陣で増えた有効値）であって現在枚数ではない（原作§107 の `chCap(自レーン) > 4`）。
+     * ＣＨ上限5以上の大型ユニットは、何も付いていなくても逃げられない。 */
+    recalc(m);
+    if (ln.cap > 4) { note(m, '逃走：ＣＨ上限が5以上のため戻せない'); return; }
     const side = S.sideOf(ctx.laneIndex), unitId = ln.unit;
     m.players[side].hand.push(unitId);
     capHand(m, side);
@@ -446,7 +463,10 @@
    * 敵陣・自陣は問わない。needFaceUp は110用（表向きのＣＨが1枚以上あること）。 */
   function forcedTargets(m, ctx, needFaceUp) {
     return allUnitLanes(m).filter(function (i) {
-      if (i === ctx.laneIndex) return false;
+      /* ★M7.8 WP4：自レーン除外に加えて**戦闘中は当事者2レーンだけ**に絞る（inScope）。
+       * 110閉門はこの経路で対象を決めるが、戦闘中の対象スコープを通していなかった。
+       * 108/109 は戦闘中×なので、この変更で挙動は変わらない。 */
+      if (!inScope(m, ctx, i)) return false;
       const ln = m.board.lanes[i];
       if (!ln.channels.length) return false;
       return needFaceUp ? ln.channels.some(function (ch) { return ch.up; }) : true;
@@ -538,11 +558,17 @@
       case 126:   /* 統合：ＣＨが1枚も付いていない他ユニットを丸ごと吸収する */
         return lane(scopeLanes(m, c).filter(function (i) { return m.board.lanes[i].channels.length === 0; }));
       case 116:   /* 解析：EJECT */
+      case 105:   /* ★M7.8 WP4 歪曲：EJECT（**選んだ他ユニット**のＣＨを反転する。原作§105）。
+                   * 本人指定#7で自陣・敵陣どちらも選べる（scopeLanes がそのまま両陣営を返す） */
         return lane(rEject(m, c));
       case 125: case 102: case 138: case 148:   /* 移送・侵食・潜入・妄執：FLOOD */
+      case 115: case 127: case 130:   /* ★M7.8 WP4 流行り病・死の棘・漂着：FLOOD（本人指定B・攻撃札化） */
         return lane(rFlood(m, c));
-      case 124:   /* 凍結：EJECT のうち、まだ硬直していないもの */
-        return lane(rEject(m, c).filter(function (i) { return !m.board.lanes[i].stiff; }));
+      case 124:   /* ★M7.8 WP4 凍結：**ＣＨ0のユニットも対象**（原作§124 は `V212 >= 1`＝
+                   * ユニット行以上しか見ておらず、ＣＨの有無を問わない）。
+                   * 「まだ硬直していないもの」に絞るのは CardQuest の据え置き
+                   * （原作は硬直済みにも撃てて無駄撃ちになる。候補を狭めるだけで挙動は原作の部分集合） */
+        return lane(scopeLanes(m, c).filter(function (i) { return !m.board.lanes[i].stiff; }));
       case 118:   /* 押収：DASH */
         return chs(rDash(m, c));
       case 121: { /* 招来：潜行しているユニットカード。**中身が分かっているものだけ**選べる
@@ -825,14 +851,22 @@
     note(m, '変換：手札を入れ替えた');
   }
 
+  /** 手札の打ち切り枚数（原作 `V227 >= 6` の判定）。112抽出・144還元はここで引くのをやめる。
+   * ★M7.8 WP4：従来は上限を無視して引いてから捨てていたので、
+   * 「引き損（ＬＰだけ払って手札が増えない）」という原作の駆け引きが消えていた。 */
+  const DRAW_STOP = 6;
+
   function h112(m, ctx) {                                     // 抽出：手札を3枚得るがドロー毎にＬＰ1点を失う
     const p = m.players[ctx.caster], Turn = turnApi();
+    let got = 0;
     for (let i = 0; i < 3; i++) {
+      if (p.hand.length >= DRAW_STOP) break;                  // ★手札6枚で打ち切り（原作§112）
       if (Turn.draw(m.rng, p, m) == null) break;
-      damage(m, ctx.caster, 1);
+      damage(m, ctx.caster, 1);                               // 引いた枚数ぶんだけＬＰを払う
+      got += 1;
     }
     capHand(m, ctx.caster);
-    note(m, '抽出：手札を得てＬＰを消費した');
+    note(m, got ? ('抽出：' + got + '枚引いてＬＰ -' + got) : '抽出：手札が多すぎて1枚も引けない');
   }
 
   /** 透視：**相手が置いた**裏向きＣＨを2枚まで選んで中身を知る（原作§2「敵が置いた裏ＣＨ×2」）。
@@ -842,7 +876,10 @@
    * （**複数個の対象を選ぶ最初のカード**。118押収・125移送も同じ形を使う）。 */
   function h113(m, ctx) {
     const mine = ctx.caster === 'self';
-    const pool = allChannels(m, function (ch) { return !ch.up && ch.mine !== mine && !ch.revealed; });
+    /* ★M7.8 WP4：対象スコープ（自レーン除外・戦闘中は当事者だけ）を通す */
+    const pool = allChannels(m, function (ch, lane) {
+      return !ch.up && ch.mine !== mine && !ch.revealed && inScope(m, ctx, lane);
+    });
     const key = function (t) { return t.lane + ':' + t.idx; };
     const chosen = [];
     const picks = (ctx.choice && ctx.choice.picks) || [];
@@ -865,22 +902,32 @@
     /* 相手の手札からユニット1枚を選んで壊す。選んでいる間、相手の手札は全部見える
      * （原作もそうで、偵察としても使えるのがこのカードの持ち味。05_magic.md §114）。 */
     const i = decide(m, ctx, 114);
-    if (i != null) {
-      const removed = p.hand.splice(i, 1)[0];
-      note(m, '暗殺：' + jp(enemy) + 'の手札の ' + nameOf(m, removed) + ' を破壊');
-    }
+    /* ★M7.8 WP4（#16）：**破壊できるカードが無ければ不発**＝ＬＰも減らない
+     * （原作§114 の `if (V259 == 0) goto 終了`。ユニット以外しか無いときも
+     * Ａキーが効かずＢキーで抜けるだけ＝同じ結果になる）。 */
+    if (i == null) { note(m, '暗殺：相手の手札に壊せるユニットが無く不発'); return; }
+    const removed = p.hand.splice(i, 1)[0];
+    note(m, '暗殺：' + jp(enemy) + 'の手札の ' + nameOf(m, removed) + ' を破壊');
     damage(m, enemy, 1);
     note(m, '暗殺：' + jp(enemy) + ' のＬＰ -1');
   }
 
+  /** 115流行り病・127死の棘：手札の技能カードを**選んだ他ユニット**に表向きで付ける。
+   * ★M7.8 WP4（本人指定B）：従来は自分の乗っているレーンに付けていたが、
+   * 原作は `CE0231 FLOOD` で空き枠のある他ユニットを1体選ぶ**攻撃札**（原作§115・§127）。
+   * 手順も原作どおり「手札の確認 → 対象の確認 → 消費」の順にした
+   * （対象が居なければ手札のカードは減らない）。 */
   function attachFromHand(m, ctx, skillId, label) {
     const p = m.players[ctx.caster];
     const i = p.hand.indexOf(skillId);
     if (i < 0) { note(m, label + '：手札に無いため不発'); return; }
+    const t = decide(m, ctx, ctx.cardId);                     // FLOOD（空き枠のある他ユニット）
+    if (t == null) { note(m, label + '：付けられる相手が居ない'); return; }
     p.hand.splice(i, 1);
-    pushChannel(m, ctx.laneIndex, { card: skillId, up: true, mine: ctx.caster === 'self', revealed: true });
+    /* 所有者フラグは立てない＝「自分が置いたカード」扱い・既知（原作 SW[480+idx] = ON） */
+    pushChannel(m, t, { card: skillId, up: true, mine: ctx.caster === 'self', revealed: true });
     recalc(m);
-    note(m, label + '：' + nameOf(m, skillId) + ' を表状態で付加');
+    note(m, label + '：' + nameOf(m, m.board.lanes[t].unit) + ' に ' + nameOf(m, skillId) + ' を表状態で付加');
   }
   function h115(m, ctx) { attachFromHand(m, ctx, 155, '流行り病'); }   // 疫障(155)
   function h127(m, ctx) { attachFromHand(m, ctx, 167, '死の棘'); }     // 腐食(167)
@@ -896,18 +943,31 @@
     const t = decide(m, ctx, 118);                            // DASH（裏向きのＣＨ）
     if (!t) { note(m, '押収：対象が無い'); return; }
     const stolen = dropChannelAt(m, t.lane, t.idx);
-    pushChannel(m, ctx.laneIndex, { card: stolen.card, up: false, mine: ctx.caster === 'self', revealed: false });
+    /* ★M7.8 WP4：原作は `L-n消/入` のバッファ経由なので**表裏・所有者・既知のフラグを
+     * そのまま引き継ぐ**（原作§118）。奪ったカードの中身が分かっていたなら分かったまま、
+     * 相手が置いた札なら相手のもののまま自分のユニットに付く。 */
+    pushChannel(m, ctx.laneIndex, stolen);
     recalc(m);
     note(m, '押収：裏向きのＣＨを1枚奪った');
   }
 
-  function h119(m, ctx) {                                     // 鎮静：場にある全てのＣＨをクローズ（戦闘中×）
+  /** 鎮静：場にある全てのＣＨをクローズする（戦闘中×）。
+   * 自分の乗っているレーンも閉じるのは**本人指定#14 の据え置き**（原作は自レーンだけ閉じない）。
+   * ★M7.8 WP4：そのかわり**使い終わったこのカード自身は破壊する**（本人指定#14）。
+   * 自分で自分を裏返してしまうため、共通の「使い終わった魔法を壊す」処理
+   * （expireSpent は表向きのカードしか壊さない）では消えず、場に居残っていた。 */
+  function h119(m, ctx) {
     let n = 0;
     m.board.lanes.forEach(function (ln) {
       ln.channels.forEach(function (ch) { if (ch.up) { ch.up = false; n += 1; } });
     });
+    const here = m.board.lanes[ctx.laneIndex];
+    const self = here && here.channels[ctx.layer - 1];
+    const gone = self && self.card === 119;
+    if (gone) dropChannelAt(m, ctx.laneIndex, ctx.layer - 1);
     recalc(m);
-    note(m, '鎮静：場の' + n + '枚をクローズ');
+    note(m, '鎮静：場の' + n + '枚をクローズ（このカードは使い終わって砕けた）');
+    if (gone) return { consumed: true };
   }
 
   /* ================= 121〜130 ================= */
@@ -997,20 +1057,39 @@
     const t = decide(m, ctx, 126);                            // ＣＨの付いていない他ユニット
     if (t == null) { note(m, '統合：吸収できるユニットが無い'); return; }
     const absorbed = m.board.lanes[t].unit;
+    const ownerIsSelf = S.sideOf(t) === 'self';               // 所有者は元のまま（原作 SW519）
     m.board.lanes[t] = S.emptyLane();
-    pushChannel(m, ctx.laneIndex, { card: absorbed, up: false, mine: ctx.caster === 'self', revealed: false });
+    /* ★M7.8 WP4：原作は「裏向き(SW518)・既知(SW520)・所有者は元のまま(SW519)」で
+     * 潜行ユニットとして積む（原作§126）。吸収したのは目の前で見ていたユニットなので
+     * 中身は当然分かっている＝既知になる。 */
+    pushChannel(m, ctx.laneIndex, { card: absorbed, up: false, mine: ownerIsSelf, revealed: true });
     recalc(m);
     note(m, '統合：' + nameOf(m, absorbed) + ' をＣＨとして吸収した');
   }
 
-  function h128(m, ctx) {                                     // 転写：手札の技能カードをこのカードの位置へ転送
+  /** 転写：手札の技能カードを**このカード自身の位置に上書きする**（原作§128 の `CE0234 描画`）。
+   * ★M7.8 WP4（#8）：置かれる技能は**表向き**なので即座に効果を発揮し、しかも
+   * 魔法消去(EV0049)は技能(151〜199)を消さないので**永続的に場に残る**——これが転写の主眼。
+   * 従来は裏向きで最上段に積んでいたので、カードの狙いがまるごと失われていた。
+   *
+   * 実装上の注意：`onMagicOpen` の「使い終わった魔法を壊す」処理は**入り口で掴んだ
+   * カードの実体**を探して消すので、同じオブジェクトを書き換えてはいけない
+   * （書き換えると、置いたばかりの技能が表向きのまま巻き添えで壊される）。
+   * 新しいオブジェクトに差し替えることで、転写カード自身は「もう場に無い」と判定される。 */
+  function h128(m, ctx) {
     const p = m.players[ctx.caster];
     const i = p.hand.findIndex(function (id) { return id >= 151 && id <= 199; });
     if (i < 0) { note(m, '転写：手札に技能カードが無い'); return; }
+    const ln = m.board.lanes[ctx.laneIndex];
+    const idx = ctx.layer - 1;
+    if (!ln || !ln.channels[idx] || ln.channels[idx].card !== 128) {
+      note(m, '転写：このカードが場から動いているため不発'); return;
+    }
     const id = p.hand.splice(i, 1)[0];
-    pushChannel(m, ctx.laneIndex, { card: id, up: false, mine: ctx.caster === 'self', revealed: false });
+    ln.channels[idx] = { card: id, up: true, mine: ctx.caster === 'self', revealed: true };
+    ln.count = ln.channels.length;
     recalc(m);
-    note(m, '転写：' + nameOf(m, id) + ' を付加した');
+    note(m, '転写：' + nameOf(m, id) + ' を表向きで転写した（この技能は場に残る）');
   }
 
   function h129(m, ctx) {                                     // 窃盗：敵マスターの手札1枚を奪う
@@ -1022,12 +1101,21 @@
     note(m, '窃盗：' + jp(enemy) + 'の手札から1枚奪った');
   }
 
-  function h130(m, ctx) {                                     // 漂着：山札から1枚を直に表状態で付加
+  /** 漂着：自分の山札から1枚を、**選んだ他ユニット**に表向きで付ける（原作§130 の `CE0235`）。
+   * ★M7.8 WP4（本人指定B）：従来は自レーンに付けていたが、原作は `CE0231 FLOOD` で
+   * 空き枠のある他ユニットを1体選ぶカード。何が出るかはランダムなので、
+   * 技能が出れば即効果・ユニットが出れば潜行ユニット・魔法が出れば
+   * （オープン処理を通らないので）発動せずに次の魔法消去で消える。
+   * **自陣のユニットに付けた場合はそのユニットが硬直する**（原作の隠しデメリット）。 */
+  function h130(m, ctx) {
+    const t = decide(m, ctx, 130);                            // FLOOD（空き枠のある他ユニット）
+    if (t == null) { note(m, '漂着：付けられる相手が居ない'); return; }
     const id = drawDirect(m, ctx.caster);
     if (id == null) { note(m, '漂着：山札が無い'); return; }
-    pushChannel(m, ctx.laneIndex, { card: id, up: true, mine: ctx.caster === 'self', revealed: true });
+    pushChannel(m, t, { card: id, up: true, mine: ctx.caster === 'self', revealed: true });
+    if (S.sideOf(t) === ctx.caster) m.board.lanes[t].stiff = true;      // 自陣に付けると硬直
     recalc(m);
-    note(m, '漂着：' + nameOf(m, id) + ' を表状態で付加した');
+    note(m, '漂着：' + nameOf(m, m.board.lanes[t].unit) + ' に ' + nameOf(m, id) + ' を表状態で付加した');
   }
 
   /* ================= 131〜140 ================= */
@@ -1082,7 +1170,9 @@
     const at = m.forcedCtx ? m.forcedCtx.lane : ctx.laneIndex;
     const ln = m.board.lanes[at];
     const name = ln && ln.unit != null ? nameOf(m, ln.unit) : null;
-    combatApi().destroy(m, at, { normalAttack: false });
+    /* ★M7.8 WP4（#18 本人決定）：魔法による破壊なので `magic:true`＝**不死(177)が効かない**
+     * （原作は魔法処理中 `SW325` のあいだ不死の判定に入らない。`05_magic.md` §133）。 */
+    combatApi().destroy(m, at, { normalAttack: false, magic: true });
     if (name) {
       note(m, '呪爆：' + name + ' が破壊された' + (m.forcedCtx ? '（強制開放を仕掛けた側に跳ね返った）' : ''));
     }
@@ -1104,7 +1194,7 @@
     const t = decide(m, ctx, 135);                            // BLITZ（防御力550以下）
     if (t == null) { note(m, '雷撃：対象が無い'); return; }
     const name = nameOf(m, m.board.lanes[t].unit);
-    combatApi().destroy(m, t, { normalAttack: false });
+    combatApi().destroy(m, t, { normalAttack: false, magic: true });   // ★不死は効かない（#18）
     note(m, '雷撃：' + name + ' を破壊');
   }
 
@@ -1181,10 +1271,15 @@
     return { consumed: true };
   }
 
-  function h139(m, ctx) {                                     // 爆雷：敵マスターのＬＰを3点減らす（戦闘中×）
-    const enemy = other(ctx.caster);
-    damage(m, enemy, 3);
-    note(m, '爆雷：' + jp(enemy) + ' のＬＰ -3');
+  /** 爆雷：**開いた側の相手**のＬＰを3点減らす（戦闘中×）。
+   * ★M7.8 WP4（#17）：原作は「カードが誰のレーンに乗っているか」を一切見ず、
+   * 走った実装（＝開いた側）の相手を叩く（原作§139）。
+   * ＝相手のユニットに仕込んでも、開いたのが相手なら**仕込んだ自分が3点食らう**。
+   * 従来は仕込んだ側（caster）が常に得をしていた。 */
+  function h139(m, ctx) {
+    const victim = other(ctx.opener);
+    damage(m, victim, 3);
+    note(m, '爆雷：' + jp(victim) + ' のＬＰ -3');
   }
 
   /** 時の渦：自分自身が壊れ、**そのターンをもう一度最初からやり直す**（詠唱Ｌｖ4／戦闘中×）。
@@ -1235,7 +1330,7 @@
     const t = decide(m, ctx, 141);                            // BLITZ（相手陣・防御力551〜1000）
     if (t == null) { note(m, '思念波：（原作バグ再現）対象が見つからず不発'); return; }
     const name = nameOf(m, m.board.lanes[t].unit);
-    combatApi().destroy(m, t, { normalAttack: false });
+    combatApi().destroy(m, t, { normalAttack: false, magic: true });   // ★不死は効かない（#18）
     note(m, '思念波：特殊攻撃1000で ' + name + ' を破壊');
   }
 
@@ -1263,8 +1358,13 @@
     ln.channels = []; ln.count = 0;
     recalc(m);
     const Turn = turnApi();
+    const p = m.players[ctx.caster];
     let got = 0;
-    for (let i = 0; i < n; i++) { if (Turn.draw(m.rng, m.players[ctx.caster], m) == null) break; got += 1; }
+    for (let i = 0; i < n; i++) {
+      if (p.hand.length >= DRAW_STOP) break;                  // ★手札6枚で打ち切り（原作§144）
+      if (Turn.draw(m.rng, p, m) == null) break;
+      got += 1;
+    }
     capHand(m, ctx.caster);
     note(m, '還元：ＣＨ' + n + '枚を破壊し' + got + '枚ドローした');
     return { consumed: true };
@@ -1292,18 +1392,42 @@
     note(m, '治癒：手札' + n + '枚を捨ててＬＰ +' + n);
   }
 
-  function h148(m, ctx) {                                     // 妄執：自爆し任意のユニットに憑依する
-    // 原作バグ（仕様書§14.1・§8.4「148妄執」）：救済チェックのレーン判定が重複・欠落しており、
-    // レーン3（物理インデックス2）だけ救済が機能しない。ここでは destroy() に normalAttack を
-    // 渡すことで、レーン3のときだけ救済ゲートを迂回して同じ結果を再現する
+  /** 妄執：自爆して、選んだユニットに**そのユニット由来のカース**を取り憑かせる。
+   *
+   * ★M7.8 WP4（#9）：原作§148 の前提条件を実装した。
+   *   1. **乗っているのが憑依ユニット(65〜73)のときだけ発動する**
+   *      （原作は 65〜75 だが、CardQuest に 74・75 は存在しない）。
+   *      それ以外のユニットに付けても何も起きない＝自爆もしない。
+   *   2. 付けるのは**カード148自身ではなくカース（元ユニットID＋26＝91〜99）**。
+   *      通常の憑依（通常攻撃で倒されたとき）と違って**表向き**で置かれるので即座に効く。
+   *   3. 救済(179)を持っていると自爆に失敗する＝何も起きない。
+   *      ただし原作バグでレーン3（物理インデックス2）だけは救済チェックが働かない。
+   * 従来は「ホストを問わず使えて、付くのは148自身」という汎用除去になっていた。 */
+  function h148(m, ctx) {
+    const here = m.board.lanes[ctx.laneIndex];
+    const host = here ? here.unit : null;
+    if (host == null || host < 65 || host > 73) {
+      note(m, '妄執：憑依ユニットに付いていないので発動しない');
+      return;
+    }
+    // 原作バグ（`05_magic.md` §148 の ⚠）：レーン3だけ救済の事前チェックが抜けている。
+    // destroy() に normalAttack を渡すと救済ゲートを迂回するので、同じ結果を再現できる
     const bugBypass = ctx.laneIndex === 2;
     const dest = decide(m, ctx, 148);                         // FLOOD（空きのある他ユニット）
-    combatApi().destroy(m, ctx.laneIndex, { normalAttack: bugBypass });
+    /* 原作は `CE0231 対象確認FLOOD` が先に走り、取り憑ける相手が居なければ
+     * そもそも発動しない（＝無駄に自爆しない）。 */
+    if (dest == null) { note(m, '妄執：取り憑ける相手が居ないので発動しない'); return; }
+    const r = combatApi().destroy(m, ctx.laneIndex, { normalAttack: bugBypass });
+    if (r && r.survived === 'salvation') {
+      note(m, '妄執：救済に守られて自爆できなかった');
+      return;
+    }
     note(m, '妄執：自爆した' + (bugBypass ? '（原作バグ再現：レーン3は救済が効かない）' : ''));
     if (dest != null && m.board.lanes[dest] && m.board.lanes[dest].unit != null) {
-      pushChannel(m, dest, { card: 148, up: true, mine: ctx.caster === 'self', revealed: true, st: 'possess' });
+      const curse = host + 26;                                // カースID＝元ID+26（91〜99）
+      pushChannel(m, dest, { card: curse, up: true, mine: ctx.caster === 'self', revealed: true, st: 'possess' });
       recalc(m);
-      note(m, '妄執：' + nameOf(m, m.board.lanes[dest].unit) + ' に憑依した');
+      note(m, '妄執：' + nameOf(m, m.board.lanes[dest].unit) + ' に ' + nameOf(m, curse) + ' が取り憑いた');
     }
     return { consumed: true };
   }

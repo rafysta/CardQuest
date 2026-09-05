@@ -639,7 +639,11 @@
       ln.channels = ln.channels.filter(function (ch) {
         if (!ch.up) return true;
         if (ch.card >= 101 && ch.card <= 150) return false;
-        if (release && ch.card >= 151) return false;      // 放出
+        // 放出(160)：同レーンの表向き技能を魔法と一緒に消す。
+        // ★M7.8 WP4：**放出自身は絶対に消えない**（原作 06_skill.md §4-10 の `card != 160`）。
+        // 消えてしまうと1回使い切りになり、「相手が付けた技能を消し続ける」という
+        // このカードの役目が果たせなかった。カース(91〜99)は151未満なので元から消えない
+        if (release && ch.card >= 151 && ch.card !== 160) return false;
         return true;
       });
       ln.count = ln.channels.length;
