@@ -649,6 +649,28 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.waitForTimeout(1500);   // 手札配布などの演出(FX)が終わるまで待つ。演出中の強制上書きはstep()に打ち消される
     ok('ラン中はバトル画面の「新しい対戦」ボタンが隠れる', !(await page.$('#turnbox [data-act="new"]')));
 
+    /* ★2026-09-06 本人報告：戦闘開始の演出の途中で「ラン」タブを押すとアプリがフリーズする。
+     * 原因は、戦闘へ移ったあともラン画面に戦闘導入カットインの覆い（.battle-intro＝run-root
+     * いっぱい・z-index 900・クリックを全部吸う）が残っていたこと。タブでラン画面へ戻ると
+     * その覆いが前に出て、マップのどこを押しても何も起きなくなっていた
+     * （覆いのタップは leaveBattleIntro() が battleIntroLeaving で弾くため無反応）。
+     * 直し方は2つ：(1) 覆いは戦闘へ渡す前に外す（js/run-ui.js leaveBattleIntro）、
+     * (2) ラン中の戦闘が進行中はタブを押しても戦闘へ戻す（js/layout.js のタブ）——
+     * 戦闘はタブを押しても裏で動き続けるので、マップへ戻すと決着していない戦闘の結果が
+     * あとから別のマスに適用されたり、戦闘が二重に始まったりする。 */
+    ok('★戦闘に入ったらカットインの覆いはラン画面に残らない（フリーズ対策・2026-09-06）',
+      !(await page.$('#run-root .battle-intro')));
+    await page.click('.tab[data-screen="screen-run"]');
+    await page.waitForTimeout(250);
+    const tabInBattle = await page.evaluate(() => ({
+      battle: document.getElementById('screen-battle').classList.contains('on'),
+      run: document.getElementById('screen-run').classList.contains('on'),
+      live: !!M && !M.winner && !M.fled, view: RUI.view
+    }));
+    ok('★戦闘中に「ラン」タブを押しても戦闘へ戻る（マップへは落とさない・2026-09-06）',
+      tabInBattle.battle && !tabInBattle.run && tabInBattle.live, JSON.stringify(tabInBattle));
+    ok('★戦闘の裏でラン画面はマップの状態で待っている', tabInBattle.view === 'map', tabInBattle.view);
+
     /* --- M6.6 WP12：逃げる・諦める --- */
     ok('ラン中の戦闘には「諦める」が常に出る（M6.6 WP12）', !!(await page.$('[data-act="give-up"]')));
     /* 通常戦闘（フリーユニット戦）の配置ステップなら「逃げる」も出ているはず。
@@ -711,6 +733,9 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     await page.click('[data-act="run-over"]');
     await wait(() => page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
     ok('「ランへ戻る」でラン画面に戻る', await page.evaluate(() => document.getElementById('screen-run').classList.contains('on')));
+    /* 戦闘が終わればタブは元どおり（＝ラン中だけの制限であること・2026-09-06） */
+    ok('★戦闘が終わればタブの制限は解ける（RUN_ACTIVEが下りている）',
+      await page.evaluate(() => RUN_ACTIVE === false));
     /* M6.6 WP7：マップへ戻る前に、まず戦利品（loot:[8]）の振り分け画面が出る。
      * M6.6 WP9でカードグリッド＋情報パネルに乗せ替え、さらに2026-08-29の本人指摘で
      * 「デッキへ／本へ」を各カードのタイル直下に常時表示する形に戻した——選ばなくても

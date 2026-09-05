@@ -72,10 +72,20 @@ function showScreen(id) {
 }
 if (typeof window !== 'undefined') window.showScreen = showScreen;
 
-/* 残っているタブは「ラン」だけ。押しても常にラン画面へ戻るだけにしておく
- * （戦闘中に押されたら探索の画面へ戻る、という素直な動きになる）。 */
+/* 残っているタブは「ラン」だけ。押すとラン画面へ戻る。
+ *
+ * ★2026-09-06 本人報告：戦闘開始の演出の途中でここを押すとフリーズする、への対処。
+ * ラン中の戦闘が進行中のあいだは、押されても**探索の画面へは戻さず、戦闘へ戻す**。
+ * 戦闘はタブを押しても裏で動き続けるので、マップへ戻してしまうと
+ *   ・決着していない戦闘の結果が、あとから別のマスに適用される
+ *   ・マップから次のマスへ入って、戦闘が二重に始まる
+ * という壊れ方をする。戦闘から抜ける道は「逃げる」「諦める」、決着後は「ランへ戻る」
+ * （そこで戦利品と結果がランへ反映される）だけ、という設計に合わせる。 */
 document.querySelectorAll('.tab').forEach((b) => {
-  b.addEventListener('click', () => showScreen(b.dataset.screen));
+  b.addEventListener('click', () => {
+    if (RUN_ACTIVE && M) { showScreen('screen-battle'); return; }
+    showScreen(b.dataset.screen);
+  });
 });
 
 /* ================= 対戦の状態 ================= */

@@ -1304,6 +1304,16 @@ function leaveBattleIntro() {
   const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
   const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
   RUI.battleIntroNodeId = null;
+  /* ★2026-09-06 本人報告のフリーズ対策：カットインの覆いを残したまま戦闘へ渡さない。
+   * `.battle-intro` は run-root いっぱいに広がる覆い（CSS：inset:0・z-index:900）で、
+   * クリックを全部吸い込む。バトル画面へ移ったあとも残っていると、何かの拍子に
+   * ラン画面が表示されたときマップが押せなくなる——覆いを押しても leaveBattleIntro() は
+   * battleIntroLeaving で二度目を弾くので、どこを押しても何も起きない＝フリーズに見える。
+   * 戦闘の裏で待っている画面は「マップ」なので、view もそこへ戻しておく
+   * （決着後は onRunBattleOver が loot／result／map を選び直して描き直す）。 */
+  const introOv = runRoot() && runRoot().querySelector('.battle-intro');
+  if (introOv) introOv.remove();
+  RUI.view = 'map';
   startRunBattle(setup, onRunBattleOver);
 }
 
