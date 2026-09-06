@@ -7359,6 +7359,141 @@ t('bossDisplayName：opponents.jsの表示名を返す（草原＝『占星士�
 });
 
 
+section('M8.2 WP9: 七罪人戦（全滅戦・逃走不可・鍵）');
+
+/* 洞窟の敵プール（価格の昇順のid列）。sinBoard／sinDeck に渡す形。 */
+function cavePoolIds(areaId) { return CQAreas.enemyPool(CARD_BY_ID, areaId).map((e) => e.id); }
+
+t('七罪人は7つ、どの罪も固有ユニットを持ち、洞窟と1対1に対応する', () => {
+  eq(Object.keys(CQOpponents.SINS).length, 7, '7つの罪');
+  const caves = CQAreas.list().filter((a) => a.act === 2);
+  eq(caves.length, 7, '洞窟も7つ');
+  const seen = {};
+  caves.forEach((a) => {
+    const sin = CQOpponents.sinOf(a.sinId);
+    eq(!!sin, true, `${a.id}：sinIdに対応する罪がある`);
+    eq(seen[a.sinId] == null, true, `${a.id}：同じ罪が2つの洞窟に出ない`);
+    seen[a.sinId] = true;
+    eq(sin.name, a.sinName, `${a.id}：areas.jsとopponents.jsの罪の名が一致`);
+    eq(sin.units.length >= 1, true, `${a.id}：固有ユニットがある`);
+    sin.units.forEach((id) => eq(CARD_BY_ID[id] && CARD_BY_ID[id].t, 'U', `${a.id}：固有ユニット${id}は実在するユニット`));
+  });
+});
+
+t('七罪人からしか出ない7種が、必ず場に立つ（原作の入手経路をそのまま保つ）', () => {
+  /* 実装計画§3-2の太字＝七罪人にしか居ない種。どれかが場に立たないと入手不能になる。 */
+  const onlyFromSins = [39, 58, 38, 55, 62, 72, 63];
+  const onBoards = {};
+  CQAreas.list().filter((a) => a.act === 2).forEach((a) => {
+    CQOpponents.sinBoard(a.sinId, cavePoolIds(a.id)).forEach((id) => { onBoards[id] = true; });
+  });
+  onlyFromSins.forEach((id) => eq(!!onBoards[id], true, `${CARD_BY_ID[id].n}(${id})が場に立つ`));
+});
+
+t('sinBoard：3体・固有ユニットが先頭・残りは深度プールの上位から', () => {
+  CQAreas.list().filter((a) => a.act === 2).forEach((a) => {
+    const pool = cavePoolIds(a.id);
+    const board = CQOpponents.sinBoard(a.sinId, pool);
+    const sin = CQOpponents.sinOf(a.sinId);
+    eq(board.length, CQOpponents.SIN_BOARD_SIZE, `${a.id}：3体`);
+    sin.units.slice(0, 2).forEach((id, i) => eq(board[i], id, `${a.id}：${i + 1}体目は固有ユニット`));
+    board.forEach((id) => eq(CARD_BY_ID[id].t, 'U', `${a.id}：場に立つのはユニットだけ`));
+    board.slice(sin.units.slice(0, 2).length).forEach((id) => {
+      eq(pool.indexOf(id) >= 0, true, `${a.id}：埋めはそのエリアのプールから`);
+    });
+  });
+});
+
+t('sinDeck：40枚・同種3枚以内・支援が主でユニットは6枚（敵は召還できないため）', () => {
+  CQAreas.list().filter((a) => a.act === 2).forEach((a) => {
+    const deck = CQOpponents.sinDeck(a.sinId, CARD_BY_ID, cavePoolIds(a.id));
+    eq(deck.length, CQOpponents.DECK_SIZE, `${a.id}：40枚`);
+    const counts = {};
+    deck.forEach((id) => { counts[id] = (counts[id] || 0) + 1; });
+    Object.keys(counts).forEach((k) => eq(counts[k] <= 3, true, `${a.id}：${CARD_BY_ID[k].n}が3枚以内`));
+    deck.forEach((id) => eq(!!CARD_BY_ID[id], true, `${a.id}：実在するカード`));
+    eq(deck.filter((id) => id < 101).length, CQOpponents.DECK_SIZE - CQOpponents.SIN_SHELL_SIZE,
+      `${a.id}：ユニットは6枚（残りは支援）`);
+  });
+});
+
+t('battleSetup：洞窟のボスはフリーユニット戦（ＬＰを持たない・逃走不可・硬直なし・罪の名）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'cave1', 3, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, boss);
+  eq(setup.mode, 'field', '全滅戦（実装計画§1-1 案B）');
+  eq(setup.enemyOpts, undefined, '敵にＬＰを持たせない');
+  eq(setup.noFlee, true, '逃走不可');
+  eq(setup.enemyStiff, false, '初期硬直なし（§6リスク表）');
+  eq(setup.foeName, '七罪人『大食』', 'バトル画面の相手表示は罪の名');
+  eq(setup.aiPreset, 'rankA', 'ＡＩはＡ級');
+  eq(setup.opponentId, 191, '原作の対戦相手ID（戦利品が出る101以上）');
+  eq(setup.enemyBoard.length, 3, '3体立って始まる');
+  eq(setup.enemyDeck.length, 40, '支援デッキ40枚');
+});
+
+t('battleSetup：第一幕のマスター戦は今までどおりＬＰ勝負のまま（洞窟の変更が波及しない）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 3, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, boss);
+  eq(setup.mode, undefined, 'マスター戦はＬＰ勝負');
+  eq(setup.enemyOpts.lp, CQAreas.get('grassland').bossLp, '敵にＬＰがある');
+  eq(setup.noFlee, undefined, 'マスター戦の逃走不可は mode で決まる（従来どおり）');
+  eq(setup.foeName, undefined, '相手表示は「相手」のまま');
+});
+
+t('エンジン：noFlee のフリーユニット戦からは逃げられない／硬直せずに立つ', () => {
+  const m = fieldMatch([8, 8, 1], { noFlee: true, enemyStiff: false, foeName: '七罪人『大食』' });
+  m.phase = 'placement'; m.active = 'self';
+  eq(CQTurn.canFlee(m), false, '逃げるボタンは出ない');
+  eq(CQTurn.flee(m).ok, false, '呼んでも断られる');
+  eq(!m.board.lanes[3].stiff, true, '硬直していない（最初のターンから動く）');
+  eq(m.foeName, '七罪人『大食』', '呼び名が対局に残る（バトル画面が読む）');
+  /* 逃走できる通常のフリーユニット戦は今までどおり */
+  const n = fieldMatch([8, 8]);
+  n.phase = 'placement'; n.active = 'self';
+  eq(CQTurn.canFlee(n), true, '通常のフリーユニット戦は逃げられる');
+});
+
+t('エンジン：七罪人も全滅させれば勝ち（fieldモードの勝利条件そのまま）', () => {
+  const m = fieldMatch([39, 27, 5], { noFlee: true, enemyStiff: false });
+  eq(CQTurn.enemyUnitCount(m), 3, '3体立っている');
+  eq(CQTurn.checkResult(m), null, '残っているうちは決着しない');
+  m.board.lanes[3] = S.emptyLane(); m.board.lanes[4] = S.emptyLane();
+  eq(CQTurn.checkResult(m), null, '2体倒しただけでは決着しない');
+  m.board.lanes[5] = S.emptyLane();
+  eq(CQTurn.checkResult(m), 'self', '3体全部で勝ち');
+});
+
+t('鍵：七罪人を降すと確定で1本、周回しても増えない（実装計画§3-4）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  eq(meta.keys, [], 'ensureで空の配列が用意される');
+  const run = CQRun.start(CARD_BY_ID, 'cave1', 5, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  /* 戦利品は原作の規則どおり「通常攻撃で倒した敵ユニット」＝engineのM.lootがそのまま来る */
+  CQRun.reportBattle(run, boss, { winner: 'self', loot: [39, 27], turn: 9, players: { self: { lp: 10 } } }, meta);
+  eq(run.lootPending.indexOf(39) >= 0 && run.lootPending.indexOf(27) >= 0, true,
+    '倒した3体のうち通常攻撃で倒した分が戦利品に載る');
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  eq(meta.keys, ['cave1'], '鍵が1本付く');
+  eq(run.settled.keyGained, 'cave1', '結果画面へ渡す印も立つ');
+  eq(meta.bossWins, {}, '洞窟には闘技場マスターが居ないので bossWins は増えない');
+  eq(meta.clears.cave1, 1, 'エリアの累計クリアは増える');
+
+  const run2 = CQRun.start(CARD_BY_ID, 'cave1', 6, meta);
+  run2.outcome = 'win';
+  CQRun.settle(run2, meta);
+  eq(meta.keys, ['cave1'], '2周目でも鍵は増えない');
+  eq(run2.settled.keyGained, null, '2周目は印も立たない');
+  eq(meta.clears.cave1, 2, '累計クリアだけ増える');
+});
+
 section('M8.1 WP4: ボス報酬（初回撃破の一枚・部屋の累計3/5/7報酬・速攻実績）');
 
 /* このセクション専用の使い捨てメタ（book/deck/known/gold/cleared一式が揃っていればよい）。
@@ -7748,6 +7883,17 @@ t('M8.1 WP3：マスター報酬はエリアのボス配線が済むと real:tru
   const bossRoute = routes.find((r) => r.type === 'boss-reward');
   eq(!!bossRoute, true, 'マスター報酬の経路はある');
   eq(bossRoute.real, true, 'coastエリアにbossIdが付いたのでreal:true');
+});
+
+t('routes.js：七罪人からしか出ない7種は、七罪人の場の経路で real:true（M8.2 WP9）', () => {
+  const onlyFromSins = [39, 58, 38, 55, 62, 72, 63];
+  const { rows } = CQRoutesTest.coverageReport(CARD_BY_ID);
+  const byId = {}; rows.forEach((r) => { byId[r.id] = r; });
+  onlyFromSins.forEach((id) => {
+    const r = byId[id];
+    eq(r.status, 'OK', `${CARD_BY_ID[id].n}：入手できる`);
+    eq(r.routes.some((x) => x.type === 'sin' && x.real), true, `${CARD_BY_ID[id].n}：七罪人の場の経路がある`);
+  });
 });
 
 t('routes.js：部屋の累計報酬は、その部屋に属する実装済みエリアが1つでもあればreal:true（M8.1 WP4）', () => {

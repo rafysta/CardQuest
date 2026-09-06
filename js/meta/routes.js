@@ -32,9 +32,8 @@
     { tag: '海Ｌ', milestone: 'M8.1' },
     { tag: '砂漠', milestone: 'M8.1' },
     { tag: '荒野', milestone: 'M8.1' },
-    { tag: '沼地', milestone: 'M8.2' },
-    { tag: 'ダンジョン内Ｌ', milestone: 'M8.2' },
-    { tag: '七罪人', milestone: 'M8.2' },
+    /* 沼地・ダンジョン内Ｌ・七罪人は M8.2 WP8／WP9 で実装済み（洞窟の敵プールと七罪人の場）。
+     * 実際の経路は下の「エリア戦利品」と「七罪人の場」で real:true として出る。 */
     { tag: '神殿モニュメント', milestone: 'M8.3' }
   ];
 
@@ -114,6 +113,20 @@
           type: 'room-reward', real: real, room: room,
           label: `闘技場ルーム${room} 累計${[3, 5, 7][idx]}クリア報酬${real ? '' : '（未実装・予定）'}`
         });
+      });
+    }
+
+    /* 七罪人の場に立つユニット（M8.2 WP9）。原作どおり「その罪を倒さないと手に入らない」
+     * 7種の経路がここで立つ。洞窟が実装済み＝sinId を持つエリアがあるものだけ real:true。 */
+    if (CQOpponents && CQOpponents.sinOf && CQAreas) {
+      CQAreas.list().forEach(function (def) {
+        if (def.sinId == null) return;
+        const sin = CQOpponents.sinOf(def.sinId);
+        if (!sin) return;
+        const poolIds = CQAreas.enemyPool(cards, def.id).map(function (e) { return e.id; });
+        if (CQOpponents.sinBoard(def.sinId, poolIds).indexOf(card.id) < 0) return;
+        routes.push({ type: 'sin', real: true, area: def.id,
+          label: `七罪人『${sin.name}』の場（${def.name}）` });
       });
     }
 

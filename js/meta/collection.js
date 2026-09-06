@@ -56,6 +56,8 @@
      *   clears:   {areaId: クリア回数}   … 部屋の累計3／5／7回報酬の判定に使う（負けても減らない）
      * 既存の meta.cleared（配列・そのエリアを一度でもクリアしたか＝解放条件用）とは別物。 */
     if (!meta.bossWins || typeof meta.bossWins !== 'object') meta.bossWins = {};
+    /* M8.2 WP9：七罪人を降して手に入れた鍵（洞窟のareaIdの配列・7つで神殿が開く）。 */
+    if (!Array.isArray(meta.keys)) meta.keys = [];
     if (!meta.clears || typeof meta.clears !== 'object') meta.clears = {};
     /* 2026-09-06（本人指定）：閲覧済みのカード {id: true}。known にあって seen に無いものが
      * コレクションで「NEW」になり、詳細を見た時点で消える。**無いセーブでは known 全部を

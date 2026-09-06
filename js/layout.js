@@ -1595,7 +1595,9 @@ function panelReplay() {
 function renderStatus() {
   const me = M.players.self, foe = M.players.enemy;
   const top = handSide() === 'self' ? foe : me;          /* 上段は「いま操作していない側」 */
-  document.getElementById('foe-name').textContent = handSide() === 'self' ? '相手' : 'あなた';
+  /* M8.2 WP9：相手に呼び名があるとき（七罪人）はそれを出す。無ければ従来どおり「相手」。 */
+  document.getElementById('foe-name').textContent = handSide() === 'self'
+    ? (M.foeName || '相手') : 'あなた';
   /* M6.6 WP6：フリーユニット戦の敵にはＬＰの概念が無い（§2-6）。ＬＰの代わりに
    * 「あと何体倒せば勝ちか」＝敵の場の残り体数を出す。これが実際の勝利条件なので、
    * プレイヤーが見るべき数字もこちらになる。 */

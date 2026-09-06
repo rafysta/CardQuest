@@ -1294,8 +1294,11 @@ function renderBattleIntro() {
   const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
   const area = CQAreas.get(run.areaId);
   const isBoss = n.type === 'boss';
+  /* ボスの立ち絵は肖像の切り抜き（m_*_cut.png）。エリアごとの肖像から機械的に作る
+   * ——洞窟は m_sin_gluttony_cut.png のように名前がエリアidと違うため（M8.2 WP9）。 */
+  const bossCut = (area.master || '').replace(/\.png$/, '_cut.png');
   const figure = isBoss
-    ? `<img class="battle-intro-foe" src="assets/masters/m_${run.areaId}_cut.png" alt="" draggable="false"
+    ? `<img class="battle-intro-foe" src="${bossCut}" alt="" draggable="false"
          onerror="masterCutoutFallback(this, '${area.master}')">`
     : (n.enemy
         ? `<img class="battle-intro-foe" src="assets/cutouts/${n.enemy.id}.png" alt="" draggable="false"

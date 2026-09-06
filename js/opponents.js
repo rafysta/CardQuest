@@ -141,8 +141,86 @@
     return map ? toIdArray(map) : null;
   }
 
+  /* ---- 七罪人（M8.2 WP9・実装計画§1-1 案B／§3-4） --------------------------------
+   * 原作の七罪人は闘技場のマスターではなく**フリーユニット戦の相手**（対戦相手ID 191〜197）。
+   * 場に3体立って始まり、全部倒せば勝ち。ここにはその「誰が立つか」と「どんな支援を撃つか」
+   * だけを置く（配置・戦闘そのものは js/run/run.js と js/engine/turn.js）。
+   *
+   * units … その罪の固有ユニット（実装計画§3-2の対応表）。**先頭は七罪人からしか出ない種**で、
+   *         場に必ず立つ＝原作と同じく「七罪人を倒さないと手に入らない」7種の入手経路になる。
+   *         2種に満たない罪（憤怒）は、その洞窟の深度プールの上位で3体まで埋める。 */
+  const SINS = {
+    191: { name: '大食', units: [39, 27] },   /* ソウルイーター・メガゾエア */
+    196: { name: '嫉妬', units: [58, 5] },    /* リヴァイバー・ベヒーモス */
+    193: { name: '怠惰', units: [38, 44] },   /* デモングローブ・ブレインサッカー */
+    194: { name: '傲慢', units: [55, 30] },   /* アッシュメイカー・イビルアイ */
+    195: { name: '淫欲', units: [62, 73] },   /* ラクシュミー・アースバウンド */
+    192: { name: '強欲', units: [72, 70, 68] }, /* デスワーム・ポルターガイスト・マッドシックル */
+    197: { name: '憤怒', units: [63] }        /* インフェルノ（原作でもここだけ1種） */
+  };
+  const SIN_BOARD_SIZE = 3;        /* 場に立つ体数（§3-4）。強すぎるときはここを2に落とす（§6リスク表） */
+  const SIN_SHELL_SIZE = 34;       /* 支援（魔法・技能）の枚数。残り6枚はチャネル弾のユニット */
+  const SIN_KIND_MAX = 3;          /* 同種3枚まで（プレイヤーのデッキ規則と同じ） */
+  const FINAL_MASTER = 99;         /* 支援の型を借りる相手＝神官バルザミコス（§3-4の方針） */
+
+  function sinOf(sinId) { return SINS[sinId] || null; }
+
+  /** 七罪人の支援デッキ（40枚）。**1本の型**＝バルザミコスの40枚から魔法・技能だけを借り、
+   * 同種3枚を上限にID順で増やして SIN_SHELL_SIZE 枚にする（罪が違っても同じ型）。
+   * 差し色は最後の6枚＝**場に立つ3体をそれぞれ2枚ずつ**（敵は召還できないのでチャネル弾になる。
+   * 固有ユニットが1種しかない憤怒でも同種3枚の規則を破らないよう、場の編成から取る）。
+   * poolIds を省略すると固有ユニットだけで埋める（テスト用）。 */
+  function sinDeck(sinId, cards, poolIds) {
+    const sin = sinOf(sinId);
+    if (!sin) return null;
+    const base = deck40(FINAL_MASTER, cards) || {};
+    const counts = {};
+    Object.keys(base).forEach(function (k) { if (+k >= 101) counts[+k] = base[k]; });
+    const ids = Object.keys(counts).map(Number).sort(function (a, b) { return a - b; });
+    let total = ids.reduce(function (n, id) { return n + counts[id]; }, 0);
+    let i = 0, guard = 0;
+    while (total < SIN_SHELL_SIZE && ids.length && guard < 1000) {
+      const id = ids[i % ids.length];
+      if (counts[id] < SIN_KIND_MAX) { counts[id] += 1; total += 1; }
+      i++; guard++;
+    }
+    const deck = toIdArray(counts).slice(0, SIN_SHELL_SIZE);
+    const fodder = (poolIds ? sinBoard(sinId, poolIds) : sin.units).slice();
+    const used = {};
+    for (let k = 0; deck.length < DECK_SIZE && fodder.length; k++) {
+      const id = fodder[k % fodder.length];
+      if ((used[id] || 0) >= SIN_KIND_MAX) { if (k > fodder.length * SIN_KIND_MAX) break; continue; }
+      used[id] = (used[id] || 0) + 1;
+      deck.push(id);
+    }
+    /* それでも足りない（固有ユニットが少ない）ときは支援を足して40枚にする */
+    let g = 0;
+    while (deck.length < DECK_SIZE && ids.length && g < 100) {
+      const id = ids[g % ids.length];
+      if ((counts[id] || 0) < SIN_KIND_MAX) { counts[id] = (counts[id] || 0) + 1; deck.push(id); }
+      g++;
+    }
+    return deck;
+  }
+
+  /** 開始時に場へ立つ3体。固有ユニット（最大2種）＋その洞窟の深度プールの上位で埋める。
+   * poolIds … 価格の**昇順**で並んだそのエリアの敵プール（js/run/areas.js enemyPool の id 列）。 */
+  function sinBoard(sinId, poolIds) {
+    const sin = sinOf(sinId);
+    if (!sin) return null;
+    const board = sin.units.slice(0, 2);
+    const rest = (poolIds || []).slice().reverse();        /* 高い＝強い順 */
+    for (let i = 0; i < rest.length && board.length < SIN_BOARD_SIZE; i++) {
+      if (board.indexOf(rest[i]) < 0) board.push(rest[i]);
+    }
+    /* プールが薄くて埋まらないときは固有ユニットを繰り返す（体数だけは必ず揃える）。 */
+    for (let k = 0; board.length < SIN_BOARD_SIZE; k++) board.push(sin.units[k % sin.units.length]);
+    return board;
+  }
+
   const api = {
     RAW_DECKS, DECK_SIZE, BLANK, MASTERS, ROOM_REWARDS,
+    SINS, SIN_BOARD_SIZE, SIN_SHELL_SIZE, sinOf, sinDeck, sinBoard,
     convert50to40, toIdArray, deck40, bossDeckArray, get, ids, displayName
   };
   global.CQOpponents = api;

@@ -387,19 +387,29 @@
   function battleSetup(run, cards, n) {
     const area = CQAreas.get(run.areaId);
     const isBoss = n.type === 'boss';
+    /* M8.2 WP9（実装計画§1-1 案B）：七罪人は**ボスだがフリーユニット戦**。
+     * 場に3体立って始まり、全滅させれば勝ち。ＬＰ勝負ではないので敵にＬＰを持たせず、
+     * 逃走は封じ、初期硬直も無し（§6リスク表）。相手の呼び名は罪の名で出す。 */
+    const isSin = isBoss && area.sinId != null && CQOpponents.sinOf(area.sinId);
+    const poolIds = isSin ? CQAreas.enemyPool(cards, area.id).map(function (e) { return e.id; }) : null;
     return {
       cards: cards,
       selfDeck: buildPlayerDeck(run),
-      enemyDeck: isBoss ? buildBossDeck(cards, area, run) : buildBattleDeck(cards, area, n),
+      enemyDeck: isSin ? CQOpponents.sinDeck(area.sinId, cards, poolIds)
+        : (isBoss ? buildBossDeck(cards, area, run) : buildBattleDeck(cards, area, n)),
       first: firstTurnOf(run, n),
-      opponentId: 900 + (n.seg == null ? 90 : n.seg * 10) + (n.slot || 0),
+      opponentId: isSin ? area.sinId : 900 + (n.seg == null ? 90 : n.seg * 10) + (n.slot || 0),
       fieldRules: n.fieldRules || [],
       selfOpts: { lp: run.lp, maxLp: run.maxLp },
-      enemyOpts: isBoss ? { lp: area.bossLp, maxLp: area.bossLp } : undefined,
+      enemyOpts: (isBoss && !isSin) ? { lp: area.bossLp, maxLp: area.bossLp } : undefined,
       /* M6.6 WP6：通常戦闘はフリーユニット戦（敵は配置済み・召還不可・場が空になれば勝ち）。
-       * マスター戦（ボス）だけは従来どおりのＬＰ勝負なので mode を付けない（§2-6）。 */
-      mode: isBoss ? undefined : 'field',
-      enemyBoard: isBoss ? undefined : enemyBoardOf(n),
+       * マスター戦（ボス）だけは従来どおりのＬＰ勝負なので mode を付けない（§2-6）。
+       * 七罪人（M8.2 WP9）はボスだがフリーユニット戦なので mode を付ける。 */
+      mode: (isBoss && !isSin) ? undefined : 'field',
+      enemyBoard: isSin ? CQOpponents.sinBoard(area.sinId, poolIds) : (isBoss ? undefined : enemyBoardOf(n)),
+      enemyStiff: isSin ? false : undefined,
+      noFlee: isSin ? true : undefined,
+      foeName: isSin ? area.bossName : undefined,
       /* M7.10 WP1：ゲーム仕様書§4.2・§5どおりのＡＩ強さ。通常戦闘は弱ＡＩ設定（free）固定、
        * ボスはエリアの帯（bossRank）。js/layout.js の startRunBattle() がこれを見て aiConfig を組む。 */
       aiPreset: isBoss ? area.bossRank : 'free',
@@ -769,8 +779,16 @@
     if (run.outcome === 'win') {
       const bossArea = CQAreas.get(run.areaId);
       const masterId = bossMasterOf(run, bossArea);
-      meta.bossWins[masterId] = (meta.bossWins[masterId] || 0) + 1;
+      /* 七罪人のエリア（洞窟）には闘技場マスターが居ないので masterId は null。
+       * そのときは bossWins を触らない（"null" というキーを作らない）。 */
+      if (masterId != null) meta.bossWins[masterId] = (meta.bossWins[masterId] || 0) + 1;
       meta.clears[run.areaId] = (meta.clears[run.areaId] || 0) + 1;
+      /* M8.2 WP9（実装計画§3-4）：七罪人を降すと**鍵が確定で手に入る**。1つの洞窟につき1本
+       * （周回しても増えない）。表示・節目・目標への反映は WP10。 */
+      if (bossArea && bossArea.sinId != null && meta.keys.indexOf(run.areaId) < 0) {
+        meta.keys.push(run.areaId);
+        run.keyGained = run.areaId;
+      }
     }
     /* 称号は cleared を更新する**前**に判定する（「初めて撃破」が cleared 由来ではなく
      * meta.titles 由来なので実害は無いが、判定材料の並びを素直に保つ）。 */
@@ -785,7 +803,7 @@
     else st.lose += 1;
     st.cards += (run.gainedCards || []).length;
     if (run.outcome === 'win' && meta.cleared.indexOf(run.areaId) < 0) meta.cleared.push(run.areaId);
-    run.settled = { gold: gold, titles: titles, day: meta.day };
+    run.settled = { gold: gold, titles: titles, day: meta.day, keyGained: run.keyGained || null };
     return meta;
   }
 

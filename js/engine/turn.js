@@ -141,6 +141,11 @@
        *                敵にＬＰの概念が無く（ＬＰダメージは無効）、**敵の場が空になれば勝ち**。
        *                マスター戦（ボス）は従来どおりのＬＰ勝負なので mode は付けない。 */
       mode: opts.mode === 'field' ? 'field' : null,
+      /* M8.2 WP9：七罪人はフリーユニット戦だが**ボス**なので逃げられない（実装計画§1-1 案B）。
+       * 通常のフリーユニット戦（逃走できる）と区別するのはこのフラグだけ。 */
+      noFlee: !!opts.noFlee,
+      /* 対戦相手の呼び名（バトル画面の上段に出す）。七罪人は名前で見せる（§4 WP9）。 */
+      foeName: opts.foeName || null,
       fieldReady: false,       // 敵の初期配置が済んだか（済むまで「敵0体＝勝ち」を判定しない）
       opponentId: opts.opponentId === undefined ? 0 : opts.opponentId,  // 原作 V340。101以上＝フリーユニット＝戦利品あり
       combat: null,            // 戦闘中の状態（js/engine/combat.js が持つ）
@@ -157,13 +162,13 @@
     Field.init(m, opts.fieldRules);
     /* M6.6 WP6：フリーユニット戦は敵ユニットを最初から敵レーンに立てて始める（表向き・チャネルなし）。
      * laneLock で塞がれているレーンは飛ばす（戦場ルールと同居できるように）。 */
-    if (m.mode === 'field') setupEnemyBoard(m, opts.enemyBoard);
+    if (m.mode === 'field') setupEnemyBoard(m, opts.enemyBoard, opts.enemyStiff !== false);
     return m;
   }
 
   /** フリーユニット戦の初期配置。敵レーン（3〜5）へ順に立てる（最大3体）。
    * 硬直させない＝置かれた側は最初のターンから動ける（マップで見えている編成がそのまま出る）。 */
-  function setupEnemyBoard(m, board) {
+  function setupEnemyBoard(m, board, stiff) {
     const ids = (board || []).slice(0, S.lanesOf('enemy').length);
     const lanes = S.lanesOf('enemy').filter(function (i) { return Field.laneUsable(m.board, i); });
     ids.forEach(function (id, k) {
@@ -177,7 +182,9 @@
        * WP6で最大3体がいきなり並ぶようになった分、こちらに立て直す猶予が無いと
        * 一方的になる——simulate-runの較正でも、これが有無で通常戦闘の勝率が大きく動いた。
        * 硬直は敵の最初のターン終わりに解ける（endTurn が自陣の硬直を落とす）。 */
-      m.board.lanes[lane].stiff = true;
+      /* M8.2 WP9：七罪人（ボス）は硬直させない（stiff:false）——実装計画§6リスク表の
+       * 「初期硬直と noAttackTurns はボスでは使わない」に対応。強すぎるときは体数で調整する。 */
+      if (stiff !== false) m.board.lanes[lane].stiff = true;
     });
     /* 盤面が組み上がってから勝敗判定を有効にする（組む前は敵0体なので即勝ちになってしまう）。
      * 敵を1体も立てられなかった場合（編成が空・全レーンがlaneLock）は、この対戦は
@@ -640,6 +647,7 @@
   function canFlee(m, side) {
     if (!m || m.winner || m.fled || m.combat) return false;
     if (m.mode !== 'field') return false;          /* マスター戦（ボス）は逃走不可 */
+    if (m.noFlee) return false;                    /* 七罪人（M8.2 WP9）も逃げられない */
     if (m.phase !== 'placement') return false;     /* 配置ステップでのみ（原作の条件） */
     const s = side || m.active;
     if (s !== m.active) return false;
@@ -652,7 +660,7 @@
    * 乱数は必ず m.rng を通す（同じランの同じ戦闘が再現できなくなるため Math.random は不可）。 */
   function flee(m) {
     if (m.winner || m.fled) return { ok: false, reason: 'もう決着しています' };
-    if (m.mode !== 'field') return { ok: false, reason: 'この相手からは逃げられません' };
+    if (m.mode !== 'field' || m.noFlee) return { ok: false, reason: 'この相手からは逃げられません' };
     if (m.phase !== 'placement') return { ok: false, reason: '配置ステップでのみ使えます' };
     const side = m.active, p = activePlayer(m);
     if (p.actedThisTurn) return { ok: false, reason: 'このターンに何か操作した後は使えません' };
