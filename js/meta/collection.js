@@ -19,6 +19,9 @@
 (function (global) {
 
   const DECK_MAX = 40;     /* デッキの合計上限（js/engine/turn.js の DECK_SIZE と同値） */
+  /* M8.2 WP10：七つの鍵（洞窟1つにつき1本）。7本で神殿の門の封が解ける（台本§2.3）。
+   * 洞窟の数と一致していることは tests/run.js で固定する。 */
+  const KEYS_TOTAL = 7;
   const KIND_MAX = 3;      /* 同種の上限 */
   const PIG = 8;           /* ピッグマン：同種上限の例外（無制限） */
   const BLANK = 180;       /* 空白：実体として持たない */
@@ -222,7 +225,16 @@
     const todo = (areas || []).filter(function (a) {
       return a.unlocked && cleared.indexOf(a.id) < 0;
     });
-    if (todo.length) return { key: 'area', area: todo[0].name, id: todo[0].id };
+    /* M8.2 WP10：洞窟の主は闘技場のマスターではなく七罪人なので、目標の言い方を変える
+     * （key は 'area' のまま＝ここを見ている道具・テストを壊さない。文面だけ sin で分ける）。 */
+    if (todo.length) return { key: 'area', area: todo[0].name, id: todo[0].id, sin: todo[0].sinName || null };
+    /* M8.2 WP10：行ける場所を全部踏破していても、鍵がまだ揃っていなければ「鍵」が目標。
+     * areas に鍵のある土地（洞窟）が1つも無い版（M8.1まで）では何も起きない。
+     * 7本揃ったら神殿へ——ただし神殿がまだ無い版（v0.19）では、そこは目標にしない
+     * （行けない場所を指してしまうため。神殿は M8.3 でエリアとして増える）。 */
+    const keys = (meta.keys || []).length;
+    const hasKeyLands = (areas || []).some(function (a) { return a.hasKey; });
+    if (hasKeyLands && keys < KEYS_TOTAL) return { key: 'keys', n: KEYS_TOTAL - keys, have: keys };
     const need = nextStageNeed((meta.known || []).length);
     if (need > 0) return { key: 'collection', n: need, lv: masterLevelOf(meta) + 1 };
     return { key: 'done' };
@@ -465,7 +477,7 @@
   }
 
   const api = {
-    DECK_MAX, KIND_MAX, PIG, BLANK,
+    DECK_MAX, KIND_MAX, PIG, BLANK, KEYS_TOTAL,
     countsTotal, canAddToDeck, ensure, registerKnown, markSeen, isUnseen, unseenIds,
     deckTotal, blankCount, deckFillable, canDepart, nextGoal, moveToDeck, moveToBook, addCard, sellFromDeck, sellFromBook,
     /* M7 WP2 */

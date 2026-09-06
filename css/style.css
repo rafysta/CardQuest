@@ -880,6 +880,9 @@ td.nm{font-weight:800}
 /* 第二幕のタイルの鍵（M8.2 WP8）。手に入れるまでは沈んだ色。 */
 .area-key{position:absolute;top:5px;right:6px;font-size:15px;filter:grayscale(1) brightness(.6);z-index:1}
 .area-key.on{filter:none;text-shadow:0 0 8px rgba(250,204,21,.8)}
+/* 記録画面の鍵（M8.2 WP10）。取るまでは沈んだ色。 */
+.rec-key{margin-left:6px;font-size:12px;filter:grayscale(1) brightness(.6)}
+.rec-key.on{filter:none}
 .area-tile.locked{filter:grayscale(1) brightness(.45);cursor:default}
 .area-tile-fade{position:absolute;inset:0;background:linear-gradient(to top,rgba(5,8,15,.92),transparent 55%)}
 .area-tile-name{position:absolute;left:14px;bottom:10px;font-size:20px;font-weight:800;text-shadow:0 2px 6px #000}

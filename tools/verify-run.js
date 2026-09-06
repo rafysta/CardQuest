@@ -343,11 +343,20 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
     String((await page.$$('.rec-title')).length));
   ok('通算日数・統計が出る', (await page.$$('.rec-rows .rec-row')).length > 0);
   ok('日誌の欄がある', !!(await page.$('.rec-journal-list')));
+  /* M8.2 WP10：鍵は7本ぶんの枠があり、新規セーブでは0本・洞窟の行に沈んだ鍵の印が出る。 */
+  const keyRow = await page.$$eval('.rec-row', (els) => {
+    const row = els.find((e) => e.querySelector('span') && e.querySelector('span').textContent.trim() === '鍵');
+    return row ? row.querySelector('b').textContent.trim() : null;
+  });
+  ok('記録に「鍵 0／7」が出る', keyRow === '0／7', String(keyRow));
+  ok('洞窟の行に鍵の印が7つ', (await page.$$('.rec-key')).length === 7);
+  ok('まだ手に入れた鍵は無い（明るい鍵は0）', (await page.$$('.rec-key.on')).length === 0);
   await shot('record');
   /* 目標は進行に応じて変わる：草原を踏破済みにすると、次は森が目標になる */
   const goals = await page.evaluate(() => {
     const areas = (cleared) => CQAreas.list().map((a) => ({
-      id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, cleared)
+      id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, cleared),
+      hasKey: a.sinId != null, sinName: a.sinName || null      /* M8.2 WP10 */
     }));
     const before = CQLore.goalLine(CQCollection.nextGoal(RUI.meta, areas(RUI.meta.cleared || [])));
     const keep = (RUI.meta.cleared || []).slice();

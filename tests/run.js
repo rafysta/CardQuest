@@ -7359,6 +7359,86 @@ t('bossDisplayName：opponents.jsの表示名を返す（草原＝『占星士�
 });
 
 
+section('M8.2 WP10: 鍵（記録・目標・ホームの節目）');
+
+t('いまの目標：洞窟は「七罪人を降す」と言う（マスターではないため）', () => {
+  const m = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(m);
+  const areas = [{ id: 'cave1', name: 'ウォーターケイブ', unlocked: true, hasKey: true, sinName: '大食' }];
+  const g = CQCollection.nextGoal(m, areas);
+  eq(g.key, 'area', 'keyは area のまま（道具・テストを壊さない）');
+  eq(g.sin, '大食', '罪の名が入る');
+  eq(CQLore.goalLine(g), 'ウォーターケイブの底へ。七罪人『大食』を降す。', '洞窟用の1行');
+  /* 第一幕のエリアは今までどおり */
+  const g2 = CQCollection.nextGoal(m, [{ id: 'grassland', name: '草原', unlocked: true }]);
+  eq(CQLore.goalLine(g2), '草原のマスターを倒す。', 'マスターのいる土地は従来の文');
+});
+
+t('鍵の総数は洞窟の数と一致する（7本）', () => {
+  eq(CQCollection.KEYS_TOTAL, 7, '七つの鍵');
+  eq(CQAreas.list().filter((a) => a.sinId != null).length, CQCollection.KEYS_TOTAL, '鍵のある土地も7つ');
+});
+
+t('いまの目標：行ける場所を踏破しきって鍵が足りなければ「鍵を集める」', () => {
+  const m = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(m);
+  /* 解放されている土地は全部踏破済み、という状況を作る（洞窟は鍵のある土地＝hasKey） */
+  const areas = [
+    { id: 'grassland', name: '草原', unlocked: true },
+    { id: 'cave1', name: 'ウォーターケイブ', unlocked: true, hasKey: true }
+  ];
+  m.cleared = ['grassland', 'cave1'];
+  m.keys = ['cave1'];
+  const g = CQCollection.nextGoal(m, areas);
+  eq(g.key, 'keys', '次は鍵');
+  eq(g.n, 6, 'あと6本');
+  eq(g.have, 1, 'いま1本');
+  eq(CQLore.goalLine(g), '鍵を集める。島の底に眠る七つのうち、あと6本。', '台本の1行が出る');
+});
+
+t('いまの目標：鍵が七つ揃ったら鍵は目標にしない（神殿はM8.3なので指さない）', () => {
+  const m = { book: {}, deck: { 8: 40 }, known: [8], gold: 0, cleared: ['cave1'] };
+  CQCollection.ensure(m);
+  m.keys = ['cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7'];
+  const areas = [{ id: 'cave1', name: 'ウォーターケイブ', unlocked: true, hasKey: true }];
+  eq(CQCollection.nextGoal(m, areas).key, 'collection', '鍵が揃ったら収集が目標に戻る');
+});
+
+t('いまの目標：鍵のある土地がまだ無い版（M8.1まで）では「鍵」は出ない', () => {
+  const m = { book: {}, deck: { 8: 40 }, known: [8], gold: 0, cleared: ['grassland'] };
+  CQCollection.ensure(m);
+  const areas = [{ id: 'grassland', name: '草原', unlocked: true }];
+  eq(CQCollection.nextGoal(m, areas).key, 'collection', '洞窟が無ければ従来どおり');
+});
+
+t('ホームの節目：最初の1回は基準を取るだけ、0→1で「初めての鍵」、7本目で「七つ揃った」', () => {
+  const m = {};
+  CQCollection.ensure(m);
+  eq(CQSave.checkKeys(m, 0), null, '初回は基準を記録するだけ');
+  eq(CQSave.checkKeys(m, 0), null, '変わらなければ何も出ない');
+  eq(CQSave.checkKeys(m, 1), 'first', '初めて手に入れた回に出る');
+  eq(CQSave.checkKeys(m, 1), null, '同じ回で2度は出ない');
+  eq(CQSave.checkKeys(m, 6), null, '途中は出ない');
+  eq(CQSave.checkKeys(m, 7), 'all', '七つ揃った回に出る');
+  eq(CQSave.checkKeys(m, 7), null, '揃った後は出ない');
+});
+
+t('ホームの節目：既に鍵を持っているセーブでは、いきなり節目を出さない', () => {
+  const m = {};
+  CQCollection.ensure(m);
+  m.keys = ['cave1', 'cave2'];
+  eq(CQSave.checkKeys(m, m.keys.length), null, 'アップデート直後は基準を取るだけ');
+  eq(CQSave.checkKeys(m, 3), null, '3本目は節目ではない');
+  eq(CQSave.checkKeys(m, 7), 'all', '七つ揃えばそこで出る');
+});
+
+t('台本：鍵の節目の文面は台本§2.3どおり（本人が書いた文をそのまま使う）', () => {
+  eq(CQLore.LORE.home.onFirstKey.length, 2, '初めての鍵は2つの吹き出し');
+  eq(CQLore.LORE.home.onFirstKey[0].face, 'down', '1つ目は伏し目（自分の過去に触れる）');
+  eq(CQLore.LORE.home.onAllKeys.length, 1, '七つ揃ったは1つ');
+  eq(CQLore.LORE.home.onAllKeys[0].lines.join('') .indexOf('神殿') >= 0, true, '神殿へ行けと告げる');
+});
+
 section('M8.2 WP9: 七罪人戦（全滅戦・逃走不可・鍵）');
 
 /* 洞窟の敵プール（価格の昇順のid列）。sinBoard／sinDeck に渡す形。 */

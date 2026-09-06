@@ -235,6 +235,10 @@
       deck:       'まず、本のカードをデッキに入れる。あと{n}枚は入る。',
       area:       '{area}のマスターを倒す。',
       collection: '記憶データを増やす。次の段階（マスターレベル{lv}）まであと{n}種。',
+      /* M8.2 WP10：洞窟は主が七罪人なので言い方を変える（goal.sin があるときだけ使う）。 */
+      areaSin:    '{area}の底へ。七罪人『{sin}』を降す。',
+      /* 行ける場所を踏破しきってなお鍵が足りないとき（洞窟の底にある）。 */
+      keys:       '鍵を集める。島の底に眠る七つのうち、あと{n}本。',
       done:       'この地でやることは、ひとまず終えた。次の土地の話は、まだ聞こえてこない。'
     },
 
@@ -304,7 +308,9 @@
    * 知らないキーが来ても空文字ではなく無難な1行を返す——**この行は必ず出す**決まりなので、
    * 目標の種類が増えたときに画面が空欄になるほうが害が大きい。 */
   function goalLine(goal) {
-    const tpl = (goal && LORE.goals[goal.key]) || LORE.goals.done;
+    const tpl = (goal && goal.key === 'area' && goal.sin && LORE.goals.areaSin)
+      ? LORE.goals.areaSin
+      : ((goal && LORE.goals[goal.key]) || LORE.goals.done);
     return tpl.replace(/\{(\w+)\}/g, function (m, k) {
       return Object.prototype.hasOwnProperty.call(goal || {}, k) ? String(goal[k]) : m;
     });

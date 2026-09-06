@@ -281,6 +281,10 @@ function enterHome() {
     const area = CQAreas.get(id);
     script = script.concat(CQLore.fill(CQLore.LORE.home.onAreaOpen, { area: area ? area.name : id }));
   });
+  /* M8.2 WP10：鍵の節目（台本§2.3）。初めて手に入れた回と、七つ揃った回に必ず出す。 */
+  const keyMile = CQSave.checkKeys(meta, (meta.keys || []).length);
+  if (keyMile === 'first') script = script.concat(CQLore.LORE.home.onFirstKey);
+  else if (keyMile === 'all') script = script.concat(CQLore.LORE.home.onAllKeys);
   const wasFirst = CQSave.markHomeVisited(meta);
   if (!script.length) {
     script = wasFirst ? CQLore.LORE.home.first.slice() : CQLore.pickOne(CQLore.LORE.home.idle).slice();
@@ -2048,13 +2052,18 @@ function backupImport(text) {
 
 /** 鍵の総数（世界観§5・七罪人の封印）。鍵そのものは M8 の実装なので、
  * ここでは「これから何を集めるのか」を見せるためだけに枠を出す。 */
-const RECORD_KEYS_TOTAL = 7;
+const RECORD_KEYS_TOTAL = CQCollection.KEYS_TOTAL;
+
+/** nextGoal に渡すエリア一覧。hasKey＝そこに鍵がある土地（洞窟）か（M8.2 WP10）。 */
+function goalAreasOf(meta) {
+  return CQAreas.list().map(function (a) {
+    return { id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, meta),
+      hasKey: a.sinId != null, sinName: a.sinName || null };
+  });
+}
 
 function recordGoalHTML(meta) {
-  const areas = CQAreas.list().map(function (a) {
-    return { id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, meta) };
-  });
-  const goal = CQCollection.nextGoal(meta, areas);
+  const goal = CQCollection.nextGoal(meta, goalAreasOf(meta));
   return `<div class="rec-goal">
       <span class="rec-goal-cap">いまの目標</span>
       <span class="rec-goal-text">${esc(CQLore.goalLine(goal))}</span>
@@ -2077,11 +2086,15 @@ function recordTitlesHTML(meta) {
 
 function recordAreasHTML(meta) {
   const cleared = meta.cleared || [];
+  const keys = meta.keys || [];
   return CQAreas.list().map(function (a) {
     const unlocked = CQAreas.isUnlocked(a.id, meta);
     const done = cleared.indexOf(a.id) >= 0;
+    /* M8.2 WP10：鍵のある土地（洞窟）は、鍵を取ったかどうかも1行の中で分かるようにする。 */
+    const key = (a.sinId != null)
+      ? `<span class="rec-key${keys.indexOf(a.id) >= 0 ? ' on' : ''}">🔑</span>` : '';
     return `<div class="rec-row">
-        <span>${esc(a.name)}</span>
+        <span>${esc(a.name)}${key}</span>
         <b class="${done ? 'ok' : ''}">${done ? '踏破' : (unlocked ? '未踏破' : '未解放')}</b>
       </div>`;
   }).join('');
@@ -2114,8 +2127,11 @@ function renderRecord() {
         <h4>踏破</h4>
         <div class="rec-rows">
           ${recordAreasHTML(meta)}
-          <div class="rec-row"><span>鍵</span><b>${(meta.keys || []).length}／${RECORD_KEYS_TOTAL}</b></div>
-          <p class="cg-note rec-note">鍵は、この先の土地で見つかる。</p>
+          <div class="rec-row"><span>鍵</span>
+            <b class="${(meta.keys || []).length >= RECORD_KEYS_TOTAL ? 'ok' : ''}">${(meta.keys || []).length}／${RECORD_KEYS_TOTAL}</b></div>
+          <p class="cg-note rec-note">${(meta.keys || []).length >= RECORD_KEYS_TOTAL
+            ? '七つ揃った。門の封が解ける。'
+            : '鍵は七つ。洞窟の底で、罪を降すたびに一つ。'}</p>
         </div>
         <h4>統計</h4>
         <div class="rec-rows">

@@ -145,6 +145,20 @@
     return opened;
   }
 
+  /** M8.2 WP10：鍵の節目。'first'（初めて手に入れた）／'all'（七つ揃った）／null。
+   * checkLevelUp と同じく、**最初の1回は基準を記録するだけ**（アップデート直後の
+   * プレイヤーに、既に持っているぶんの節目をまとめて見せてしまわないように）。 */
+  function checkKeys(meta, count) {
+    const n = count || 0;
+    if (meta.homeSeenKeys == null) { meta.homeSeenKeys = n; return null; }
+    const prev = meta.homeSeenKeys;
+    if (n === prev) return null;
+    meta.homeSeenKeys = n;
+    if (n >= 7 && prev < 7) return 'all';
+    if (prev === 0 && n > 0) return 'first';
+    return null;
+  }
+
   /** ホームへ来たのが初めてか（呼ぶと同時に既読にする）。 */
   function markHomeVisited(meta) {
     const first = !meta.homeVisited;
@@ -204,7 +218,7 @@
   const api = {
     loadMeta, saveMeta, clearMeta, loadRun, saveRun, clearRun, toDeckCounts, migrate, initialMeta,
     ensureFields, visitCount, markVisit, hintSeen, markHint,
-    checkLevelUp, checkAreaOpen, markHomeVisited
+    checkLevelUp, checkAreaOpen, checkKeys, markHomeVisited
   };
   global.CQSave = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
