@@ -336,6 +336,96 @@ function renderHome() {
     ${overlay}`;
 }
 
+/* ================= エンディング画面（完成した死者の書のギャラリー・台本§12・M8.3 WP15） =================
+ *
+ * バルザミコスを初めて降したその足で（back-homeの代わりに）ここへ来る
+ * （run.endingSeenNow・M8.3 WP14の settle() が立てる）。記録画面の「もう一度見る」からは
+ * intro:false で入り、吹き出しを挟まずギャラリーだけを見せる。
+ *
+ * 構成（初回 intro:true）：①church.victory（バルザミコス「終わったわね」）＋
+ * LORE.ending.before（アンバー「記録者の本よ」）→ ②ギャラリー本体（記憶データを
+ * 新しい順、続けて未収集をid順で並べる。コレクション画面のcolGridHTML/colDetailHTMLを
+ * 流用——見た目・「？」マークの扱いを二重に持たない）→ ③LORE.ending.after（2つ・
+ * 「まだ一枚、白紙が残っているわ」＝台本§13.9「真の結末」への渡し。そのカード自体は
+ * WP16）→ ④ホームへ戻る。 */
+function enterEnding(meta, opts) {
+  const o = opts || {};
+  RUI.run = null;
+  RUI.view = 'ending';
+  RUI.endingIntro = !!o.intro;
+  const church = CQLore.LORE.areas.church;
+  RUI.endingBeforeGuide = o.intro ? (church.victory || []).concat(CQLore.LORE.ending.before) : [];
+  RUI.endingAfterGuide = CQLore.LORE.ending.after || [];
+  RUI.endingGuideStep = 0;
+  RUI.endingStage = RUI.endingBeforeGuide.length ? 'before' : 'gallery';
+  RUI.gridSel = null; RUI.gridSelIdx = -1;
+  runRender();
+}
+
+/** ①の吹き出し・③の吹き出しを1つ進める（タップ送り＝既存4例と同じ形）。 */
+function endingGuideAdvance() {
+  const arr = RUI.endingStage === 'after' ? RUI.endingAfterGuide : RUI.endingBeforeGuide;
+  const next = (RUI.endingGuideStep || 0) + 1;
+  if (next < (arr || []).length) { RUI.endingGuideStep = next; return runRender(); }
+  return endingGuideFinish();
+}
+
+/** スキップ、または吹き出しを最後まで送った後の遷移。before→gallery、after→ホームへ。 */
+function endingGuideFinish() {
+  if (RUI.endingStage === 'before') {
+    RUI.endingStage = 'gallery';
+    RUI.endingGuideStep = 0;
+    return runRender();
+  }
+  return enterHome();
+}
+
+/** ギャラリーから先へ進む（初回はafterの吹き出しへ、無ければ／再訪ならホームへ）。 */
+function endingProceedFromGallery() {
+  if (RUI.endingIntro && (RUI.endingAfterGuide || []).length) {
+    RUI.endingStage = 'after';
+    RUI.endingGuideStep = 0;
+    return runRender();
+  }
+  return enterHome();
+}
+
+function renderEnding() {
+  const meta = RUI.meta;
+  if (RUI.endingStage === 'before' || RUI.endingStage === 'after') {
+    const arr = RUI.endingStage === 'after' ? RUI.endingAfterGuide : RUI.endingBeforeGuide;
+    const b = arr[Math.min(RUI.endingGuideStep || 0, arr.length - 1)];
+    runRoot().innerHTML = `<div class="ending-scene">
+      <img class="ending-bg" src="assets/ui/ending_book.png" alt="" draggable="false" onerror="this.style.display='none'">
+      ${amberBubbleHTML(b, { nextAct: 'ending-guide-next', skipAct: 'ending-guide-skip' })}
+    </div>`;
+    return;
+  }
+  /* ギャラリー：既知＝記憶データ登録順を新しい順（受け入れ基準・meta.knownは追記順）、
+   * 続けて未収集をid順で並べる。タイルの見た目はコレクション画面のcolTileHTMLそのまま
+   * （既知→artInner、未収集→「？」マーク。シルエットにCSSフィルタを使わない方針は
+   * コレクション画面の設計履歴のコメントのとおり、カード絵に透過が無いため）。 */
+  const known = meta.known || [];
+  const unknownIds = CARDS.filter(function (c) {
+    return (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK && known.indexOf(c.id) < 0;
+  }).sort(function (a, b) { return a.id - b.id; }).map(function (c) { return c.id; });
+  const items = known.slice().reverse().concat(unknownIds)
+    .map(function (id) { return { id: id, known: known.indexOf(id) >= 0, unseen: false }; });
+  runRoot().innerHTML = `
+    <div class="ending-scene ending-gallery">
+      <img class="ending-bg" src="assets/ui/ending_book.png" alt="" draggable="false" onerror="this.style.display='none'">
+      <div class="cg-head">
+        <div class="cg-title">旅の記録</div>
+        <div class="cg-stats"><span>記憶データ <b>${known.length}</b>／${COLLECTION_TOTAL}</span></div>
+        <button class="btn ok cg-done" data-act="ending-proceed">${RUI.endingIntro ? '次へ' : 'ホームへ戻る'}</button>
+      </div>
+      <div class="cg-wrap ending-wrap">
+        <div class="cg-main">${colGridHTML(items)}</div>
+        <div class="detail cg-detail">${colDetailHTML()}</div>
+      </div>
+    </div>`;
+}
+
 /* ================= エリア選択 ================= */
 
 /** 1タイルぶんのHTML（M8.1 WP5：幕ごとの行から共通で呼ぶ）。 */
@@ -2180,6 +2270,7 @@ function renderRecord() {
           <p class="cg-note rec-note">${(meta.keys || []).length >= RECORD_KEYS_TOTAL
             ? '七つ揃った。門の封が解ける。'
             : '鍵は七つ。洞窟の底で、罪を降すたびに一つ。'}</p>
+          ${meta.endingSeen ? '<button class="btn rec-ending-again" data-act="ending-again">エンディングをもう一度見る</button>' : ''}
         </div>
         <h4>統計</h4>
         <div class="rec-rows">
@@ -2676,6 +2767,7 @@ function runRender() {
   else if (RUI.view === 'record') renderRecord();
   else if (RUI.view === 'settings') renderSettings();
   else if (RUI.view === 'result') renderResult();
+  else if (RUI.view === 'ending') renderEnding();
 }
 
 /** confirm() は他ブラウザ機能とバッティングしタブレットで不安定なため、
@@ -2903,6 +2995,14 @@ function runAct(act, id, idx) {
     }
     case 'loot-guide-skip':
       return finishLootGuide();
+    case 'ending-guide-next':
+      return endingGuideAdvance();
+    case 'ending-guide-skip':
+      return endingGuideFinish();
+    case 'ending-proceed':
+      return endingProceedFromGallery();
+    case 'ending-again':
+      return enterEnding(RUI.meta, { intro: false });
     case 'guide-next': {
       const next = (RUI.guideStep || 0) + 1;
       if (next >= (RUI.guide || []).length) return finishStartGuide();
@@ -3090,6 +3190,10 @@ function runAct(act, id, idx) {
           runRender();
         }, 'リタイヤする');
     case 'back-home':
+      /* M8.3 WP15：教会でバルザミコスに初めて勝った、その足の「ホームへ戻る」だけ
+       * エンディング画面を経由させる（settle()がrun.endingSeenNowを立てている・M8.3 WP14）。
+       * enterHome()はRUI.runをnullにしてしまうので、その前にここで判定する。 */
+      if (run && run.endingSeenNow) return enterEnding(RUI.meta, { intro: true });
       return enterHome();
     /* M6.6 WP2：確認用の開発機能（エリア選択画面右下）。誤爆防止のため確認ダイアログを1段挟む。
      * 記録を消したら必ずリロードする（cq_meta が無い状態から runInit → loadMeta が既定デッキで

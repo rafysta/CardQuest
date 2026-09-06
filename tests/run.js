@@ -7745,6 +7745,57 @@ t('lore.js：church のmasterIntroだけ話者がバルザミコス自身（face
 });
 
 
+section('M8.3 WP15: エンディング画面（台本§12・ギャラリー本体はコレクション画面を流用）');
+
+t('lore.js：LORE.ending.before/afterは吹き出しの形（face/lines）を持つ', () => {
+  const ending = CQLore.LORE.ending;
+  [ending.before, ending.after].forEach((arr) => {
+    eq(Array.isArray(arr) && arr.length > 0, true, '空でない配列');
+    arr.forEach((b) => {
+      eq(typeof b.face, 'string', 'faceは文字列');
+      eq(Array.isArray(b.lines) && b.lines.length > 0, true, 'linesは空でない配列');
+    });
+  });
+});
+
+t('lore.js：church.victoryはエンディング画面の入口で使う吹き出し（アンバー・calm/down）', () => {
+  const victory = CQLore.LORE.areas.church.victory;
+  eq(Array.isArray(victory) && victory.length > 0, true, '空でない配列');
+  eq(victory.every((b) => b.face === 'calm' || b.face === 'down'), true, 'アンバーの顔（calm/down）のみ');
+});
+
+t('コレクション対象（U/M/S・BLANK除く）は169種——run-ui.jsのCOLLECTION_TOTALと同じ式で再計算', () => {
+  const total = CARDS.filter((c) => (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK).length;
+  eq(total, 169, 'ゲーム仕様書§6.3どおり169種');
+});
+
+t('meta.known はコレクション対象idの部分集合で重複を持たない（ギャラリーの新しい順ソートの前提）', () => {
+  const collectable = new Set(CARDS.filter((c) => (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK).map((c) => c.id));
+  const meta = { book: {}, deck: {}, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  CQCollection.addCard(meta, 8, 'book');
+  CQCollection.addCard(meta, 8, 'book');
+  CQCollection.addCard(meta, 15, 'book');
+  eq(meta.known.length, new Set(meta.known).size, '重複なく積まれる（addCardが二重登録しない）');
+  eq(meta.known.every((id) => collectable.has(id)), true, '積まれるのはコレクション対象のidだけ');
+  eq(meta.known, [8, 15], '追記順（新しい順に見せるならslice().reverse()で反転する側の責任）');
+});
+
+t('settle：教会クリアでmeta.endingSeenが立ったランは、back-homeでエンディングへ回る想定（run.endingSeenNowのフラグ自体の再確認）', () => {
+  // run-ui.js（DOM操作）はここでは読み込まないので、back-homeがrun.endingSeenNowを見て
+  // enterEnding()へ回すこと自体はM8.3 WP14のsettle()テストで確認済み。ここではWP15が
+  // 前提にする「settle後、run.endingSeenNowはbooleanかundefined」という形だけ再確認する。
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'church', 7, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  CQRun.reportBattle(run, boss, { winner: 'self', loot: [], turn: 9, players: { self: { lp: 15 } } }, meta);
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  eq(run.endingSeenNow, true, 'run.endingSeenNowがtrue＝WP15のback-home分岐が拾える形');
+});
+
+
 section('M8.1 WP4: ボス報酬（初回撃破の一枚・部屋の累計3/5/7報酬・速攻実績）');
 
 /* このセクション専用の使い捨てメタ（book/deck/known/gold/cleared一式が揃っていればよい）。
