@@ -2283,44 +2283,70 @@ function renderBulkSell() {
  * （選ばなくても押せる。resolveLootPick は同じidが複数あっても先頭の1枚を消すだけなので、
  * どのタイルの下のボタンを押しても結果は同じ）。タイル自体は引き続き押すと選択状態になり、
  * 右の情報パネルに絵と詳細が出る（cgTileHTML／cgDetailHTMLをそのまま流用）。 */
+/** 選択中（RUI.lootSel＝lootPending の添字）に idx を足してもデッキに入るか。
+ * 合計40と同種3枚（ピッグマンは無制限）を、選択済みのぶんも含めて見る。 */
+function lootCanSelect(run, sel, idx) {
+  const pending = run.lootPending || [];
+  const temp = Object.assign({}, run.deck);
+  sel.forEach(function (i) { const id = pending[i]; if (id != null) temp[id] = (temp[id] || 0) + 1; });
+  if (CQCollection.countsTotal(temp) >= CQRun.DECK_SIZE) return { ok: false, reason: 'デッキに空きがありません（合計40枚）' };
+  return CQCollection.canAddToDeck(temp, pending[idx]);
+}
+
+/** 戦利品の振り分け（M6.6 WP7・2026-09-06 本人指定で作り替え）。
+ * 以前は1枚ずつ「デッキへ／本へ」のボタンを押していたが、デッキが埋まっている中盤以降は
+ * ほとんど全部「本へ」になり、押す回数だけが増える。そこで**デッキに入れたいカードだけを
+ * 押して選び、「決定」でまとめて振り分ける**形にした：選ばれたカードは明るく＋✔、それ以外は
+ * 本へ。既定は何も選ばない（＝全部本へ）ので、いつもの日は「決定」を1回押すだけで済む。
+ * 空きを超える選択は、押した時点で断って理由を出す（lootCanSelect）。
+ * カードは以前の8列から5列にして1.6倍ほど大きく（本人指定：1.5倍くらい）。
+ * ボス撃破の特別報酬は金枠＋✦で先頭に置く（bossBonusInfo）。 */
 function renderLoot() {
   const run = RUI.run;
+  if (RUI.gridCtx !== 'loot') RUI.lootSel = [];        /* 別の画面から入ってきた＝選択をやり直す */
   gridEnter('loot');
   const pending = run.lootPending || [];
-  /* M7 WP3.5（案B）：デッキの空きはレンタル枚数と無関係（レンタルは枠外）。 */
+  const sel = RUI.lootSel || [];
   const remain = Math.max(0, CQRun.DECK_SIZE - CQCollection.countsTotal(run.deck));
-  /* 2026-09-06 本人指定：ボス撃破の特別報酬（マスターの一枚・部屋の報酬）は先頭に置き、
-   * 金枠＋バッジで「ただの戦利品ではない」ことを強調する。同じidが通常の戦利品にも
-   * あるときは先頭の1枚だけを特別扱いにする（resolveLootPick はどの1枚を消しても同じ）。 */
   const bonus = bossBonusInfo(run);
   const usedBonus = {};
-  const items = pending.map(function (id) {
+  const items = pending.map(function (id, i) {
     const b = bonus[id] && !usedBonus[id] ? bonus[id] : null;
     if (b) usedBonus[id] = true;
-    return { id: id, rental: false, bonus: !!b, badge: b ? b.tag : undefined };
+    return { id: id, idx: i, bonus: b, on: sel.indexOf(i) >= 0 };
   }).sort(function (a, b) { return (b.bonus ? 1 : 0) - (a.bonus ? 1 : 0); });
+  const tiles = items.map(function (it) {
+    const c = CARD_BY_ID[it.id];
+    return `<div class="cg-tile loot-tile${it.on ? ' on' : ''}${it.bonus ? ' cg-tile-bonus' : ''}${RUI.gridSelIdx === it.idx ? ' sel' : ''}"
+        data-act="loot-toggle" data-id="${it.id}" data-idx="${it.idx}" title="${esc(c ? c.n : it.id)}">
+      <div class="cg-tile-art">${artInner(c, 3)}</div>
+      ${it.bonus ? `<span class="cg-badge">${esc(it.bonus.tag)}</span>` : ''}
+      <span class="loot-dest ${it.on ? 'deck' : 'book'}">${it.on ? '✔ デッキへ' : '本へ'}</span>
+    </div>`;
+  }).join('');
   const bonusNotes = items.filter(function (it) { return it.bonus; }).map(function (it) {
-    return `<div class="loot-bonus-line">${esc(bonus[it.id].note)}　<b>「${esc(CARD_BY_ID[it.id].n)}」</b></div>`;
+    return `<div class="loot-bonus-line">${esc(it.bonus.note)}　<b>「${esc(CARD_BY_ID[it.id].n)}」</b></div>`;
   }).join('');
   const selBonus = RUI.gridSel != null && bonus[RUI.gridSel] ? bonus[RUI.gridSel] : null;
+  const nDeck = sel.length, nBook = pending.length - sel.length;
   runRoot().innerHTML = `
     <div class="cg-head">
       <div class="cg-title">戦利品</div>
       <div class="cg-stats"><span>デッキの空き <b>${remain}</b>枚</span></div>
+      <div class="cg-head-actions loot-actions">
+        <span class="loot-count">デッキへ <b>${nDeck}</b>枚 ／ 本へ <b>${nBook}</b>枚</span>
+        <button class="btn ok cg-done" data-act="loot-ok">決定</button>
+      </div>
     </div>
     ${bonusNotes ? `<div class="loot-bonus-banner"><span class="loot-bonus-h">✦ 特別な戦利品</span>${bonusNotes}</div>` : ''}
     <div class="cg-wrap">
-      <div class="cg-main">${cgCardGridHTML(items, '戦利品はありません', function (it) {
-        const canDeck = CQRun.canAssignToDeck(run, it.id);
-        return `<button class="tiny" data-act="loot-deck" data-id="${it.id}" ${canDeck ? '' : 'disabled'}>デッキへ</button>
-          <button class="tiny" data-act="loot-book" data-id="${it.id}">本へ</button>`;
-      })}</div>
+      <div class="cg-main">${tiles ? `<div class="cg-grid loot-grid">${tiles}</div>` : '<div class="cg-empty">戦利品はありません</div>'}</div>
       <div class="detail cg-detail">${cgDetailHTML(selBonus
         ? `<div class="loot-bonus-note">${esc(selBonus.tag)}<br>${esc(selBonus.note)}</div>` : '')}</div>
     </div>
-    <p class="node-note cg-foot">カードごとに「デッキへ」か「本へ」を選んでください。
-      「本へ」を選んだカードは<b>このランでは使えません</b>（次のランから持ち出せます）。
-      どちらを選んでもカードは必ず手に入ります。</p>`;
+    <p class="node-note cg-foot">デッキに加えたいカードだけ押して選び、「決定」を押してください。
+      選ばなかったカードは<b>本へ</b>送られます（このランでは使えず、次のランから持ち出せます）。
+      何も選ばなければ全部本へ。どちらでもカードは必ず手に入ります。</p>`;
 }
 
 /* ================= 結果画面（M6.6 WP11・追補§4 WP11） ================= */
@@ -2862,19 +2888,37 @@ function runAct(act, id, idx) {
       return leaveBattleIntro();
     case 'event-intro-skip':
       return leaveEventIntro();
-    case 'loot-deck': {
-      const r = CQRun.resolveLootPick(run, +id, 'deck', CARD_BY_ID);
-      if (!r.ok) { runFlash(r.reason); return runRender(); }
-      RUI.gridSel = null;   /* M6.6 WP9：決まったら情報パネルを空へ戻し、次の1枚を選ばせる */
-      RUI.gridSelIdx = null;
-      advanceAfterBattle();
+    case 'loot-toggle': {
+      /* 押したカードをデッキ行きに（もう一度押すと本行きに戻す）。同時に情報パネルにも出す。 */
+      const i = +idx;
+      const sel = RUI.lootSel || (RUI.lootSel = []);
+      const at = sel.indexOf(i);
+      if (at >= 0) sel.splice(at, 1);
+      else {
+        const chk = lootCanSelect(run, sel, i);
+        if (!chk.ok) runFlash(chk.reason);
+        else sel.push(i);
+      }
+      RUI.gridSel = +id;
+      RUI.gridSelIdx = i;
+      markCardSeen(+id);
       return runRender();
     }
-    case 'loot-book': {
-      const r = CQRun.resolveLootPick(run, +id, 'book', CARD_BY_ID);
-      if (!r.ok) { runFlash(r.reason); return runRender(); }
-      RUI.gridSel = null;
-      RUI.gridSelIdx = null;
+    case 'loot-ok': {
+      /* 選んだものをデッキへ、残りを本へ。id で確定するので先に配列を作ってから消していく
+       * （resolveLootPick は lootPending を1枚ずつ消すため、添字はここで使い切る）。 */
+      const pending = (run.lootPending || []).slice();
+      const sel = RUI.lootSel || [];
+      const deckIds = sel.map(function (i) { return pending[i]; }).filter(function (v) { return v != null; });
+      const bookIds = pending.filter(function (_, i) { return sel.indexOf(i) < 0; });
+      deckIds.forEach(function (cid) {
+        const r = CQRun.resolveLootPick(run, cid, 'deck', CARD_BY_ID);
+        if (!r.ok) { runFlash(r.reason + '——本へ送りました'); CQRun.resolveLootPick(run, cid, 'book', CARD_BY_ID); }
+      });
+      bookIds.forEach(function (cid) { CQRun.resolveLootPick(run, cid, 'book', CARD_BY_ID); });
+      RUI.lootSel = [];
+      RUI.gridSel = null; RUI.gridSelIdx = null;
+      RUI.gridCtx = null;   /* 次の戦利品画面で選択が残らないように */
       advanceAfterBattle();
       return runRender();
     }

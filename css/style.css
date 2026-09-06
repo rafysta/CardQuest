@@ -2040,6 +2040,21 @@ td.nm{font-weight:800}
 .res-detail-close{text-align:center;color:var(--dim);font-size:12px;margin-top:8px}
 
 /* 戦利品の振り分け画面：ボス撃破の特別報酬（M8.1 WP4）の強調 */
+/* 2026-09-06 本人指定：戦利品は「デッキに入れたいものだけ選んで決定」。5列で1.6倍の大きさ。
+ * 選ばれていないタイルはやや暗く（本へ）、選ばれたら明るく金枠＋✔（デッキへ）。 */
+.loot-grid{grid-template-columns:repeat(5,1fr);grid-template-rows:none;grid-auto-rows:max-content;align-content:start;overflow:auto;padding-right:14px;gap:12px}
+.loot-tile{aspect-ratio:110/135;opacity:.72;transition:opacity .12s,box-shadow .12s}
+.loot-tile:hover{opacity:.9}
+.loot-tile.sel{border-color:rgba(250,204,21,.6)}
+.loot-tile.on{opacity:1;border-color:var(--accent);box-shadow:0 0 0 2px rgba(250,204,21,.45) inset,0 0 18px rgba(250,204,21,.5)}
+.loot-tile.cg-tile-bonus{border-color:var(--accent)}
+.loot-tile.cg-tile-bonus .cg-badge{background:var(--accent);color:#1b1200}
+.loot-dest{position:absolute;left:0;right:0;bottom:0;text-align:center;font-size:12px;font-weight:800;padding:3px 0;
+  background:rgba(5,8,15,.78);color:var(--dim)}
+.loot-dest.deck{background:var(--accent);color:#1b1200}
+.loot-count{font-size:13px;color:var(--dim)}
+.cg-head-actions.loot-actions{margin-left:auto}
+.loot-count b{color:var(--fg)}
 .loot-bonus-banner{flex:none;margin:0 0 8px;padding:8px 12px;border-radius:10px;border:1px solid var(--accent);
   background:linear-gradient(90deg,rgba(250,204,21,.16),rgba(250,204,21,.04));display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px}
 .loot-bonus-h{font-weight:900;color:var(--accent);letter-spacing:.06em}

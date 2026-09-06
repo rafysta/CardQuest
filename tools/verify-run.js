@@ -807,16 +807,19 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
      * M6.6 WP9でカードグリッド＋情報パネルに乗せ替え、さらに2026-08-29の本人指摘で
      * 「デッキへ／本へ」を各カードのタイル直下に常時表示する形に戻した——選ばなくても
      * 押せる（複数枚あっても各カードに専用のボタンが付くので、最初の1個を押せばよい）。 */
-    await wait(() => page.$('.cg-card'));
-    const lootCard = await page.$('.cg-card');
-    ok('マップに戻る前に戦利品の振り分け画面が出る（M6.6 WP7・WP9でグリッド化）', !!lootCard);
+    /* 2026-09-06 本人指定で作り替え：デッキに入れたいカードだけ押して選び「決定」。既定は
+     * 何も選ばない＝全部本へ、なので「決定」1回でマップへ戻れる。 */
+    await wait(() => page.$('.loot-tile'));
+    const lootCard = await page.$('.loot-tile');
+    ok('マップに戻る前に戦利品の振り分け画面が出る（M6.6 WP7・2026-09-06 選んで決定の形）', !!lootCard);
     if (lootCard) {
       await shot('loot');
-      const bookBtn = await page.$('.cg-card-btns [data-act="loot-book"]');
-      ok('「デッキへ／本へ」は各カードの下に最初から出ている（2026-08-29再修正）', !!bookBtn);
-      if (bookBtn) await bookBtn.click();   // 「本に送る」は空きの有無に関わらず必ず選べる（複数枚あっても最初の1枚でよい）
+      ok('既定では全部「本へ」（何も選ばれていない）', (await page.$$('.loot-tile.on')).length === 0);
+      const okBtn = await page.$('[data-act="loot-ok"]');
+      ok('「決定」ボタンがある', !!okBtn);
+      if (okBtn) await okBtn.click();
       await wait(() => page.$('.run-map'));
-      ok('振り分けを終えるとマップへ戻る', !!(await page.$('.run-map')));
+      ok('決定を1回押すだけでマップへ戻る', !!(await page.$('.run-map')));
     }
     ok('戦闘結果がランに反映される（そのマスが解決済み）',
       await page.evaluate((nid) => RUI.run.map.nodes[nid].cleared, battleId));
