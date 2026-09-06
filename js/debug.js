@@ -37,8 +37,20 @@ const CQDebug = (function () {
     { icon: '⚔', label: 'バトルをスキップ（勝利）', hint: 'いまの戦闘を勝ちで終わらせる', run: skipBattle },
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
     { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene },
+    { icon: '⏩', label: '進行を進める…', hint: '進行状態のプリセット／記憶データ+N／ボス戦へ直行（退避つき）', run: openProgress },
     { icon: '🙈', label: 'デバッグメニューを隠す', hint: '人に見せるとき用。バージョン表記の7回連打で戻る', run: hideDevMode }
   ];
+
+  /* ⏩ 進行を進める（2026-09-06・本人指定）。中身は js/devprogress.js（フォーム）と
+   * js/devpresets.js（組み立て・Nodeからテスト可）。同じパネルの中身を差し替えて出し、
+   * ←で元のメニューに戻す。 */
+  function openProgress() {
+    if (typeof CQDevProgress === 'undefined' || !panel) return out('devprogress.js が読み込まれていません。');
+    CQDevProgress.open(panel, function (closeMenu) {
+      if (closeMenu) return close();
+      renderMenu();
+    });
+  }
 
   /* 🙈 デバッグメニューを隠す（2026-09-05）。開発者モードを落として 🛠 を消す。
    * 開発用の画面を開いたまま隠すと戻り道が無くなるので、先にラン画面へ戻しておく。
@@ -88,10 +100,10 @@ const CQDebug = (function () {
 
   function close() { if (panel) { panel.remove(); panel = null; } }
 
-  function toggle() {
-    if (panel) return close();
-    panel = document.createElement('div');
-    panel.className = 'dbg-menu';
+  /** メニュー本体の中身（⏩のパネルから←で戻るときにも使う） */
+  function renderMenu() {
+    if (!panel) return;
+    panel.classList.remove('dbg-wide');
     panel.innerHTML =
       '<div class="dbg-menu-h">デバッグメニュー<span class="dbg-menu-v">v' +
         (typeof APP_VERSION === 'string' ? APP_VERSION : '?') + '</span></div>' +
@@ -101,6 +113,13 @@ const CQDebug = (function () {
           '<span class="dbg-item-t"><b>' + it.label + '</b><small>' + it.hint + '</small></span></button>';
       }).join('') +
       '<div class="dbg-out" id="dbg-out"></div>';
+  }
+
+  function toggle() {
+    if (panel) return close();
+    panel = document.createElement('div');
+    panel.className = 'dbg-menu';
+    renderMenu();
     /* #app の中に入れる（#app の transform:scale と一緒に縮む。cq-confirm-overlay と同じ理由） */
     (document.getElementById('app') || document.body).appendChild(panel);
     panel.addEventListener('click', function (ev) {

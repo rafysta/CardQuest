@@ -7531,6 +7531,90 @@ t('ACT_TITLES：幕2「七つの罪」・幕3「門と審判」の見出しも�
 
 
 
+section('開発用：進行状態のプリセット（js/devpresets.js・2026-09-06）');
+
+const CQDevPresets = require(path.join(root, 'js/devpresets.js'));
+
+t('プリセットは5つ。どれもデッキ40枚・合法・出発可能で、known ⊇ 所持カード', () => {
+  const list = CQDevPresets.list();
+  eq(list.length, 5, '5つ');
+  list.forEach((p) => {
+    const m = CQDevPresets.build(p.key, CARD_BY_ID);
+    eq(CQCollection.countsTotal(m.deck), 40, `${p.key}：デッキは40枚`);
+    eq(CQCollection.canDepart(m).ok, true, `${p.key}：出発できる`);
+    Object.keys(m.deck).forEach((k) => {
+      eq(+k === 8 || m.deck[k] <= 3, true, `${p.key}：同種3枚以内（${k}）`);
+      eq(m.known.indexOf(+k) >= 0, true, `${p.key}：デッキのカードは記憶データにある（${k}）`);
+    });
+    Object.keys(m.book).forEach((k) => eq(m.known.indexOf(+k) >= 0, true, `${p.key}：本のカードは記憶データにある（${k}）`));
+    eq(m.known.length >= p.known, true, `${p.key}：記憶データは${p.known}種以上`);
+    eq(m.deck[180] == null && m.book[180] == null, true, `${p.key}：空白は持たない`);
+    eq(m.openingSeen, true, `${p.key}：目覚めは済んでいる`);
+  });
+});
+
+t('プリセットの到達点：解放エリアとマスターレベルが狙いどおり', () => {
+  const unlocked = (m) => CQAreas.list().filter((a) => CQAreas.isUnlocked(a.id, m)).map((a) => a.id);
+  const p1 = CQDevPresets.build('p1', CARD_BY_ID);
+  eq(unlocked(p1), ['grassland', 'forest'], 'p1：森まで');
+  eq(CQCollection.masterLevelOf(p1), 1, 'p1：Lv1');
+  const p2 = CQDevPresets.build('p2', CARD_BY_ID);
+  eq(unlocked(p2), ['grassland', 'forest', 'mountain'], 'p2：山地まで');
+  eq(p2.known.length, 19, 'p2：19種＝あと1種でLv2');
+  eq(CQCollection.masterLevelOf(p2), 1, 'p2：まだLv1');
+  const p3 = CQDevPresets.build('p3', CARD_BY_ID);
+  eq(unlocked(p3), ['grassland', 'forest', 'mountain', 'coast'], 'p3：海辺がレベルで解放');
+  eq(CQCollection.masterLevelOf(p3), 2, 'p3：Lv2');
+  const p4 = CQDevPresets.build('p4', CARD_BY_ID);
+  eq(unlocked(p4), ['grassland', 'forest', 'mountain', 'coast', 'desert'], 'p4：砂漠まで');
+  const p5 = CQDevPresets.build('p5', CARD_BY_ID);
+  eq(p5.cleared.length, 5, 'p5：5エリア踏破');
+  eq(p5.known.length, 52, 'p5：52種ちょうど');
+  eq(CQCollection.masterLevelOf(p5), 3, 'p5：Lv3');
+  eq(p5.titles.indexOf('clearDesert') >= 0, true, 'p5：踏破称号が付いている');
+  eq(p5.bossWins[9], 1, 'p5：砂漠の顔（ペゼッタ9）を倒した記録');
+  eq(p5.clears.desert, 1, 'p5：砂漠の累計クリア1');
+});
+
+t('節目の演出：milestone既定はホームで「上がった／開いた」が出る基準値、falseなら出ない', () => {
+  const on = CQDevPresets.build('p3', CARD_BY_ID);
+  eq(CQSave.checkLevelUp(on, CQCollection.masterLevelOf(on)), true, 'p3（Lv2）でレベルアップの節目が出る');
+  const unlockedIds = CQAreas.list().filter((a) => CQAreas.isUnlocked(a.id, on)).map((a) => a.id);
+  eq(CQSave.checkAreaOpen(on, unlockedIds).sort(), ['coast', 'mountain'], '解放済み・未踏破の山地と海辺が「開いた」扱い');
+  const off = CQDevPresets.build('p3', CARD_BY_ID, { milestone: false });
+  eq(CQSave.checkLevelUp(off, CQCollection.masterLevelOf(off)), false, 'falseならレベルの節目は出ない');
+  eq(CQSave.checkAreaOpen(off, unlockedIds), [], 'falseならエリアの節目も出ない');
+});
+
+t('addKnown：未知のカードを安い順にn種、本へ1枚ずつ', () => {
+  const m = CQDevPresets.build('p1', CARD_BY_ID);
+  const before = m.known.length;
+  const added = CQDevPresets.addKnown(m, CARD_BY_ID, 3);
+  eq(added.length, 3, '3種増える');
+  eq(m.known.length, before + 3, 'knownも3増える');
+  added.forEach((id) => eq(m.book[id], 1, `本に1枚（${id}）`));
+  for (let i = 1; i < added.length; i++) eq(CARD_BY_ID[added[i - 1]].p <= CARD_BY_ID[added[i]].p, true, '安い順');
+});
+
+t('bossJumpRun：ボスマスの1つ手前に立ち、選べる先はボスだけ。ＬＰ・周回・顔／客分の指定が効く', () => {
+  const m = CQDevPresets.build('p4', CARD_BY_ID);
+  const run = CQDevPresets.bossJumpRun(CARD_BY_ID, m, { areaId: 'mountain', seed: 5, lp: 7, repeatVisit: true, masterId: 15 });
+  const pos = CQDevPresets.bossNodeOf(run);
+  eq(run.map.nodes[pos.bossId].type, 'boss', 'ボスマスを見つけている');
+  eq(run.at !== pos.bossId, true, 'ボスマスの手前に立っている');
+  eq(CQRun.choices(run).map((n) => n.type), ['boss'], '次に選べるのはボスだけ');
+  Object.keys(run.map.nodes).forEach((id) => {
+    if (id !== pos.bossId) eq(run.map.nodes[id].cleared, true, `ボス以外は解決済み（${id}）`);
+  });
+  eq(run.map.nodes[pos.bossId].cleared, undefined, 'ボスマスは未解決');
+  eq(run.lp, 7, 'ＬＰの上書き');
+  eq(run.startLp, 7, 'startLpも揃う（無傷の一日の基準）');
+  eq(run.repeatVisit, true, '周回の指定');
+  eq(CQRun.bossMasterOf(run, CQAreas.get('mountain')), 15, '客分グリンジ(15)の指定が効く');
+  const wrong = CQDevPresets.bossJumpRun(CARD_BY_ID, m, { areaId: 'mountain', seed: 5, repeatVisit: false, masterId: 99 });
+  eq(CQRun.bossMasterOf(wrong, CQAreas.get('mountain')), 5, '組に無いid(99)の指定は無視され、初回なので顔（ルピア5）');
+});
+
 section('M8.1 WP1: 入手経路の網羅表（js/meta/routes.js）');
 
 const CQRoutesTest = require(path.join(root, 'js/meta/routes.js'));

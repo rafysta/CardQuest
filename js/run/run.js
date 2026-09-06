@@ -122,6 +122,10 @@
 
   function bossMasterOf(run, area) {
     if (!area || area.bossId == null) return null;
+    /* 開発用（js/devpresets.js「ボス戦へ直行」）：組の中のidを直接指定できる。
+     * 組に無いidは無視する（デバッグメニュー以外からは決して立たないフィールド）。 */
+    if (run && run.bossMasterOverride != null
+        && (area.bossPool || [area.bossId]).indexOf(+run.bossMasterOverride) >= 0) return +run.bossMasterOverride;
     if (!area.bossPool || area.bossPool.length <= 1) return area.bossId;
     if (!run || !run.repeatVisit) return area.bossId;
     const r = CQRng.create((run.seed >>> 0) ^ 0x8f1bbcdc);
