@@ -7531,6 +7531,36 @@ t('ACT_TITLES：幕2「七つの罪」・幕3「門と審判」の見出しも�
 
 
 
+section('M8.1 WP7: 台本（山地・海辺・砂漠の導入。js/lore.js）');
+
+t('全エリアに導入の台本がある（無いとアンバーの案内が丸ごと飛ぶ）', () => {
+  CQAreas.list().forEach((a) => {
+    const lore = CQLore.LORE.areas[a.id];
+    eq(!!lore, true, `${a.id}：台本がある`);
+    eq(lore.first.length >= 1, true, `${a.id}：初回の導入がある`);
+    eq(lore.repeat.length >= 3, true, `${a.id}：2回目以降の候補が3つ以上`);
+    eq((lore.masterIntro || []).length >= 1, true, `${a.id}：マスター紹介がある`);
+    eq((lore.depart || []).length >= 1, true, `${a.id}：送り出しがある`);
+    /* 霧が出るエリアには霧の日の1つが要る（草原だけ霧率0%なのでnullでよい） */
+    if (a.fog && a.fog.chance > 0) eq(!!lore.fog, true, `${a.id}：霧の日の台本がある`);
+  });
+});
+
+t('台本§0の規約：1吹き出しは2行まで・1行28字以内・感嘆符を使わない', () => {
+  CQAreas.list().forEach((a) => {
+    const lore = CQLore.LORE.areas[a.id];
+    const groups = [lore.first, lore.depart, lore.masterIntro, lore.fog].concat(lore.repeat);
+    groups.forEach((g) => (g || []).forEach((b) => {
+      eq(b.lines.length <= 2, true, `${a.id}：1吹き出しは2行まで`);
+      eq(['calm', 'down'].indexOf(b.face) >= 0, true, `${a.id}：faceはcalmかdown`);
+      b.lines.forEach((line) => {
+        eq(Array.from(line).length <= 28, true, `${a.id}：1行28字以内（${line}）`);
+        eq(/[!！]/.test(line), false, `${a.id}：感嘆符を使わない（${line}）`);
+      });
+    }));
+  });
+});
+
 section('コレクションの NEW（閲覧済みの記録・2026-09-06 本人指定）');
 
 t('seen が無いセーブは known 全部を閲覧済みにして初期化（既存プレイヤーに全部NEWを見せない）', () => {
