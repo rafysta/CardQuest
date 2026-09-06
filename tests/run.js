@@ -8252,7 +8252,10 @@ t('チュートリアルの制限：置く先・開く階層・攻撃の可否',
   eq(CQTutorialTest.RULES[2].setForce.dropId, 108, '次は強制開放だけ');
   eq(CQTutorialTest.RULES[2].setUnposs.dropId, 101, 'その次は憑依解除だけ＝階層の順が決まる');
   eq(CQTutorialTest.RULES[2].openForce.flipCard, 108, '開けるのは強制開放の階層だけ');
-  eq(CQTutorialTest.RULES[2].openUnposs.pickCard, 153, '砕く相手は魔力の盾に絞る');
+  eq(CQTutorialTest.RULES[2].openUnposs.pickCard, 153, '砕く相手は魔力の盾');
+  /* ★2026-09-07：対象は自分で選ぶ。候補は全部出したうえで、違う札は断る */
+  eq(typeof CQTutorialTest.checkPick, 'function', '対象選択の可否を見る関数がある');
+  eq(CQTutorialTest.checkPick(3, 0).ok, true, '台本を始めていなければ何でも選べる');
   eq([CQTutorialTest.RULES[1].attack.canAttack, !!CQTutorialTest.RULES[1].place.canAttack],
     [true, false], '攻撃できるのは「攻めろ」の段だけ');
 });

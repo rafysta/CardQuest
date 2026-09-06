@@ -134,8 +134,12 @@ const CQTutorial = (function () {
                   done: function (M) {
                     return !!(M.lastForcedChain && M.lastForcedChain.kind === 108) || !selfHasCh(M, 108);
                   } },
+      /* ▶を押すところまでは案内し、**砕く札は自分で選ばせる**（本人指定・2026-09-07）。
+       * 対象選択に入ったら、光らせる先を「憑依解除」から「魔力の盾」に切り替える。 */
       openUnposs:{ flipCard: 101, pickCard: 153,
                   glow: function (M) {
+                    var picking = (typeof UI !== 'undefined' && UI && UI.mode === 'pick-target');
+                    if (picking) { var sel = pickTargetSel(M); return sel ? [sel] : []; }
                     var at = findSelfCh(M, 101);
                     return at ? ['#board .card.ch[data-lane="' + at.lane + '"][data-layer="' + at.layer + '"]'] : [];
                   },
@@ -259,23 +263,39 @@ const CQTutorial = (function () {
   /** 攻撃してよいか。 */
   function allowAttack() { return !RUN || !!rule().canAttack; }
 
-  /** 案内が「この札を砕け」と決めている段では、対象を**こちらで決めてしまう**。
-   * 候補を1つに絞るだけでは足りない——候補が1つになると選択画面が出ず、
-   * エンジンが自分で（無作為に）選んでしまうため（2026-09-07 実機相当の確認で判明）。
-   * spec は js/engine/effects/magic.js の targetsFor が返した形。書き換えずに読むだけ。
-   * 戻り値：決めた対象 {lane, idx}／決めないときは null。 */
-  function forcedPick(M2, spec) {
-    if (!RUN || !spec || !M2) return null;
+  /** 対象選択で、その札を選んでよいか（憑依解除など）。
+   * ★2026-09-07 本人フィードバック：以前はこちらで対象を決め打っていたが、
+   * 「憑依解除を体験するには、対象は自分で選べたほうがよい」との指摘で、
+   * **候補は普通に全部出し、押した札だけを見る**形に変えた。
+   * 案内が指している札以外を押したときは、断って理由を出す（手順は詰まない）。 */
+  function checkPick(laneIdx, idx) {
+    if (!RUN) return { ok: true };
     var want = rule().pickCard;
-    if (want == null || spec.kind !== 'ch' || !Array.isArray(spec.targets)) return null;
-    var hit = null;
-    spec.targets.forEach(function (t) {
-      if (hit) return;
-      var ln = M2.board.lanes[t.lane];
-      var ch = ln && ln.channels[t.idx];
-      if (ch && ch.card === want) hit = t;
-    });
-    return hit ? { lane: hit.lane, idx: hit.idx } : null;
+    if (want == null) return { ok: true };
+    var M2 = (typeof M !== 'undefined') ? M : null;
+    var ln = M2 && M2.board.lanes[laneIdx];
+    var ch = ln && ln.channels && ln.channels[idx];
+    if (ch && ch.card === want) return { ok: true };
+    var name = (typeof CARD_BY_ID !== 'undefined' && CARD_BY_ID[want]) ? CARD_BY_ID[want].n : '';
+    return { ok: false, reason: name
+      ? '「' + name + '」を選んでください。相手の守りを上げているのはそのカードです。'
+      : '案内に出ているカードを選んでください。' };
+  }
+
+  /** 案内が「この札を砕け」と言っている段で、その札の居場所（光らせる先）。 */
+  function pickTargetSel(M2) {
+    var want = rule().pickCard;
+    if (want == null || !M2) return null;
+    for (var i = 0; i < 6; i++) {
+      var ln = M2.board.lanes[i];
+      if (!ln || ln.unit == null) continue;
+      for (var k = 0; k < (ln.channels || []).length; k++) {
+        if (ln.channels[k].card === want) {
+          return '#board .card.ch[data-lane="' + i + '"][data-layer="' + (k + 1) + '"]';
+        }
+      }
+    }
+    return null;
   }
 
   /* ================= 描画（出しっぱなし） ================= */
@@ -332,7 +352,7 @@ const CQTutorial = (function () {
 
   return { begin: begin, end: end, active: active, stage: stage, stepKey: stepKey,
            tick: tick, next: next, checkDrop: checkDrop, allowFlip: allowFlip,
-           allowAttack: allowAttack, forcedPick: forcedPick, RULES: RULES };
+           allowAttack: allowAttack, checkPick: checkPick, RULES: RULES };
 })();
 
 /* Node（tests/）からも完了条件を確かめられるようにしておく。ＤＯＭには触らない部分だけを使う。 */

@@ -2623,13 +2623,6 @@ function tryStartDestroyPick(laneIdx, layer, ch, resume) {
   const spec = CQMagic.targetsFor(M, ch.card, ctx)
     || (typeof CQUnits.targetsFor === 'function' ? CQUnits.targetsFor(M, ch.card, ctx) : null);
   if (!spec) return false;
-  /* ★M8.5：チュートリアル中は、案内が指している札を**こちらで選んでしまう**。
-   * 候補を絞るだけだと「選ぶ余地なし」になってエンジンが無作為に選んでしまうので、
-   * 決めた対象をそのまま resume に渡す（＝プレイヤーは▶を押すだけでよい）。 */
-  if (typeof CQTutorial !== 'undefined' && CQTutorial.active()) {
-    const forced = CQTutorial.forcedPick(M, spec);
-    if (forced) { resume(forced); return true; }
-  }
   return startPick({ card: ch.card, kind: spec.kind, need: spec.need,
     targets: spec.targets, resume: resume });
 }
@@ -2962,6 +2955,14 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
       return;
     }
     if (el.classList.contains('pick') && el.dataset.lane !== undefined && el.dataset.layer !== undefined) {
+      /* ★M8.5：チュートリアル中は、案内が指している札だけを受け付ける。
+       * 候補は普通に全部光らせたうえで、違う札を押したときは断って理由を出す
+       * ——「対象は自分で選べたほうがよい」という指定（2026-09-07）と、
+       * 間違えて手順が詰まらないことの両立。 */
+      if (typeof CQTutorial !== 'undefined' && CQTutorial.active()) {
+        const g = CQTutorial.checkPick(+el.dataset.lane, +el.dataset.layer - 1);
+        if (!g.ok) { flash(g.reason); return; }
+      }
       p.chosen.push({ lane: +el.dataset.lane, idx: +el.dataset.layer - 1 });
       if (p.chosen.length >= p.need) {
         /* 1枚だけのカード（101）は従来どおり {lane,idx} を渡す。
