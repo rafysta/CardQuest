@@ -57,7 +57,34 @@
      * 既存の meta.cleared（配列・そのエリアを一度でもクリアしたか＝解放条件用）とは別物。 */
     if (!meta.bossWins || typeof meta.bossWins !== 'object') meta.bossWins = {};
     if (!meta.clears || typeof meta.clears !== 'object') meta.clears = {};
+    /* 2026-09-06（本人指定）：閲覧済みのカード {id: true}。known にあって seen に無いものが
+     * コレクションで「NEW」になり、詳細を見た時点で消える。**無いセーブでは known 全部を
+     * 閲覧済みにして初期化する**（アップデート直後の既存プレイヤーに、これまで集めた全部を
+     * NEW で見せてしまう事故を防ぐ＝homeSeenLevel と同じ考え方）。 */
+    if (!meta.seen || typeof meta.seen !== 'object') {
+      meta.seen = {};
+      meta.known.forEach(function (id) { meta.seen[id] = true; });
+    }
     return meta;
+  }
+
+  /** カードの詳細を見た（コレクション・戦利品・結果画面のどこでも）。 */
+  function markSeen(meta, id) {
+    ensure(meta);
+    if (+id === BLANK) return;
+    meta.seen[+id] = true;
+  }
+
+  /** 入手済みなのにまだ詳細を見ていないカードか（＝NEWを付ける対象）。 */
+  function isUnseen(meta, id) {
+    ensure(meta);
+    return meta.known.indexOf(+id) >= 0 && !meta.seen[+id];
+  }
+
+  /** まだ見ていない入手済みカードのid一覧（id昇順）。ホームの「新しいカード n種」用。 */
+  function unseenIds(meta) {
+    ensure(meta);
+    return meta.known.filter(function (id) { return !meta.seen[id]; }).sort(function (a, b) { return a - b; });
   }
 
   function registerKnown(meta, id) {
@@ -437,7 +464,7 @@
 
   const api = {
     DECK_MAX, KIND_MAX, PIG, BLANK,
-    countsTotal, canAddToDeck, ensure, registerKnown,
+    countsTotal, canAddToDeck, ensure, registerKnown, markSeen, isUnseen, unseenIds,
     deckTotal, blankCount, deckFillable, canDepart, nextGoal, moveToDeck, moveToBook, addCard, sellFromDeck, sellFromBook,
     /* M7 WP2 */
     STAGE_STEPS, STAGE_MAX, LP_BASE, LP_CAP, RARE_THRESHOLD_HOME,

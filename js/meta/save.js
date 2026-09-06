@@ -21,6 +21,9 @@
  *   clears:      {areaId: count}   エリアごとの累計クリア回数（M8.1 WP4）。3／5／7回目で
  *                                 部屋の累計報酬が出る。既存の meta.cleared（配列・解放条件用）
  *                                 とは別物なので混同しないこと
+ *   seen:        {cardId: true}    詳細を一度でも見たカード（2026-09-06）。known にあって seen に
+ *                                 無いものがコレクションで NEW になる。無いセーブでは known 全部を
+ *                                 閲覧済みとして初期化する（js/meta/collection.js ensure()）
  *   gold / cleared / …           その他のメタ
  * cq_run … 中断中のランのオートセーブ（js/run/run.js の run オブジェクトそのもの）
  *

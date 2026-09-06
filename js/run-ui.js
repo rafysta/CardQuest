@@ -81,6 +81,22 @@ const RUI = {
 
 function runRoot() { return document.getElementById('run-root'); }
 function runSave() { if (RUI.run) CQSave.saveRun(RUN_STORAGE, RUI.run); }
+
+/** カードの詳細を見た（2026-09-06・コレクションの NEW を消す）。入手済みのカードだけ記録する
+ * ——まだ持っていないカード（図鑑の「？」）を見ても、あとで手に入れたときの NEW は残す。 */
+function markCardSeen(id) {
+  const meta = RUI.meta;
+  if (!meta) return;
+  /* ラン中の戦利品（まだ settle() で known に載る前）も「見た」に数える——振り分け画面で
+   * 効果文を読んだカードが、帰ってから NEW のままでは筋が通らない。 */
+  const gained = (RUI.run && RUI.run.gainedCards) || [];
+  const owned = (meta.known || []).indexOf(+id) >= 0 || gained.indexOf(+id) >= 0;
+  if (!owned) return;
+  CQCollection.ensure(meta);
+  if (meta.seen[+id]) return;
+  CQCollection.markSeen(meta, id);
+  CQSave.saveMeta(RUN_STORAGE, meta);
+}
 /** 短いお知らせを画面に出す。js/layout.js の flash()（#flash のトースト）をそのまま使う。
  * 2026-08-29 修正：以前は RUI.flash に文字列を入れるだけで、どこも描画していなかったため
  * 「本にありません」「デッキは40枚までです」等のメッセージが一切出ていなかった。 */
@@ -285,8 +301,10 @@ function renderHome() {
   /* デッキが40枚に足りないと出発できない（WP9）ので、ホームの時点で不足を見せておく
    * ——「冒険に出る」を押してから止められるより、押す前に分かるほうがよい。 */
   const dep = CQCollection.canDepart(meta);
+  const unseen = CQCollection.unseenIds(meta).length;   /* 2026-09-06：まだ見ていない新しいカード */
   const tiles = HOME_FACILITIES.map(function (f) {
-    const note = (dep.ok) ? ''
+    const note = (f.id === 'collection' && unseen) ? `<span class="home-tile-warn">新しいカード ${unseen}種</span>`
+      : (dep.ok) ? ''
       : (f.id === 'deck') ? `<span class="home-tile-warn">あと${dep.fillable}枚入ります</span>`
       : (f.id === 'adventure') ? '<span class="home-tile-warn">デッキが未完成</span>'
       : '';
@@ -1625,7 +1643,7 @@ function cgGridHTML(items, emptyMsg) {
  * ショップ・換金所・戦利品振り分けの3画面で共用。btnsFn(item, idx) がそのカードのボタン欄の
  * HTMLを返す——空文字なら見た目はcgGridHTMLのタイルと同じになる）。 */
 function cgCardHTML(item, idx, btnsHTML) {
-  return `<div class="cg-card">
+  return `<div class="cg-card${item.bonus ? ' cg-card-bonus' : ''}">
       ${cgTileHTML(item.id, item.badge != null ? item.badge : item.rental, idx)}
       ${btnsHTML ? `<div class="cg-card-btns">${btnsHTML}</div>` : ''}
     </div>`;
@@ -1640,9 +1658,9 @@ function cgCardGridHTML(items, emptyMsg, btnsFn) {
 
 /** 右の情報パネル（screen-deck・持ち出し画面の .detail .big と同じ体裁を流用）。
  * actionsHTML は画面ごとに差し替える下部のボタン（9-a）。 */
-function cgDetailHTML(actionsHTML) {
-  const c = CARD_BY_ID[RUI.gridSel];
-  if (!c) return '<div class="carry-detail-empty">カードを選ぶと、ここに絵と詳細が出ます。</div>';
+/** カード1枚の大きい表示（絵・名前・能力値・効果文）。情報パネル（cgDetailHTML／colDetailHTML）と
+ * 結果画面のポップアップ（2026-09-06）で共用。 */
+function bigCardHTML(c) {
   const stat = c.t === 'U'
     ? `<span>攻撃力 ${c.a}</span><span>防御力 ${c.d}</span>
        <span>ＣＨ ${c.ch}</span><span>召還Ｌｖ ${c.lv}</span><span>${c.p} G</span>`
@@ -1653,8 +1671,32 @@ function cgDetailHTML(actionsHTML) {
       <div class="bn">${esc(c.n)}</div>
       <div class="bstat">${stat}</div>
       <div class="btext">${esc(c.e || '')}</div>
-    </div>
+    </div>`;
+}
+
+function cgDetailHTML(actionsHTML) {
+  const c = CARD_BY_ID[RUI.gridSel];
+  if (!c) return '<div class="carry-detail-empty">カードを選ぶと、ここに絵と詳細が出ます。</div>';
+  return bigCardHTML(c) + `
     <div class="cg-actions">${actionsHTML || ''}</div>`;
+}
+
+/** ボス撃破の特別報酬（M8.1 WP4・run.bossBonus）を id→{kind, tag, note} で返す。
+ * 2026-09-06 本人指定：ただの戦利品と同じ見え方だと「何が特別に貰えたのか」が分からないので、
+ * 戦利品の振り分け画面と結果画面の両方で、この情報を使って強調する。 */
+function bossBonusInfo(run) {
+  const b = run && run.bossBonus;
+  const info = {};
+  if (!b) return info;
+  if (b.masterCard != null) {
+    info[b.masterCard] = { kind: 'master', tag: '✦ マスターの一枚',
+      note: (b.masterName || 'マスター') + 'が、自分の一枚を渡した。' };
+  }
+  if (b.roomCard != null) {
+    info[b.roomCard] = { kind: 'room', tag: '✦ 部屋の報酬',
+      note: '部屋' + (b.room || '') + 'を累計' + (b.threshold || '') + '回踏破した報酬。' };
+  }
+  return info;
 }
 
 /** ラン中に「持ち出している」全部（9-b・9-c で共用）：デッキのカードを枚数ぶん展開し、
@@ -1782,21 +1824,24 @@ const COLLECTION_TOTAL = CARDS.filter(function (c) {
   return (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK;
 }).length;
 
-function colTileHTML(id, known, idx) {
+function colTileHTML(id, known, idx, unseen) {
   const c = CARD_BY_ID[id];
   const inner = known
     ? `<div class="cg-tile-art">${artInner(c, 3)}</div>`
     : '<span class="col-unknown-mark">？</span>';
+  /* 2026-09-06 本人指定：入手済みでまだ詳細を見ていないカードに NEW。押して詳細を見ると消える
+   * （grid-pick が CQCollection.markSeen を呼ぶ）。 */
   return `<div class="cg-tile ${known ? '' : 'col-unknown'} ${RUI.gridSelIdx === idx ? 'on' : ''}"
       data-act="grid-pick" data-id="${id}" data-idx="${idx}">
       ${inner}
+      ${unseen ? '<span class="res-badge-new">NEW</span>' : ''}
     </div>`;
 }
 
 function colGridHTML(items) {
   if (!items.length) return '<div class="cg-empty">カードがありません</div>';
   return `<div class="cg-grid col-grid">${items.map(function (it, idx) {
-    return colTileHTML(it.id, it.known, idx);
+    return colTileHTML(it.id, it.known, idx, it.unseen);
   }).join('')}</div>`;
 }
 
@@ -1835,11 +1880,13 @@ function renderCollection() {
   const known = meta.known || [];
   const items = CARDS.filter(function (c) { return c.t === tab && c.id !== CQRun.BLANK; })
     .sort(function (a, b) { return a.id - b.id; })
-    .map(function (c) { return { id: c.id, known: known.indexOf(c.id) >= 0 }; });
+    .map(function (c) { return { id: c.id, known: known.indexOf(c.id) >= 0, unseen: CQCollection.isUnseen(meta, c.id) }; });
   const lv = CQCollection.masterLevelOf(meta);
   const need = CQCollection.nextStageNeed(known.length);
+  const unseenAll = CQCollection.unseenIds(meta);
   const tabsHTML = CARRY_TABS.map(function (t) {
-    return `<button class="dtab ${t.t} ${tab === t.t ? 'on' : ''}" data-act="col-tab" data-id="${t.t}">${t.label}</button>`;
+    const n = unseenAll.filter(function (id) { return CARD_BY_ID[id] && CARD_BY_ID[id].t === t.t; }).length;
+    return `<button class="dtab ${t.t} ${tab === t.t ? 'on' : ''}" data-act="col-tab" data-id="${t.t}">${t.label}${n ? `<span class="dtab-new">${n}</span>` : ''}</button>`;
   }).join('');
   runRoot().innerHTML = `
     <div class="cg-head">
@@ -1848,6 +1895,7 @@ function renderCollection() {
         <span>記憶データ <b>${known.length}</b>／${COLLECTION_TOTAL}</span>
         <span>マスターレベル <b>${lv}</b>／${CQCollection.STAGE_MAX}</span>
         ${need ? `<span>次の段階まであと <b>${need}</b>種</span>` : '<span>最終段階</span>'}
+        ${unseenAll.length ? `<span class="col-new-count">新しいカード <b>${unseenAll.length}</b>種</span>` : ''}
       </div>
       <button class="btn ok cg-done" data-act="collection-leave">ホームへ戻る</button>
     </div>
@@ -2241,19 +2289,34 @@ function renderLoot() {
   const pending = run.lootPending || [];
   /* M7 WP3.5（案B）：デッキの空きはレンタル枚数と無関係（レンタルは枠外）。 */
   const remain = Math.max(0, CQRun.DECK_SIZE - CQCollection.countsTotal(run.deck));
-  const items = pending.map(function (id) { return { id: id, rental: false }; });
+  /* 2026-09-06 本人指定：ボス撃破の特別報酬（マスターの一枚・部屋の報酬）は先頭に置き、
+   * 金枠＋バッジで「ただの戦利品ではない」ことを強調する。同じidが通常の戦利品にも
+   * あるときは先頭の1枚だけを特別扱いにする（resolveLootPick はどの1枚を消しても同じ）。 */
+  const bonus = bossBonusInfo(run);
+  const usedBonus = {};
+  const items = pending.map(function (id) {
+    const b = bonus[id] && !usedBonus[id] ? bonus[id] : null;
+    if (b) usedBonus[id] = true;
+    return { id: id, rental: false, bonus: !!b, badge: b ? b.tag : undefined };
+  }).sort(function (a, b) { return (b.bonus ? 1 : 0) - (a.bonus ? 1 : 0); });
+  const bonusNotes = items.filter(function (it) { return it.bonus; }).map(function (it) {
+    return `<div class="loot-bonus-line">${esc(bonus[it.id].note)}　<b>「${esc(CARD_BY_ID[it.id].n)}」</b></div>`;
+  }).join('');
+  const selBonus = RUI.gridSel != null && bonus[RUI.gridSel] ? bonus[RUI.gridSel] : null;
   runRoot().innerHTML = `
     <div class="cg-head">
       <div class="cg-title">戦利品</div>
       <div class="cg-stats"><span>デッキの空き <b>${remain}</b>枚</span></div>
     </div>
+    ${bonusNotes ? `<div class="loot-bonus-banner"><span class="loot-bonus-h">✦ 特別な戦利品</span>${bonusNotes}</div>` : ''}
     <div class="cg-wrap">
       <div class="cg-main">${cgCardGridHTML(items, '戦利品はありません', function (it) {
         const canDeck = CQRun.canAssignToDeck(run, it.id);
         return `<button class="tiny" data-act="loot-deck" data-id="${it.id}" ${canDeck ? '' : 'disabled'}>デッキへ</button>
           <button class="tiny" data-act="loot-book" data-id="${it.id}">本へ</button>`;
       })}</div>
-      <div class="detail cg-detail">${cgDetailHTML('')}</div>
+      <div class="detail cg-detail">${cgDetailHTML(selBonus
+        ? `<div class="loot-bonus-note">${esc(selBonus.tag)}<br>${esc(selBonus.note)}</div>` : '')}</div>
     </div>
     <p class="node-note cg-foot">カードごとに「デッキへ」か「本へ」を選んでください。
       「本へ」を選んだカードは<b>このランでは使えません</b>（次のランから持ち出せます）。
@@ -2306,17 +2369,34 @@ function finishRun(run) {
   }
   CQSave.saveMeta(RUN_STORAGE, meta);
   CQSave.clearRun(RUN_STORAGE);
+  RUI.resSel = null;
   RUI.view = 'result';
 }
 
-/** 結果画面のカードタイル。グリッドの `cgTileHTML` とは違い**押せない**（閲覧専用）ので、
- * data-act を持たせず、バッジだけ差し替えられるようにしてある。 */
-function resTileHTML(id, badge) {
+/** 結果画面のカードタイル。2026-09-06 本人指定：以前は押せない閲覧専用だったが、
+ * 「小さい絵だけでは何を取ったのか分からない」ので押すとポップアップ（resDetailHTML）で
+ * 絵と効果文が見られるようにした。bonus はボス撃破の特別報酬（金枠）。 */
+function resTileHTML(id, badge, bonus) {
   const c = CARD_BY_ID[id];
   if (!c) return '';
-  return `<div class="res-tile" title="${esc(c.n)}">
+  return `<div class="res-tile${bonus ? ' res-tile-bonus' : ''}" title="${esc(c.n)}" data-act="res-pick" data-id="${id}">
       <div class="cg-tile-art">${artInner(c, 3)}</div>
+      ${bonus ? '<span class="res-badge-bonus">✦</span>' : ''}
       ${badge || ''}
+    </div>`;
+}
+
+/** 結果画面のカード詳細ポップアップ（RUI.resSel のカード）。どこを押しても閉じる。 */
+function resDetailHTML(run) {
+  const c = CARD_BY_ID[RUI.resSel];
+  if (!c) return '';
+  const b = bossBonusInfo(run)[c.id];
+  return `<div class="res-detail-overlay" data-act="res-close">
+      <div class="res-detail detail${b ? ' res-detail-bonus' : ''}">
+        ${b ? `<div class="loot-bonus-note">${esc(b.tag)}<br>${esc(b.note)}</div>` : ''}
+        ${bigCardHTML(c)}
+        <div class="res-detail-close">押すと閉じる</div>
+      </div>
     </div>`;
 }
 
@@ -2352,10 +2432,22 @@ function renderResult() {
    * 初めて現れた1枚だけを NEW にする（同じカードを2枚拾った日は1枚目だけが NEW）。 */
   const knownBefore = st.knownBefore || [];
   const seen = {};
-  const gainedHTML = (run.gainedCards || []).map(function (id) {
-    const isNew = knownBefore.indexOf(id) < 0 && !seen[id];
-    seen[id] = true;
-    return resTileHTML(id, isNew ? '<span class="res-badge-new">NEW</span>' : '');
+  /* 2026-09-06：ボス撃破の特別報酬は金枠＋✦で目立たせ、先頭に並べる（同じidの通常戦利品が
+   * あっても特別扱いは1枚だけ）。 */
+  const bonus = bossBonusInfo(run);
+  const usedBonus = {};
+  const gained = (run.gainedCards || []).map(function (id) {
+    const b = !!bonus[id] && !usedBonus[id];
+    if (b) usedBonus[id] = true;
+    return { id: id, bonus: b };
+  }).sort(function (a, b) { return (b.bonus ? 1 : 0) - (a.bonus ? 1 : 0); });
+  const gainedHTML = gained.map(function (it) {
+    const isNew = knownBefore.indexOf(it.id) < 0 && !seen[it.id];
+    seen[it.id] = true;
+    return resTileHTML(it.id, isNew ? '<span class="res-badge-new">NEW</span>' : '', it.bonus);
+  }).join('');
+  const bonusLines = gained.filter(function (it) { return it.bonus; }).map(function (it) {
+    return `<p class="res-bonus-line">✦ ${esc(bonus[it.id].note)}　<b>「${esc(CARD_BY_ID[it.id].n)}」</b></p>`;
   }).join('');
 
   /* --- 2. 返却するカード（レンタル・借バッジ） --------------------------- */
@@ -2403,7 +2495,8 @@ function renderResult() {
         <div class="res-col">
           <section class="res-sec">
             <h4>取得したカード<span class="res-n">${(run.gainedCards || []).length}枚</span></h4>
-            ${gainedHTML ? `<div class="res-tiles">${gainedHTML}</div>`
+            ${bonusLines}
+            ${gainedHTML ? `<div class="res-tiles">${gainedHTML}</div><p class="res-tap-note">カードを押すと詳細が見られます</p>`
               : '<p class="res-none-note">今回は何も書き留められませんでした。</p>'}
           </section>
           <section class="res-sec">
@@ -2429,7 +2522,8 @@ function renderResult() {
           <button class="btn ok res-done" data-act="back-home">今回の探検を終える</button>
         </div>
       </div>
-    </div>`;
+    </div>
+    ${resDetailHTML(run)}`;
 
   /* 所持Ｇのカウントアップは1つのランにつき1回だけ（描き直しでは最終値を静止表示）。 */
   const goldEl = document.getElementById('res-gold');
@@ -2826,6 +2920,14 @@ function runAct(act, id, idx) {
     case 'grid-pick':
       RUI.gridSel = +id;
       RUI.gridSelIdx = idx != null ? +idx : null;
+      markCardSeen(+id);
+      return runRender();
+    case 'res-pick':
+      RUI.resSel = +id;
+      markCardSeen(+id);
+      return runRender();
+    case 'res-close':
+      RUI.resSel = null;
       return runRender();
     case 'deckview-open':
       RUI.view = 'deckview';

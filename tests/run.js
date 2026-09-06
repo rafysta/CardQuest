@@ -7531,6 +7531,36 @@ t('ACT_TITLES：幕2「七つの罪」・幕3「門と審判」の見出しも�
 
 
 
+section('コレクションの NEW（閲覧済みの記録・2026-09-06 本人指定）');
+
+t('seen が無いセーブは known 全部を閲覧済みにして初期化（既存プレイヤーに全部NEWを見せない）', () => {
+  const m = { book: {}, deck: {}, known: [8, 101, 113], gold: 0, cleared: [] };
+  CQCollection.ensure(m);
+  eq(m.seen, { 8: true, 101: true, 113: true }, 'known の3種が閲覧済み');
+  eq(CQCollection.unseenIds(m), [], 'NEW は無い');
+});
+
+t('その後に入手したカードだけ NEW になり、markSeen で消える', () => {
+  const m = { book: {}, deck: {}, known: [8], gold: 0, cleared: [] };
+  CQCollection.ensure(m);
+  CQCollection.registerKnown(m, 7);
+  CQCollection.addCard(m, 19, 'book');
+  eq(CQCollection.isUnseen(m, 7), true, '7は未閲覧');
+  eq(CQCollection.isUnseen(m, 19), true, '19も未閲覧');
+  eq(CQCollection.isUnseen(m, 8), false, '8は初期化時に閲覧済み');
+  eq(CQCollection.unseenIds(m), [7, 19], 'id昇順');
+  CQCollection.markSeen(m, 19);
+  eq(CQCollection.isUnseen(m, 19), false, '見たら消える');
+  eq(CQCollection.unseenIds(m), [7], '残りは7だけ');
+});
+
+t('まだ持っていないカード（図鑑の「？」）は NEW の対象外', () => {
+  const m = { book: {}, deck: {}, known: [8], gold: 0, cleared: [] };
+  CQCollection.ensure(m);
+  eq(CQCollection.isUnseen(m, 50), false, '未入手は NEW ではない');
+  eq(CQCollection.unseenIds(m), [], '');
+});
+
 section('開発用：進行状態のプリセット（js/devpresets.js・2026-09-06）');
 
 const CQDevPresets = require(path.join(root, 'js/devpresets.js'));
