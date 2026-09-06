@@ -8569,13 +8569,81 @@ t('tutorialStage：草原の通常戦闘マスだけ・初日は第1戦・その
   eq(CQRun.tutorialStage(TUTO_RUN, null, n), 0, 'meta を渡さなければ固定しない（シミュレータ・テスト）');
 });
 
-t('tutorialStage：第1戦は初日だけ／第2戦は日数の上限なしで持ち越す（本人確定⑩）', () => {
+t('tutorialStage：第1戦・第2戦とも、既読になるまで何日目でも持ち越す（2026-09-06 修正）', () => {
   const n = tutoNode();
-  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 3 }), n), 0, '2日目以降に始めた人には第1戦を出さない');
-  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 3, seenHints: { forceTutorial: true } }), n), 1,
-    'デバッグの強制フラグがあれば日数を無視する');
+  /* ★以前は第1戦だけ meta.day===0 に限っていた。そのため初回ランが草原の通常戦闘マスを
+   * 踏まずに終わる（負けた・諦めた・強敵と精鋭しか踏まなかった）と、通常プレイでは
+   * 二度と出なくなっていた——本人報告の「最初からやり直しても行かない」の片方の原因。
+   * 「M8.5より前からの既存プレイヤーには出さない」は js/meta/save.js の migrateTutorial
+   * （既読フラグを立てる一度きりの移行）が担当する（下の節でテストする）。 */
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 3 }), n), 1,
+    '初回ランを踏み外した人にも第1戦は残る（3日目でも出る）');
   eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 9, seenHints: { tutorialBattle1: true } }), n), 2,
-    '第2戦は何日目でも出る＝初回ランで踏めなくても持ち越す');
+    '第2戦は何日目でも出る＝初回ランで踏めなくても持ち越す（本人確定⑩）');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 9, seenHints: { tutorialBattle1: true, tutorialBattle2: true } }), n), 0,
+    '見終わっていれば、何日目だろうと固定しない');
+});
+
+t('cq_meta：新しく作ったセーブは tutorialMigrated 済みで始まる（2026-09-06 修正の要）', () => {
+  const st = mockStorage();
+  const m = CQSave.loadMeta(st, [8, 8, 180]);
+  eq(m.tutorialMigrated, true, '新規初期化も ensureFields を通る＝移行済みの印が付く');
+  eq(Object.keys(m.seenHints || {}), [], 'チュートリアルの既読フラグは1つも立っていない');
+});
+
+t('cq_meta：新品のセーブは、1ラン終えた後に読み込み直してもチュートリアルが消えない（本人報告の再現）', () => {
+  const st = mockStorage();
+  /* ①「最初からやり直す」直後の新品のセーブ */
+  const m1 = CQSave.loadMeta(st, [8, 8, 180]);
+  CQSave.saveMeta(st, m1);
+  /* ② 初回ランを終える（settle() が meta.day を1にするのと同じ） */
+  const m2 = CQSave.loadMeta(st, [8, 8, 180]);
+  m2.day = 1;
+  CQSave.saveMeta(st, m2);
+  /* ③ アプリを開き直す＝ここで migrateTutorial が走る */
+  const m3 = CQSave.loadMeta(st, [8, 8, 180]);
+  eq(Object.keys(m3.seenHints || {}), [],
+    '★新品のセーブを「M8.5より前からの既存プレイヤー」と誤認して既読にしてしまわない');
+  eq(CQRun.tutorialStage(TUTO_RUN, m3, tutoNode()), 1, '2日目でも第1戦はちゃんと出る');
+});
+
+t('cq_meta：M8.5より前からのセーブ（tutorialMigrated が無く day≧1）は、いままでどおり移行で既読にする', () => {
+  const st = mockStorage();
+  const old = {
+    book: { 8: 10 }, deck: {}, known: [8], gold: 0, cleared: ['grassland'],
+    openingSeen: true, visits: {}, seenHints: {}, homeVisited: true, day: 12
+  };
+  st.setItem('cq_meta', JSON.stringify(old));
+  const m = CQSave.loadMeta(st, [8]);
+  eq(m.tutorialMigrated, true, '移行済みの印が付く');
+  eq(CQSave.TUTORIAL_HINT_KEYS.every((k) => m.seenHints[k] === true), true,
+    '10個とも既読＝遊び方を知っている人にいまさら固定戦闘を出さない');
+  eq(CQRun.tutorialStage(TUTO_RUN, m, tutoNode()), 0, 'この人には第1戦も第2戦も出ない');
+});
+
+t('cq_meta：M8.5より前のセーブでも、まだ1ランも終えていない（day 0）なら既読にしない', () => {
+  const st = mockStorage();
+  st.setItem('cq_meta', JSON.stringify({
+    book: { 8: 10 }, deck: {}, known: [8], gold: 0, cleared: [],
+    openingSeen: true, visits: {}, seenHints: {}, homeVisited: true
+  }));
+  const m = CQSave.loadMeta(st, [8]);
+  eq(Object.keys(m.seenHints || {}), [], '既読にはしない');
+  eq(CQRun.tutorialStage(TUTO_RUN, m, tutoNode()), 1, 'この人にはチュートリアルを見せる');
+});
+
+t('目覚めの場面の文面は js/lore.js（LORE.opening＝台本v1.0 §1）が正で、run-ui.js は直書きしない', () => {
+  const op = CQLore.LORE.opening;
+  eq(Array.isArray(op) && op.length > 0, true, 'LORE.opening がある');
+  eq(op.every((b) => b.face === 'calm' || b.face === 'down'), true, '表情は calm か down（アンバー）');
+  eq(op.every((b) => Array.isArray(b.lines) && b.lines.length > 0 && b.lines.every((s) => typeof s === 'string' && s)), true,
+    '各吹き出しは空でない lines を持つ');
+  /* ★2026-09-06：run-ui.js に旧版の文面（M6.6 WP1当時の直書き）が残っていて、台本v1.0を
+   * lore.js に取り込んだ後も画面には古い方が出ていた。二度と分岐しないよう、
+   * 「run-ui.js は lore.js を読むだけ」をソースの形で固定しておく。 */
+  const uiSrc = fs.readFileSync(path.join(root, 'js/run-ui.js'), 'utf8');
+  eq(/OPENING_SCRIPT/.test(uiSrc), false, 'run-ui.js に直書きの台本（OPENING_SCRIPT）は無い');
+  eq(/CQLore\.LORE\.opening/.test(uiSrc), true, 'run-ui.js は CQLore.LORE.opening を読む');
 });
 
 t('applyTutorialNode：マスの敵と戦場ルールを、実際に立つ盤面へそろえる', () => {

@@ -162,31 +162,30 @@ function runInit() {
 
 /* ================= 目覚めの場面（M6.6 WP1・初回起動のみ） =================
  *
- * 台本§5-1（本文の台本には未統合。M6.5c の lore.js ができるまではここに直書きする——
- * §0-9進捗ログに申し送り済み）。フロー：暗転→ assets/ui/awakening.png がゆっくりフェードイン
+ * フロー：暗転→ assets/ui/awakening.png がゆっくりフェードイン
  * （.opening-scene の黒背景がそのまま「暗転」を兼ねる）→ 右側に amber_calm/down の肖像が
- * 少し遅れてフェードイン → 台本10個をタップ送り → 最後の後にフェードアウト → エリア選択へ。
+ * 少し遅れてフェードイン → 台本をタップ送り → 最後の後にフェードアウト → ホームへ。
  * 背景・肖像のフェードインは初回描画時だけ再生する（RUI.openingIntroDone で以後は
- * intro-done クラスにより即表示に切り替え、タップのたびに要素を作り直しても再生し直さない）。 */
+ * intro-done クラスにより即表示に切り替え、タップのたびに要素を作り直しても再生し直さない）。
+ *
+ * ★2026-09-06 修正（本人報告）：**文面は js/lore.js の LORE.opening（台本v1.0 §1）が正**。
+ * ここに旧版（M6.6 WP1当時の文面）を直書きしたまま残っていたため、台本v1.0を lore.js へ
+ * 取り込んだ後も画面には古い文面が出ていた。台本を直したらそのまま画面に出るよう、
+ * ここでは lore.js を読むだけにする（他の吹き出しと同じ扱い＝推敲でコードを触らない）。 */
 
-const OPENING_SCRIPT = [
-  { tag: 'calm', text: '起きたか。' },
-  { tag: 'calm', text: '名も、来し方も、覚えていない。\nそういう顔をしている。' },
-  { tag: 'calm', text: '私はアンバー。\nこの本に憑いている。' },
-  { tag: 'calm', text: 'ここはソウルゲート。\n渡れなかった魂が溜まる島だ。' },
-  { tag: 'calm', text: '島の魂は、鎮めて書き留めれば呼べる。\nそれをする者を、記録者と呼ぶ。' },
-  { tag: 'down', text: '……お前も、しばらくは出られん。' },
-  { tag: 'calm', text: '自分が誰だったか知りたければ、\nまずは書け。' },
-  { tag: 'down', text: '白紙ばかりだが、書き残しが少しある。\n……前の持ち主の分だ。' },
-  { tag: 'calm', text: '受け継いでおけ。\n最初は、それで足りる。' },
-  { tag: 'calm', text: '行くぞ。今日の巡り先を選べ。' }
-];
+/** 目覚めの台本（js/lore.js の LORE.opening）。lore.js が読めない状況でも
+ * 画面が壊れないよう、空配列を返して「1つも無い」扱いにする。 */
+function openingScript() {
+  const arr = (typeof CQLore !== 'undefined' && CQLore.LORE) ? CQLore.LORE.opening : null;
+  return Array.isArray(arr) ? arr : [];
+}
 
 function renderOpening() {
-  const step = Math.min(RUI.openingStep || 0, OPENING_SCRIPT.length - 1);
-  const entry = OPENING_SCRIPT[step];
-  const portrait = entry.tag === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
-  const lines = String(entry.text).split('\n').map(esc).join('<br>');
+  const script = openingScript();
+  const step = Math.min(RUI.openingStep || 0, Math.max(0, script.length - 1));
+  const entry = script[step] || { face: 'calm', lines: [''] };
+  const portrait = entry.face === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
+  const lines = (entry.lines || []).map(esc).join('<br>');
   const cls = 'opening-scene' + (RUI.openingIntroDone ? ' intro-done' : '') + (RUI.openingFadeOut ? ' fade-out' : '');
   runRoot().innerHTML = `
     <div class="${cls}">
@@ -1487,7 +1486,6 @@ function leaveBattleIntro() {
       ? ['placement', 'faceDown', 'loot', 'open']
       : ['hidden', 'forceOpen', 'unpossess'];
     covered.forEach(function (k) { CQSave.markHint(RUI.meta, k); });
-    if (setup.tutorial === 2 && RUI.meta.seenHints) delete RUI.meta.seenHints.forceTutorial;
     CQSave.saveMeta(RUN_STORAGE, RUI.meta);
   }
   /* 戦闘中の割り込みヒント（M8.5 WP1）。cq_meta を触る2つの関数だけを渡す＝
@@ -2961,7 +2959,7 @@ function runAct(act, id, idx) {
     case 'opening-next': {
       RUI.openingIntroDone = true;
       const next = (RUI.openingStep || 0) + 1;
-      if (next >= OPENING_SCRIPT.length) {
+      if (next >= openingScript().length) {
         /* 最後の吹き出しの後はフェードアウトしてからエリア選択へ（§4 WP1のフロー） */
         RUI.openingFadeOut = true;
         runRender();

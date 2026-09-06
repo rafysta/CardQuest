@@ -11,7 +11,7 @@
  *   seenHints:   {key: true}      一度だけ出すヒント（台本§14）。出したらキーを立てる。
  *                                 M8.5 で戦闘中の8種と固定戦闘2つ（tutorialBattle1/2・placement・
  *                                 hidden・faceDown・loot・open・forceOpen・unpossess・firstRecord）
- *                                 が加わった。forceTutorial はデバッグ用（日数の条件を無視する）
+ *                                 が加わった（tutorialBattle1/2 は既読になるまで何日目でも出る）
  *   tutorialMigrated: boolean     M8.5 の移行を済ませたか。既に第1戦を終えている人
  *                                 （day≧1）にチュートリアルを出さないための一度きりの処理
  *   homeVisited: boolean          ホーム画面（M7 WP5）に一度でも来たか。§2.1（初回3つ）と
@@ -110,7 +110,12 @@
    * **すでに一度でも冒険を終えている人（day≧1）には出さない**——遊び方はもう知っているのに、
    * 次の草原の通常戦闘でいきなり手札と盤面が差し替わるほうが驚きが大きい。
    * 一度きりの処理にしてあるのは、デバッグの「🔰 チュートリアルをやり直す」で未読に戻した後、
-   * 読み込み直すたびに既読へ戻されてしまうのを防ぐため。 */
+   * 読み込み直すたびに既読へ戻されてしまうのを防ぐため。
+   *
+   * ★これが効いてよいのは「**この関数が初めて走った時点で既に day≧1 だったセーブ**」
+   * ＝M8.5より前から遊んでいる人だけ。新しく作ったセーブは initialMeta の直後に
+   * ensureFields を通って tutorialMigrated が立つので、その後どれだけ日数を重ねても
+   * ここで既読にされることはない（loadMeta の★印の修正を参照）。 */
   const TUTORIAL_HINT_KEYS = ['tutorialBattle1', 'tutorialBattle2',
     'placement', 'hidden', 'faceDown', 'loot', 'open', 'forceOpen', 'unpossess', 'firstRecord'];
 
@@ -215,7 +220,13 @@
         if (m && m.deck) return ensureFields(migrate(m));          /* 旧形式 → 移行 */
       }
     } catch (e) { /* 壊れたデータは初期化して復旧する */ }
-    return initialMeta(defaultDeckIds);
+    /* ★2026-09-06 修正（本人報告）：**新規初期化も ensureFields を通す**。
+     * ここだけ素通ししていたため、新品のセーブに tutorialMigrated が付かないまま
+     * 保存され、1ラン終えた後（day≧1）に読み込み直した瞬間、migrateTutorial が
+     * その新品のセーブを「M8.5より前からの既存プレイヤー」と誤認して、
+     * チュートリアルの既読フラグ10個を全部立ててしまっていた（＝「最初からやり直す」で
+     * 始めたのに、通常プレイではチュートリアルが二度と出ない）。 */
+    return ensureFields(initialMeta(defaultDeckIds));
   }
 
   function saveMeta(storage, meta) {

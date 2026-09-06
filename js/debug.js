@@ -214,9 +214,8 @@ const CQDebug = (function () {
   /* ---- 🔰 チュートリアルをやり直す（M8.5 WP4） ------------------------------
    * 既読フラグ（cq_meta.seenHints）から M8.5 の10個を消すだけ。**進行（本・記憶データ・
    * 日数・クリア状況）には一切触らない**ので、いまのセーブのまま何度でも見直せる。
-   * 固定戦闘は「まだ一度もランを終えていない人」だけが対象なので、日数が進んだセーブでは
-   * そのままだと再現しない——`forceTutorial` を一緒に立てて日数の条件を無視させる
-   * （第2戦に入った時点で js/run-ui.js が降ろす）。 */
+   * ★2026-09-06：固定戦闘は「既読になるまで何日目でも出る」ようになったので、
+   * 日数を無視させる `forceTutorial` はもう要らない（消すだけで再現する）。 */
   function resetTutorial() {
     if (typeof RUI === 'undefined' || !RUI || !RUI.meta) return out('ラン画面が読み込まれていません。');
     const ask = (typeof showConfirm === 'function') ? showConfirm
@@ -228,7 +227,7 @@ const CQDebug = (function () {
       const meta = RUI.meta;
       if (!meta.seenHints) meta.seenHints = {};
       (CQSave.TUTORIAL_HINT_KEYS || []).forEach(function (k) { delete meta.seenHints[k]; });
-      meta.seenHints.forceTutorial = true;         /* 日数の条件を無視する（第2戦で自動的に降りる） */
+      delete meta.seenHints.forceTutorial;         /* 旧版の名残り（いまは見ていない）も掃除する */
       CQSave.saveMeta(RUN_STORAGE, meta);
       if (typeof CQBattleHint !== 'undefined') CQBattleHint.close();
       out('チュートリアルを未読に戻しました。<br>草原の<b>通常</b>戦闘マス（強敵・精鋭・ボスは対象外）へ入ってください。');

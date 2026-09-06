@@ -429,15 +429,23 @@
 
   /** そのマスが固定戦闘になるか。なるなら 1 か 2、ならなければ 0。
    * 条件（§2.1〜§2.3）：草原の**通常戦闘マス**だけ（ボス・強敵・精鋭は対象外）。
-   *   第1戦 … まだ一度もランを終えていない人（meta.day===0）で、まだ見ていない
+   *   第1戦 … まだ見ていない
    *   第2戦 … 第1戦を終えた後。**日数の上限なし**＝初回ランで踏めなければ持ち越す（本人確定⑩）
    * meta を渡さない呼び出し（tools/simulate-run.js・tests）では常に 0＝固定しない。 */
   function tutorialStage(run, meta, n) {
     if (!meta || !n || !run) return 0;
     if (run.areaId !== 'grassland') return 0;
     if (n.type !== 'battle' || n.strength !== 'normal') return 0;
-    const force = hintDone(meta, 'forceTutorial');    /* デバッグ：日数の条件を無視する */
-    if (!hintDone(meta, 'tutorialBattle1')) return (force || (meta.day || 0) === 0) ? 1 : 0;
+    /* ★2026-09-06 修正（本人報告）：以前は第1戦だけ meta.day===0（まだ1ランも
+     * 終えていない）に限っていた。そのため**初回ランが草原の通常戦闘マスを踏まずに
+     * 終わると、以後は通常プレイで二度と出ない**——負けても諦めても、そのランで
+     * 強敵・精鋭のマスしか踏まなくても、そこで打ち切られてしまう。
+     * 第2戦は「初回ランで踏めなければ2日目以降に持ち越す（日数の上限は設けない・
+     * 本人確定⑩）」なのだから、第1戦も同じく**見るまで持ち越す**のが筋。
+     * 「M8.5より前からの既存プレイヤーには出さない」は js/meta/save.js の
+     * migrateTutorial（既読フラグを立てる一度きりの移行）が担当していて、
+     * ここで日数を見る必要はもう無い。 */
+    if (!hintDone(meta, 'tutorialBattle1')) return 1;
     if (!hintDone(meta, 'tutorialBattle2')) return 2;
     return 0;
   }
