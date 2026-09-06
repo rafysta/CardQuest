@@ -7507,6 +7507,29 @@ t('bossBonusOfは読み取り専用（呼んだだけではmeta.bossWins／meta.
 });
 
 
+section('M8.1 WP5: エリア選択画面の幕分け（js/run/areas.js CQAreas.byAct）');
+
+t('byAct：いまはDEFSに幕1（草原〜砂漠）しか無いので、1段だけ返す（実装計画§1-4）', () => {
+  const groups = CQAreas.byAct();
+  eq(groups.length, 1, 'まだ幕2・3のエリアは無いので1段のみ');
+  eq(groups[0].act, 1, '幕番号は1');
+  eq(groups[0].title, '白紙', '幕1の見出しは世界観§4どおり「白紙」');
+  eq(groups[0].areas.map((a) => a.id), ['grassland', 'forest', 'mountain', 'coast', 'desert'],
+    '幕1の中身は草原→森→山地→海辺→砂漠の順（CQAreas.ORDERどおり）');
+});
+
+t('byAct：全エリアがact:1を持つ（M8.2・M8.3でact:2/3のエリアが増えるまでは1段のまま）', () => {
+  CQAreas.list().forEach((a) => {
+    eq(a.act, 1, `${a.id}はact:1`);
+  });
+});
+
+t('ACT_TITLES：幕2「七つの罪」・幕3「門と審判」の見出しも既に定義済み（世界観§4）', () => {
+  eq(CQAreas.ACT_TITLES[2], '七つの罪');
+  eq(CQAreas.ACT_TITLES[3], '門と審判');
+});
+
+
 
 section('M8.1 WP1: 入手経路の網羅表（js/meta/routes.js）');
 

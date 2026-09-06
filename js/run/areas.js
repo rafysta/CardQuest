@@ -74,7 +74,7 @@
 
   const DEFS = {
     grassland: {
-      id: 'grassland', name: '草原', tags: ['草原'], order: 0,
+      id: 'grassland', name: '草原', tags: ['草原'], order: 0, act: 1,
       bg: 'assets/map/bg_grassland.png', master: 'assets/masters/m_grassland.png',
       unlock: null,                 // 常に解放
       /* 草原の背景は地平線が高く、手前の砂地が広い。基準座標のままでちょうど道に乗る。 */
@@ -95,7 +95,7 @@
       enemyCount: { normal: [1, 1], strong: 2, elite: 3 }  // 通常戦闘の敵体数（M7.10 WP3）
     },
     forest: {
-      id: 'forest', name: '森', tags: ['森'], order: 1,
+      id: 'forest', name: '森', tags: ['森'], order: 1, act: 1,
       bg: 'assets/map/bg_forest.png', master: 'assets/masters/m_forest.png',
       unlock: { cleared: 'grassland' },   // 草原クリアで解放
       /* 森は下生えが手前まで迫っていて、明るい地面が草原より上・かつ狭い。
@@ -115,7 +115,7 @@
       enemyCount: { normal: [1, 2], strong: 2, elite: 3 }  // 通常戦闘の敵体数（M7.10 WP3）
     },
     mountain: {
-      id: 'mountain', name: '山地', tags: ['山地'], order: 2,
+      id: 'mountain', name: '山地', tags: ['山地'], order: 2, act: 1,
       bg: 'assets/map/bg_mountain.png', master: 'assets/masters/m_mountain.png',
       unlock: { cleared: 'forest' },      // 森クリアで解放（実装計画§1-3）
       layout: { up: 0, down: 0, mid: 0 }, // WP5でスクショを見てから詰める（§4-1の注記どおり）
@@ -133,7 +133,7 @@
       enemyCount: { normal: [1, 2], strong: 2, elite: 3 }
     },
     coast: {
-      id: 'coast', name: '海辺', tags: ['海Ｌ'], order: 3,
+      id: 'coast', name: '海辺', tags: ['海Ｌ'], order: 3, act: 1,
       bg: 'assets/map/bg_coast.png', master: 'assets/masters/m_coast.png',
       unlock: { level: 2 },               // マスターレベル2（記憶データ20種）で解放（実装計画§1-3）
       layout: { up: 0, down: 0, mid: 0 },
@@ -151,7 +151,7 @@
       enemyCount: { normal: [1, 2], strong: 2, elite: 3 }
     },
     desert: {
-      id: 'desert', name: '砂漠', tags: ['砂漠', '荒野'], order: 4,
+      id: 'desert', name: '砂漠', tags: ['砂漠', '荒野'], order: 4, act: 1,
       /* 実装計画§3-2：砂漠タグは3種しか無いため、隣接する地形の荒野を合流させる
        * （ブレードライダー19・アントロイド51の入手経路もこれで立つ）。 */
       bg: 'assets/map/bg_desert.png', master: 'assets/masters/m_desert.png',
@@ -176,8 +176,31 @@
   };
   const ORDER = ['grassland', 'forest', 'mountain', 'coast', 'desert'];
 
+  /* M8.1 WP5（実装計画§1-4）：エリア選択画面の「幕」見出し（世界観§4）。
+   * 幕1＝白紙（草原〜砂漠）・幕2＝七つの罪（M8.2でダンジョンが増える）・
+   * 幕3＝門と審判（M8.3で神殿・外部教会・神竜の間が増える）。
+   * いまはDEFSに幕2・3のエリアが1つも無い——存在しないエリアの見出しをここで
+   * 決め打ちで出すと、実際の解放条件が固まる前に間違った案内をしてしまうので、
+   * byAct() は実在するエリアがある幕しか返さない（§1-4の3段レイアウトの入れ物だけ
+   * 先に用意しておき、幕2・3の行そのものはM8.2・M8.3でエリアが増えたときに
+   * 自然に出てくる）。 */
+  const ACT_TITLES = { 1: '白紙', 2: '七つの罪', 3: '門と審判' };
+
   function list() { return ORDER.map(function (id) { return DEFS[id]; }); }
   function get(id) { return DEFS[id] || null; }
+
+  /** エリアを幕（act）ごとにまとめる（M8.1 WP5）。戻り値は幕番号の昇順、
+   * [{ act, title, areas: [...] }]。エリアが1つも無い幕は返さない。 */
+  function byAct() {
+    const groups = {};
+    list().forEach(function (a) {
+      const act = a.act || 1;
+      if (!groups[act]) groups[act] = [];
+      groups[act].push(a);
+    });
+    return Object.keys(groups).map(Number).sort(function (a, b) { return a - b; })
+      .map(function (act) { return { act: act, title: ACT_TITLES[act] || ('第' + act + '幕'), areas: groups[act] }; });
+  }
 
   /** そのエリアの座標補正（M6.5b）。未定義のエリア・未定義の行は 0 として扱う。 */
   function layout(areaId) {
@@ -281,7 +304,8 @@
   const api = {
     DEFS, ORDER, SUPPORT_SHELL, LAYOUT_DEFAULT, MASTER_LEVEL_STEPS,
     RARE_TIERS, RARE_TIER_DEFAULT,
-    list, get, layout, isUnlocked, unlockLabel, enemyPool, masterLevel, shopSpellPool, rareThreshold
+    list, get, layout, isUnlocked, unlockLabel, enemyPool, masterLevel, shopSpellPool, rareThreshold,
+    ACT_TITLES, byAct
   };
   global.CQAreas = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -314,18 +314,32 @@ function renderHome() {
 
 /* ================= エリア選択 ================= */
 
+/** 1タイルぶんのHTML（M8.1 WP5：幕ごとの行から共通で呼ぶ）。 */
+function areaTileHTML(a, meta) {
+  const cleared = meta.cleared || [];
+  const unlocked = CQAreas.isUnlocked(a.id, meta);
+  const done = cleared.indexOf(a.id) >= 0;
+  return `<div class="area-tile ${unlocked ? '' : 'locked'}" data-act="${unlocked ? 'go-start' : ''}" data-id="${a.id}"
+      style="background-image:url('${a.bg}')">
+    <div class="area-tile-fade"></div>
+    <div class="area-tile-name">${esc(a.name)}${done ? '<span class="area-clear">クリア済</span>' : ''}</div>
+    ${unlocked ? '' : `<div class="area-tile-lock">🔒 ${esc(CQAreas.unlockLabel(a.id))}</div>`}
+  </div>`;
+}
+
+/** エリア選択（M8.1 WP5・実装計画§1-4）：幕ごとに段を分けて並べる（15タイルは
+ * 1行の折り返しだと読みにくいという§1-4の指摘への対処）。いまはＤＥＦＳに幕1
+ * （草原〜砂漠）しか無いので1段しか出ないが、CQAreas.byAct() がデータから
+ * 段を作るので、M8.2・M8.3で幕2・3のエリアが増えれば自動的に段が増える
+ * （このファイルを書き換える必要はない）。 */
 function renderAreaSelect() {
   const meta = RUI.meta;
-  const cleared = meta.cleared || [];
-  const tiles = CQAreas.list().map(function (a) {
-    const unlocked = CQAreas.isUnlocked(a.id, meta);
-    const done = cleared.indexOf(a.id) >= 0;
-    return `<div class="area-tile ${unlocked ? '' : 'locked'}" data-act="${unlocked ? 'go-start' : ''}" data-id="${a.id}"
-        style="background-image:url('${a.bg}')">
-      <div class="area-tile-fade"></div>
-      <div class="area-tile-name">${esc(a.name)}${done ? '<span class="area-clear">クリア済</span>' : ''}</div>
-      ${unlocked ? '' : `<div class="area-tile-lock">🔒 ${esc(CQAreas.unlockLabel(a.id))}</div>`}
-    </div>`;
+  const rows = CQAreas.byAct().map(function (group) {
+    const tiles = group.areas.map(function (a) { return areaTileHTML(a, meta); }).join('');
+    return `<section class="area-act">
+      <h3 class="area-act-title">第${group.act}幕・${esc(group.title)}</h3>
+      <div class="area-grid">${tiles}</div>
+    </section>`;
   }).join('');
   runRoot().innerHTML = `
     <div class="run-hud">
@@ -333,7 +347,7 @@ function renderAreaSelect() {
     </div>
     <button class="area-back-btn" data-act="go-home">← ホームへ</button>
     <h2 class="run-h2">冒険に出る</h2>
-    <div class="area-grid">${tiles}</div>`;
+    <div class="area-acts">${rows}</div>`;
   /* ★2026-09-05 本人指定：ここにあった「最初からやり直す」は削除した（誤爆が怖いうえ、
    * ホームの「設定」に同じものがバックアップの案内つきで置いてある）。 */
 }

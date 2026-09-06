@@ -863,12 +863,18 @@ td.nm{font-weight:800}
 
 .opening-scene.fade-out{opacity:0;transition:opacity .6s ease-in}
 
-/* ---- エリア選択（§6） ---- */
+/* ---- エリア選択（§6・M8.1 WP5で幕ごとの3段に。実装計画§1-4） ----
+ * 幕1（白紙＝草原〜砂漠）は232×150で5枚が1280px幅に収まる（232*5+18*4=1232px）。
+ * 幕2（七つの罪＝ダンジョン）は7枚並ぶ想定なので一回り小さい160×110にする
+ * （.area-tile-sm。M8.2でエリアが増えたときに area-tile に付けるクラス）。 */
+.area-acts{display:flex;flex-direction:column;gap:20px;overflow-y:auto}
+.area-act-title{margin:0 0 10px;font-size:16px;color:var(--dim);font-weight:700}
 .area-grid{display:flex;gap:18px;flex-wrap:wrap}
 .area-tile{
-  position:relative;width:280px;height:180px;border-radius:14px;overflow:hidden;
+  position:relative;width:232px;height:150px;border-radius:14px;overflow:hidden;
   background-size:cover;background-position:center;border:2px solid var(--line);cursor:pointer;
 }
+.area-tile.area-tile-sm{width:160px;height:110px}
 .area-tile.locked{filter:grayscale(1) brightness(.45);cursor:default}
 .area-tile-fade{position:absolute;inset:0;background:linear-gradient(to top,rgba(5,8,15,.92),transparent 55%)}
 .area-tile-name{position:absolute;left:14px;bottom:10px;font-size:20px;font-weight:800;text-shadow:0 2px 6px #000}
