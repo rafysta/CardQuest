@@ -934,6 +934,37 @@ td.nm{font-weight:800}
  * 縦積みのrec-rowsには合わないので、.cg-doneと同じく上書きする。 */
 .rec-ending-again{flex:none;align-self:flex-start;margin-top:8px;padding:8px 16px;font-size:14px}
 
+/* ---- 神竜の間（実装計画§3-4・台本§13・M8.3 WP16） ----
+ * ending-sceneと同じ骨格（背景いっぱい＋上にcg-head）。9タイルは col-grid ではなく
+ * 独自のグリッド（捧げ物のリストを縦に持つので少し高さが要る）。 */
+.dragons-scene{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;
+  border-radius:14px;overflow:hidden;padding:14px 16px;overflow-y:auto}
+.dragons-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+.dragons-scene .cg-head{position:relative;z-index:1}
+.dragons-grid{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,1fr);
+  gap:14px;background:rgba(8,12,22,.55);border-radius:12px;padding:14px;
+  backdrop-filter:blur(1px);-webkit-backdrop-filter:blur(1px)}
+.dragon-tile{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:10px;border-radius:12px;background:rgba(20,27,44,.75);border:1px solid rgba(190,205,235,.25);
+  filter:grayscale(.7) brightness(.6)}
+.dragon-tile.ready{cursor:pointer;filter:none;border-color:rgba(250,204,21,.4)}
+.dragon-tile.ready:hover{border-color:var(--accent)}
+.dragon-tile-art{width:64px;height:78px;border-radius:8px;overflow:hidden;background:#141b2c;
+  display:flex;align-items:center;justify-content:center}
+.dragon-tile-art img{width:100%;height:100%;object-fit:cover}
+.dragon-tile-name{font-size:13px;font-weight:700;text-align:center}
+.dragon-owned{margin-left:4px;font-size:11px;color:var(--dim)}
+.dragon-mats{display:flex;flex-wrap:wrap;gap:4px;justify-content:center}
+.dragon-mat{font-size:10px;padding:2px 6px;border-radius:6px;background:rgba(8,12,22,.6);color:var(--dim)}
+.dragon-mat.on{color:var(--accent);border:1px solid rgba(250,204,21,.4)}
+
+/* ---- 真の結末（台本§13.9・M8.3 WP16） ----
+ * ending-sceneと完全に同じ骨格（背景＋吹き出しだけ）。専用の演出は作らない
+ * （既存の「案内の吹き出し」の部品を使い回す・タップ送り／スキップ可）。 */
+.trueending-scene{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;
+  border-radius:14px;overflow:hidden}
+.trueending-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+
 /* ---- 開始マス：案内・おまかせドラフト（§1.1〜1.2） ---- */
 .bubble{
   background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px 18px;

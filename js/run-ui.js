@@ -438,8 +438,11 @@ function areaTileHTML(a, meta) {
   const hasKey = (meta.keys || []).indexOf(a.id) >= 0;
   const keyMark = (a.act === 2)
     ? `<span class="area-key${hasKey ? ' on' : ''}" title="${hasKey ? '鍵を手に入れた' : 'この奥に鍵がある'}">🔑</span>` : '';
+  /* M8.3 WP16：神竜の間はマップも「ラン」も無い専用画面（9体の像＋マスターズソウル）
+   * なので、他のエリアと同じ go-start（CQRun.start）には乗せない。 */
+  const enterAct = a.id === 'dragons' ? 'dragons-enter' : 'go-start';
   return `<div class="area-tile ${unlocked ? '' : 'locked'}${a.act === 2 ? ' area-tile-sm' : ''}"
-      data-act="${unlocked ? 'go-start' : ''}" data-id="${a.id}"
+      data-act="${unlocked ? enterAct : ''}" data-id="${a.id}"
       style="background-image:url('${a.bg}')">
     <div class="area-tile-fade"></div>
     ${keyMark}
@@ -2059,6 +2062,106 @@ function renderCollection() {
   keepScrollRestore('collection:' + tab);
 }
 
+/* ================= 神竜の間（実装計画§3-4・台本§13・M8.3 WP16） =================
+ *
+ * マップも「ラン」も無い、9体（8神竜＋マスターズソウル）への単発の1体勝負だけの場。
+ * CQRun.start() は一切使わない——js/run/run.js の CQRun.dragonBattleSetup() が
+ * meta.deck（いまのデッキ編集の内容）だけから setup を組み、js/layout.js の
+ * startRunBattle() へ直接渡す（RUI.run は null のまま）。捧げ物は本にある分だけを見て
+ * （デッキ分は対象外・実装計画§3-4の注意）、勝敗に関わらず確認の時点で消費する
+ * （「捧げて挑む」という原作どおりの位置づけ）。 */
+
+function enterDragons() {
+  RUI.run = null;
+  RUI.view = 'dragons';
+  RUI.gridSel = null; RUI.gridSelIdx = -1;
+  runRender();
+}
+
+/** 1体ぶんの像タイル。捧げ物が足りているものだけ選べる（data-act）——足りないものは
+ * 押しても何も起きない見た目にし、何が要るかだけをここで見せる（確認は別途showConfirmで）。 */
+function dragonTileHTML(cardId, meta) {
+  const d = CQOpponents.dragonOf(cardId);
+  const c = CARD_BY_ID[cardId];
+  const known = (meta.known || []).indexOf(cardId) >= 0;
+  const ok = CQRun.dragonSacrificeOk(cardId, meta);
+  const owned = (meta.book[cardId] || 0) + (meta.deck[cardId] || 0);
+  const matsHTML = d.sacrifice.map(function (s) {
+    const have = meta.book[s.id] || 0;
+    const mc = CARD_BY_ID[s.id];
+    return `<span class="dragon-mat${have >= s.n ? ' on' : ''}">${esc(mc ? mc.n : s.id)} ${have}／${s.n}</span>`;
+  }).join('');
+  const lvHTML = d.requireLevel != null
+    ? `<span class="dragon-mat${CQCollection.masterLevelOf(meta) >= d.requireLevel ? ' on' : ''}">マスターレベル ${CQCollection.masterLevelOf(meta)}／${d.requireLevel}</span>`
+    : '';
+  return `<div class="dragon-tile${ok ? ' ready' : ''}" ${ok ? `data-act="dragon-pick" data-id="${cardId}"` : ''}>
+      <div class="dragon-tile-art">${known ? artInner(c, 3) : '<span class="col-unknown-mark">？</span>'}</div>
+      <div class="dragon-tile-name">${esc(d.name)}${owned ? `<span class="dragon-owned">×${owned}</span>` : ''}</div>
+      <div class="dragon-mats">${lvHTML}${matsHTML}</div>
+    </div>`;
+}
+
+function renderDragons() {
+  const meta = RUI.meta;
+  const tiles = CQOpponents.dragonIds().map(function (id) { return dragonTileHTML(id, meta); }).join('');
+  runRoot().innerHTML = `
+    <div class="dragons-scene">
+      <img class="dragons-bg" src="assets/map/bg_dragon_hall.png" alt="" draggable="false" onerror="this.style.display='none'">
+      <div class="cg-head">
+        <div class="cg-title">神竜の間</div>
+        <button class="btn ok cg-done" data-act="go-home">ホームへ戻る</button>
+      </div>
+      <div class="dragons-grid">${tiles}</div>
+    </div>`;
+}
+
+/** 神竜戦の決着（js/layout.js startRunBattle の onOver）。逃走は noFlee で封じてあるが、
+ * 念のため M.fled も安全に神竜の間へ戻すだけにしておく。 */
+function onDragonBattleOver(M) {
+  const cardId = RUI.dragonFightId;
+  RUI.dragonFightId = null;
+  if (!M.fled) {
+    const r = CQRun.reportDragonBattle(cardId, M, RUI.meta);
+    CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+    if (r.win) {
+      runFlash(r.gained.map(function (id) { return CARD_BY_ID[id].n; }).join('・') + ' を手に入れた！');
+    } else {
+      runFlash('敗れた……捧げ物は消費された。');
+    }
+    if (r.trueEnding) {
+      RUI.view = 'trueEnding';
+      RUI.trueEndingStep = 0;
+      showScreen('screen-run');
+      runRender();
+      return;
+    }
+  }
+  RUI.view = 'dragons';
+  showScreen('screen-run');
+  runRender();
+}
+if (typeof window !== 'undefined') window.onDragonBattleOver = onDragonBattleOver;
+
+/* ================= 真の結末（台本§13.9・M8.3 WP16） =================
+ *
+ * マスターズソウルに初めて勝ったときだけ見る。**この場面が本作で最も重要な文章**
+ * （台本§9初版の注記）。既存の「案内の吹き出し」の部品（amberBubbleHTML・タップ送り・
+ * スキップ可）をそのまま使う——ここだけの特別な演出は作らない。終わったら神竜の間へ戻る
+ * （物語の外側では、収集自体はまだ続けられる）。 */
+function finishTrueEnding() {
+  RUI.view = 'dragons';
+  runRender();
+}
+
+function renderTrueEnding() {
+  const arr = CQLore.LORE.trueEnding;
+  const b = arr[Math.min(RUI.trueEndingStep || 0, arr.length - 1)];
+  runRoot().innerHTML = `<div class="trueending-scene">
+    <img class="trueending-bg" src="assets/ui/ending_book.png" alt="" draggable="false" onerror="this.style.display='none'">
+    ${amberBubbleHTML(b, { nextAct: 'trueending-next', skipAct: 'trueending-skip' })}
+  </div>`;
+}
+
 /* ================= 設定画面（ホーム・M7 WP11） =================
  *
  * 『作業パッケージ』WP11＝**バックアップ（書き出し／読み込み）**の置き場所。
@@ -2768,6 +2871,8 @@ function runRender() {
   else if (RUI.view === 'settings') renderSettings();
   else if (RUI.view === 'result') renderResult();
   else if (RUI.view === 'ending') renderEnding();
+  else if (RUI.view === 'dragons') renderDragons();
+  else if (RUI.view === 'trueEnding') renderTrueEnding();
 }
 
 /** confirm() は他ブラウザ機能とバッティングしタブレットで不安定なため、
@@ -3003,6 +3108,39 @@ function runAct(act, id, idx) {
       return endingProceedFromGallery();
     case 'ending-again':
       return enterEnding(RUI.meta, { intro: false });
+
+    /* ---- 神竜の間（M8.3 WP16） ---- */
+    case 'dragons-enter':
+      return enterDragons();
+    case 'dragon-pick': {
+      const cardId = +id;
+      if (!CQRun.dragonSacrificeOk(cardId, RUI.meta)) return runFlash('捧げ物が足りません。');
+      const d = CQOpponents.dragonOf(cardId);
+      const matsText = d.sacrifice.map(function (s) {
+        const mc = CARD_BY_ID[s.id];
+        return (mc ? mc.n : s.id) + '×' + s.n;
+      }).join('・');
+      const lvText = d.requireLevel != null ? 'マスターレベル' + d.requireLevel + '以上・' : '';
+      return showConfirm(
+        lvText + matsText + ' を本から捧げます。\n（勝敗に関わらず消費されます）',
+        function () {
+          CQRun.dragonSacrificeConsume(cardId, RUI.meta);
+          CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+          RUI.dragonFightId = cardId;
+          const setup = CQRun.dragonBattleSetup(cardId, CARD_BY_ID, RUI.meta);
+          startRunBattle(setup, onDragonBattleOver);
+        },
+        '捧げて挑む'
+      );
+    }
+    case 'trueending-next': {
+      const next = (RUI.trueEndingStep || 0) + 1;
+      if (next >= (CQLore.LORE.trueEnding || []).length) return finishTrueEnding();
+      RUI.trueEndingStep = next;
+      return runRender();
+    }
+    case 'trueending-skip':
+      return finishTrueEnding();
     case 'guide-next': {
       const next = (RUI.guideStep || 0) + 1;
       if (next >= (RUI.guide || []).length) return finishStartGuide();

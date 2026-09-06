@@ -7796,6 +7796,147 @@ t('settle：教会クリアでmeta.endingSeenが立ったランは、back-home�
 });
 
 
+section('M8.3 WP16: 神竜の間（8神竜＋マスターズソウル・真の結末）');
+
+t('dragons：エリア定義があり、神殿クリアで解放（マップ無し）', () => {
+  const area = CQAreas.get('dragons');
+  eq(!!area, true, 'dragonsエリアが存在する');
+  eq(area.noMap, true, 'マップは持たない');
+  eq(area.unlock, { cleared: 'temple' }, '解放は神殿クリア');
+  eq(area.monumentCards.length, 9, '9体（8神竜＋マスターズソウル）');
+  eq(CQAreas.isUnlocked('dragons', { cleared: [] }), false, '神殿未クリアでは未解放');
+  eq(CQAreas.isUnlocked('dragons', { cleared: ['temple'] }), true, '神殿クリアで解放');
+});
+
+t('DRAGONS：9体ぶんのデータが揃っている（カードidキー・opponentIdは500番台）', () => {
+  const ids = CQOpponents.dragonIds();
+  eq(ids, [10, 11, 12, 13, 14, 16, 17, 18, 64], 'カードidの並び（15＝エグゼデグゼスは神殿・WP13で別扱い）');
+  ids.forEach((id) => {
+    const d = CQOpponents.dragonOf(id);
+    eq(typeof d.name, 'string', `${id}：名前を持つ`);
+    eq(d.opponentId >= 500 && d.opponentId < 600, true, `${id}：opponentIdは500番台（マスター1〜99・900番台と衝突しない）`);
+    eq(Array.isArray(d.sacrifice) && d.sacrifice.length > 0, true, `${id}：捧げ物を持つ`);
+  });
+  eq(CQOpponents.dragonOf(13).first, 154, 'ニドヘッグの初回撃破報酬は連続攻撃154');
+  eq(CQOpponents.dragonOf(18).first, 187, 'キリンの初回撃破報酬は修練の拳187');
+  eq(CQOpponents.dragonOf(64).requireLevel, 5, 'マスターズソウルはマスターレベル5以上も要る');
+  eq(CQOpponents.dragonOf(64).trueEnding, true, 'マスターズソウルだけ真の結末フラグを持つ');
+  eq(CQOpponents.dragonOf(99), null, 'マスター（バルザミコス）はDRAGONSに無い＝名前空間が分かれている');
+});
+
+t('dragonSacrificeOk：本にある分だけを見る（デッキ分は対象外・実装計画§3-4）', () => {
+  const metaBook = { book: { 101: 3 }, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(metaBook);
+  eq(CQRun.dragonSacrificeOk(13, metaBook), true, '本に憑依解除3枚あればニドヘッグに挑める');
+
+  const metaDeckOnly = { book: {}, deck: { 8: 40, 101: 3 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(metaDeckOnly);
+  eq(CQRun.dragonSacrificeOk(13, metaDeckOnly), false, 'デッキに入っている分は捧げ物として数えない');
+
+  const metaShort = { book: { 101: 2 }, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(metaShort);
+  eq(CQRun.dragonSacrificeOk(13, metaShort), false, '2枚では足りない（3枚必要）');
+
+  const metaSoulNoLevel = { book: { 199: 1 }, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(metaSoulNoLevel);
+  eq(CQRun.dragonSacrificeOk(64, metaSoulNoLevel), false, 'マスターレベル5未満ではマスターズソウルに挑めない（光臨は持っていても）');
+});
+
+t('dragonSacrificeConsume：本から取り除くだけ（デッキ・knownには触らない）', () => {
+  const meta = { book: { 101: 3 }, deck: { 8: 40 }, known: [13], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  CQRun.dragonSacrificeConsume(13, meta);
+  eq(meta.book[101], undefined, '使い切った分は本から消える');
+  eq(meta.deck[8], 40, 'デッキ側は無関係のまま');
+  eq(meta.known, [13], 'knownは変わらない（消費は所持記録ではない）');
+});
+
+t('dragonBattleSetup：ラン（CQRun.start）を使わず、いまのデッキ編集の内容だけでフリーユニット戦を組む', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  const setup = CQRun.dragonBattleSetup(13, CARD_BY_ID, meta);
+  eq(setup.selfDeck.length, 40, '自分のデッキは40枚（meta.deckそのまま）');
+  eq(setup.enemyDeck.length, 40, '敵の支援シェルも40枚（monumentDeckを流用）');
+  eq(setup.mode, 'field', 'フリーユニット戦（全滅で決着）');
+  eq(setup.enemyBoard, [13], '場に立つのはニドヘッグ1体だけ');
+  eq(setup.noFlee, true, '逃走不可');
+  eq(setup.foeName, '神竜『ニドヘッグ』', '相手表示名');
+  eq(setup.opponentId, 513, 'opponentId＝500+カードid');
+  eq(['self', 'enemy'].indexOf(setup.first) >= 0, true, '先攻／後攻はどちらかに決まる');
+});
+
+t('reportDragonBattle：勝てば確定でその神竜のカードが手に入る（敗北・逃走では何も渡さない）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  const lose = CQRun.reportDragonBattle(10, { winner: 'enemy' }, meta);
+  eq(lose, { win: false, gained: [], trueEnding: false }, '負けでは何も渡さない');
+  eq(meta.known.indexOf(10) < 0, true, 'known にも登録されない');
+
+  const win = CQRun.reportDragonBattle(10, { winner: 'self' }, meta);
+  eq(win.win, true, '勝った');
+  eq(win.gained, [10], 'ヨルムンガンド自身が確定入手（初回撃破ボーナスは無い神竜）');
+  eq(meta.book[10], 1, '本に入る');
+  eq(meta.known.indexOf(10) >= 0, true, 'known に登録される');
+  eq(meta.dragonWins[10], 1, 'dragonWinsが1に');
+});
+
+t('reportDragonBattle：ニドヘッグ／キリンは初回だけ追加報酬（154／187）が付く。meta.bossWinsとは別の名前空間', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  meta.bossWins[13] = 5;   /* ギンリット（マスターのopponentId=13）を5回撃破している状態 */
+
+  const first = CQRun.reportDragonBattle(13, { winner: 'self' }, meta);
+  eq(first.gained.sort((a, b) => a - b), [13, 154], '初回はニドヘッグ自身＋連続攻撃154');
+  eq(meta.dragonWins[13], 1, 'dragonWinsはカードidの13（ギンリットのbossWins[13]=5とは無関係）');
+  eq(meta.bossWins[13], 5, 'meta.bossWins（マスター側）は変わらない＝名前空間が分かれている');
+
+  const second = CQRun.reportDragonBattle(13, { winner: 'self' }, meta);
+  eq(second.gained, [13], '2回目以降は154を重ねて渡さない');
+  eq(meta.dragonWins[13], 2, 'dragonWinsは積み上がる（周回してニドヘッグ自身は何枚でも増やせる）');
+});
+
+t('reportDragonBattle：マスターズソウルに初めて勝つとtrueEnding・meta.trueEndingSeenが立つ（2回目は立たない）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  eq(meta.trueEndingSeen, false, 'ensureで初期値false');
+  const first = CQRun.reportDragonBattle(64, { winner: 'self' }, meta);
+  eq(first.trueEnding, true, '初回は真の結末の合図が立つ');
+  eq(meta.trueEndingSeen, true, 'meta.trueEndingSeenが立つ');
+  const second = CQRun.reportDragonBattle(64, { winner: 'self' }, meta);
+  eq(second.trueEnding, false, '2回目（周回）では立たない');
+});
+
+t('lore.js：LORE.dragonsは8神竜ぶん（カードidキー・各1つの吹き出し）。LORE.trueEndingは6つ', () => {
+  const dragons = CQLore.LORE.dragons;
+  eq(Object.keys(dragons).map(Number).sort((a, b) => a - b), [10, 11, 12, 13, 14, 16, 17, 18],
+    '8神竜ぶん（マスターズソウル64は真の結末が別にあるので含まない）');
+  Object.keys(dragons).forEach((id) => {
+    const arr = dragons[id];
+    eq(arr.length, 1, `${id}：1つの吹き出し`);
+    eq(typeof arr[0].face, 'string', `${id}：faceを持つ`);
+    eq(arr[0].lines.length > 0, true, `${id}：linesが空でない`);
+  });
+  const te = CQLore.LORE.trueEnding;
+  eq(te.length, 6, '真の結末は6つの吹き出し（台本§13.9）');
+  eq(te.every((b) => b.face === 'calm' || b.face === 'down'), true, '話者はアンバー（calm/down）のみ');
+});
+
+t('coverageReport：神竜9体＋154／187が神竜の間の実装でOKになる（実装計画§3-4・§3-5）', () => {
+  /* 注意：js/meta/routes.js の require は「M8.1 WP1」節（このWP16節より後方）で
+   * const CQRoutesTest として1回だけ行われる。このテストはそれより前で走るため、
+   * TDZ（Cannot access 'CQRoutesTest' before initialization）を避けてここだけ
+   * 個別にrequireする。 */
+  const CQRoutesWP16 = require(path.join(root, 'js/meta/routes.js'));
+  const { rows } = CQRoutesWP16.coverageReport(CARD_BY_ID);
+  const byId = {}; rows.forEach((r) => { byId[r.id] = r; });
+  [10, 11, 12, 13, 14, 16, 17, 18, 64].forEach((id) => {
+    eq(byId[id].status, 'OK', `カード${id}：神竜の間の経路でOK`);
+    eq(byId[id].routes.some((r) => r.type === 'monument' && r.area === 'dragons' && r.real), true,
+      `カード${id}：monument経路がdragonsを指してreal:true`);
+  });
+});
+
+
 section('M8.1 WP4: ボス報酬（初回撃破の一枚・部屋の累計3/5/7報酬・速攻実績）');
 
 /* このセクション専用の使い捨てメタ（book/deck/known/gold/cleared一式が揃っていればよい）。
@@ -7959,13 +8100,13 @@ t('byAct：幕1（草原〜砂漠）・幕2（七つの洞窟）・幕3（神殿
     '幕2の中身は7つの洞窟');
   eq(groups[2].act, 3, '3段目は幕3');
   eq(groups[2].title, '門と審判', '幕3の見出しは「門と審判」');
-  eq(groups[2].areas.map((a) => a.id), ['temple', 'church'], '幕3の中身は神殿・外部教会（神竜の間はWP16で加わる）');
+  eq(groups[2].areas.map((a) => a.id), ['temple', 'church', 'dragons'], '幕3の中身は神殿・外部教会・神竜の間（M8.3 WP16）');
 });
 
 t('byAct：エリアはどれも act を持ち、幕ごとに正しく分かれる', () => {
   CQAreas.list().forEach((a) => {
     eq(a.act === 1 || a.act === 2 || a.act === 3, true, `${a.id}はact:1〜3`);
-    const expectAct = /^cave/.test(a.id) ? 2 : (a.id === 'temple' || a.id === 'church' ? 3 : 1);
+    const expectAct = /^cave/.test(a.id) ? 2 : (a.id === 'temple' || a.id === 'church' || a.id === 'dragons' ? 3 : 1);
     eq(a.act === expectAct, true, `${a.id}の幕が正しい`);
   });
 });
@@ -8174,13 +8315,14 @@ t('coverageReport：いまの実装でFAIL（経路0本）は無い', () => {
   eq(summary.ok + summary.planned, 169, 'OKとPLANNEDの合計が全体と一致');
 });
 
-t('原作で入手不可だった2種は「予定」経路（神竜討伐報酬）を持つ（実装計画M8 §3-4）', () => {
+t('M8.3 WP16：原作で入手不可だった2種は神竜の間の初回撃破報酬でOKになる（実装計画M8 §3-4）', () => {
   const { rows } = CQRoutesTest.coverageReport(CARD_BY_ID);
   const byId = {}; rows.forEach((r) => { byId[r.id] = r; });
-  eq(byId[154].status, 'PLANNED', '連続攻撃：予定扱い');
-  eq(byId[154].routes.some((r) => r.type === 'dragon-fix'), true, '連続攻撃：ニドヘッグ討伐報酬の経路がある');
-  eq(byId[187].status, 'PLANNED', '修練の拳：予定扱い');
-  eq(byId[187].routes.some((r) => r.type === 'dragon-fix'), true, '修練の拳：キリン討伐報酬の経路がある');
+  eq(byId[154].status, 'OK', '連続攻撃：ニドヘッグ初回撃破報酬でOK');
+  eq(byId[154].routes.some((r) => r.type === 'dragon-first' && r.real), true, '連続攻撃：dragon-firstの経路がreal:true');
+  eq(byId[154].routes.some((r) => r.type === 'dragon-fix'), false, 'dragon-firstが立った以上、古いdragon-fix（予定）は重ねて出さない');
+  eq(byId[187].status, 'OK', '修練の拳：キリン初回撃破報酬でOK');
+  eq(byId[187].routes.some((r) => r.type === 'dragon-first' && r.real), true, '修練の拳：dragon-firstの経路がreal:true');
 });
 
 t('草原・森の敵プールにあるカードは real:true のエリア経路を持つ（既存の実装どおり）', () => {

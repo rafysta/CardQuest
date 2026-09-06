@@ -382,10 +382,29 @@
       fieldRuleChance: 0.45,
       bossRank: 'rankA',
       enemyCount: { normal: 2, strong: 3, elite: 3 }
+    },
+
+    /* 神竜の間（M8.3 WP16・実装計画§1-4「第三幕」の3枚目）。マップも「ラン」も無い、
+     * 9体（8神竜＋マスターズソウル）への単発の1体勝負だけの場——エリア選択のタイルには
+     * 出すが、js/run/run.js の CQRun.start() は一切使わない（js/run-ui.js が
+     * CQRun.dragonBattleSetup() で直接バトル画面へ渡す）。unlock/isUnlocked・
+     * unlockLabel・byAct はふつうのエリアと同じ仕組みで扱えるので、タグ・敵プール・
+     * bossId など戦闘マス特有のフィールドは持たない（無くても他の関数は安全に素通りする）。
+     * monumentCards＝js/meta/routes.js が「封印（モニュメント）を解く」経路を立てる先。 */
+    dragons: {
+      id: 'dragons', name: '神竜の間', order: 14, act: 3,
+      bg: 'assets/map/bg_dragon_hall.png', master: null,
+      unlock: { cleared: 'temple' },
+      noMap: true,
+      /* rareTier：神竜の間には店・敵プールが無いので実際には使わないが、「エリアは
+       * どれもRARE_TIERSにある帯を持つ」という他エリア共通の不変条件（貴重カード閾値の
+       * テスト・実装計画経済追補§3-4）は満たしておく。第三幕の他2エリアと同じ帯。 */
+      rareTier: 'final',
+      monumentCards: [10, 11, 12, 13, 14, 16, 17, 18, 64]
     }
   };
   const ORDER = ['grassland', 'forest', 'mountain', 'coast', 'desert',
-    'cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7', 'temple', 'church'];
+    'cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7', 'temple', 'church', 'dragons'];
 
   /* M8.1 WP5（実装計画§1-4）：エリア選択画面の「幕」見出し（世界観§4）。
    * 幕1＝白紙（草原〜砂漠）・幕2＝七つの罪（M8.2でダンジョンが増える）・

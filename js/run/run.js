@@ -529,6 +529,92 @@
     };
   }
 
+  /* ================= 神竜の間（M8.3 WP16） =================
+   *
+   * 実装計画§3-4・台本§13。マップも「ラン」も無い、9体（8神竜＋マスターズソウル）への
+   * 単発の1体勝負。CQRun.start() は一切使わず、js/run-ui.js が meta.deck（いまのデッキ編集の
+   * 内容）だけを持ってきて直接 js/layout.js の startRunBattle() へ渡す——ここはその
+   * 「setup」を組む部分と、決着後の報酬・捧げ物の消費を確定させる部分だけを持つ。 */
+
+  /** 捧げ物（本にある分だけ・デッキ分は対象外）が足りているか。マスターズソウルだけ
+   * マスターレベルも見る（実装計画§3-4）。 */
+  function dragonSacrificeOk(cardId, meta) {
+    const d = CQOpponents.dragonOf(cardId);
+    if (!d) return false;
+    if (d.requireLevel != null && CQCollection.masterLevelOf(meta) < d.requireLevel) return false;
+    return d.sacrifice.every(function (s) { return (meta.book[s.id] || 0) >= s.n; });
+  }
+
+  /** 捧げ物を実際に本から取り除く。呼ぶ前に dragonSacrificeOk() で確認しておくこと
+   * （ここでは再確認しない＝呼び出し側の確認画面と実行を1回のUI操作の中で揃える）。
+   * 勝敗に関わらずここで消費する（「捧げて挑む」という原作どおりの位置づけ・実装計画§3-4）。 */
+  function dragonSacrificeConsume(cardId, meta) {
+    const d = CQOpponents.dragonOf(cardId);
+    if (!d) return false;
+    d.sacrifice.forEach(function (s) {
+      meta.book[s.id] = Math.max(0, (meta.book[s.id] || 0) - s.n);
+      if (meta.book[s.id] === 0) delete meta.book[s.id];
+    });
+    return true;
+  }
+
+  /** その神竜との戦闘を、js/layout.js の startRunBattle(setup, onOver) にそのまま渡せる
+   * 形で組む。selfDeck は「いまのデッキ編集の内容」（meta.deck）だけから作る——ランでは
+   * ないのでレンタル・買い取りの枠は無い（buildPlayerDeck に rentals/bought の空配列だけ渡す）。
+   * enemyDeck は神殿モニュメント（WP13）と同じ monumentDeck() を流用し、盤面には
+   * その神竜（または64＝マスターズソウル）が1体だけ立つ。フリーユニット戦（mode:'field'）・
+   * 逃走不可（noFlee）で、七罪人・神殿モニュメントと同じ扱い。 */
+  function dragonBattleSetup(cardId, cards, meta) {
+    const d = CQOpponents.dragonOf(cardId);
+    if (!d) return null;
+    const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+    const first = CQRng.create(seed ^ 0x51ed270b).next() < 0.5 ? 'self' : 'enemy';
+    return {
+      cards: cards,
+      selfDeck: buildPlayerDeck({ deck: meta.deck, rentals: [], bought: [] }),
+      enemyDeck: CQOpponents.monumentDeck(cardId, cards, []),
+      first: first,
+      opponentId: d.opponentId,
+      fieldRules: [],
+      enemyBoard: [cardId],
+      enemyStiff: false,
+      noFlee: true,
+      foeName: d.foeName,
+      aiPreset: 'rankA',
+      mode: 'field',
+      seed: seed
+    };
+  }
+
+  /** 決着後の確定入手・初回撃破報酬・真の結末の判定。cardId＝挑んだ神竜のカードid。
+   * M＝js/engine/turn.js の対戦状態（winnerを見る）。戻り値：
+   *   { win, gained:[id,...], trueEnding }
+   * gained には確定入手した神竜のカード自身と（あれば）初回撃破のボーナスが入る。
+   * 実際に meta.book へ入れる（CQCollection.addCard）のはここで行う——ラン中の戦利品
+   * （run.gainedCards／lootPending）のような「後で振り分ける」保留は無く、原作どおり
+   * 倒した瞬間に確定で貰える（実装計画§1-1「案Bの注意」と同じ考え方）。 */
+  function reportDragonBattle(cardId, M, meta) {
+    if (!M || M.winner !== 'self') return { win: false, gained: [], trueEnding: false };
+    const d = CQOpponents.dragonOf(cardId);
+    if (!d) return { win: false, gained: [], trueEnding: false };
+    const gained = [];
+    const already = (meta.dragonWins && meta.dragonWins[cardId]) || 0;
+    meta.dragonWins = meta.dragonWins || {};
+    meta.dragonWins[cardId] = already + 1;
+    CQCollection.addCard(meta, cardId, 'book');
+    gained.push(cardId);
+    if (already === 0 && d.first != null) {
+      CQCollection.addCard(meta, d.first, 'book');
+      gained.push(d.first);
+    }
+    let trueEnding = false;
+    if (d.trueEnding && !meta.trueEndingSeen) {
+      meta.trueEndingSeen = true;
+      trueEnding = true;
+    }
+    return { win: true, gained: gained, trueEnding: trueEnding };
+  }
+
   /** 逃走してマップへ戻ったときの反映（M6.6 WP12・追補§4 WP12）。
    * 戦利品もＧも得ない。持ち越すのは**ＬＰの減少だけ**。
    * **そのマスは cleared にしない**（追補§8-3 で本人が案Aを採用）＝プレイヤーはそのマスに
@@ -958,7 +1044,8 @@
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
     sellPrice, buyoutPrice, buyout, buyoutLeave, resolveQuestion, retire, settle,
     SETTLE_CUT, settleGold, TITLES, earnedTitles, pushJournal,
-    roomOf, bossBonusOf
+    roomOf, bossBonusOf,
+    dragonSacrificeOk, dragonSacrificeConsume, dragonBattleSetup, reportDragonBattle
   };
   global.CQRun = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -65,6 +65,13 @@
     /* M8.3 WP14：バルザミコス（role:'final'）に初めて勝った印。エンディング画面（WP15）・
      * 教会の周回ボスにルームＳ①〜④を混ぜる判定（WP17）の両方がこれを見る。 */
     if (typeof meta.endingSeen !== 'boolean') meta.endingSeen = false;
+    /* M8.3 WP16：神竜の間。dragonWins は**カードid**をキーにする（meta.bossWinsは
+     * マスターのopponentIdをキーにするので別物——ニドヘッグ(13)とギンリット(13)の
+     * ように数字が重なっても混線しないよう、必ず名前空間を分けておく）。
+     * ニドヘッグ／キリンの「初めて倒したときだけ」の追加報酬（154／187）の判定に使う。
+     * trueEndingSeen はマスターズソウルに初めて勝った印（台本§13.9「真の結末」）。 */
+    if (!meta.dragonWins || typeof meta.dragonWins !== 'object') meta.dragonWins = {};
+    if (typeof meta.trueEndingSeen !== 'boolean') meta.trueEndingSeen = false;
     /* 2026-09-06（本人指定）：閲覧済みのカード {id: true}。known にあって seen に無いものが
      * コレクションで「NEW」になり、詳細を見た時点で消える。**無いセーブでは known 全部を
      * 閲覧済みにして初期化する**（アップデート直後の既存プレイヤーに、これまで集めた全部を

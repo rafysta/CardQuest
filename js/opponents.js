@@ -116,6 +116,39 @@
     S: [199, null, 60]
   };
 
+  /* 神竜の間（実装計画M8.3 §3-4・M8.3 WP16）。8神竜＋マスターズソウルの9体。
+   * キーは**カードid**（10〜18・64）——MASTERS のキー（闘技場マスターのopponentId）とは
+   * 別の namespace なので、13（ニドヘッグのカードid）と MASTERS[13]（ギンリット）が
+   * 数字として重なっても混線しない（meta側もmeta.dragonWinsをmeta.bossWinsと別に持つ）。
+   * opponentId は 500+カードid（既存の範囲＝マスター1〜99・900番台のフリーユニット・
+   * 神殿モニュメントの215と重ならない専用の帯）。
+   * sacrifice：{id,n}の配列。本にある分だけを見る（デッキ分は対象外＝実装計画§3-4の注意）。
+   * first：初めて倒したときだけ追加で渡すカード（原作の詰みの穴埋め・実装計画§3-4）。
+   * requireLevel：マスターズソウルだけ、捧げ物に加えてマスターレベルも見る。
+   * trueEnding：マスターズソウルだけ。初めて倒すと台本§13.9「真の結末」を見せる。 */
+  const DRAGONS = {
+    10: { name: 'ヨルムンガンド', foeName: '神竜『ヨルムンガンド』', opponentId: 510,
+      sacrifice: [{ id: 174, n: 1 }, { id: 120, n: 1 }, { id: 169, n: 1 }] },
+    11: { name: 'ケツァルコアトル', foeName: '神竜『ケツァルコアトル』', opponentId: 511,
+      sacrifice: [{ id: 191, n: 1 }, { id: 188, n: 1 }, { id: 187, n: 1 }] },
+    12: { name: 'ウロボロス', foeName: '神竜『ウロボロス』', opponentId: 512,
+      sacrifice: [{ id: 177, n: 1 }, { id: 154, n: 1 }, { id: 143, n: 1 }] },
+    13: { name: 'ニドヘッグ', foeName: '神竜『ニドヘッグ』', opponentId: 513,
+      sacrifice: [{ id: 101, n: 3 }], first: 154 },
+    14: { name: 'スフィンクス', foeName: '神竜『スフィンクス』', opponentId: 514,
+      sacrifice: [{ id: 183, n: 1 }, { id: 143, n: 1 }, { id: 102, n: 1 }] },
+    16: { name: 'レッドレックス', foeName: '神竜『レッドレックス』', opponentId: 516,
+      sacrifice: [{ id: 158, n: 1 }, { id: 139, n: 1 }, { id: 181, n: 1 }] },
+    17: { name: 'アバドーン', foeName: '神竜『アバドーン』', opponentId: 517,
+      sacrifice: [{ id: 154, n: 1 }, { id: 190, n: 1 }, { id: 102, n: 1 }] },
+    18: { name: 'キリン', foeName: '神竜『キリン』', opponentId: 518,
+      sacrifice: [{ id: 102, n: 3 }], first: 187 },
+    64: { name: 'マスターズソウル', foeName: '『マスターズソウル』', opponentId: 564,
+      sacrifice: [{ id: 199, n: 1 }], requireLevel: 5, trueEnding: true }
+  };
+  function dragonIds() { return Object.keys(DRAGONS).map(Number).sort(function (a, b) { return a - b; }); }
+  function dragonOf(cardId) { return DRAGONS[cardId] || null; }
+
   function ids() { return Object.keys(MASTERS).map(Number); }
   function get(masterId) { return MASTERS[masterId] || null; }
 
@@ -252,8 +285,9 @@
   }
 
   const api = {
-    RAW_DECKS, DECK_SIZE, BLANK, MASTERS, ROOM_REWARDS,
+    RAW_DECKS, DECK_SIZE, BLANK, MASTERS, ROOM_REWARDS, DRAGONS,
     SINS, SIN_BOARD_SIZE, SIN_SHELL_SIZE, sinOf, sinDeck, sinBoard, monumentDeck,
+    dragonIds, dragonOf,
     convert50to40, toIdArray, deck40, bossDeckArray, get, ids, displayName
   };
   global.CQOpponents = api;

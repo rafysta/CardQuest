@@ -142,14 +142,35 @@
      * されていないカード（神竜9体・マスターズソウル・M8.3 WP16の神竜の間待ち）にだけ残る。 */
     if (CQAreas) {
       CQAreas.list().forEach(function (def) {
-        if (def.monumentCard !== card.id) return;
+        /* M8.3 WP16：神竜の間は9体（8神竜＋マスターズソウル）を monumentCards（配列）で持つ。
+         * 神殿・神竜の間のどちらでも同じ経路種別（monument）にする——プレイヤーから見れば
+         * どちらも「封印を解く」戦い方は同じため。 */
+        const targets = def.monumentCards || (def.monumentCard != null ? [def.monumentCard] : []);
+        if (targets.indexOf(card.id) < 0) return;
         routes.push({ type: 'monument', real: true, area: def.id,
           label: `封印（モニュメント）を解く：${def.name}` });
       });
     }
 
-    /* 原作の詰みの穴埋め（連続攻撃・修練の拳）。 */
-    if (DRAGON_FIX[card.id]) routes.push(Object.assign({ type: 'dragon-fix', real: false }, DRAGON_FIX[card.id]));
+    /* M8.3 WP16：神竜の初回撃破報酬（原作の詰みの穴埋め・実装計画§3-4）。
+     * js/opponents.js の DRAGONS[id].first が cardId と一致するものだけ real:true。
+     * 神竜の間ができるまでは下のDRAGON_FIXがそのまま「予定」を出す。 */
+    let dragonFirstReal = false;
+    if (CQOpponents && CQOpponents.DRAGONS && CQAreas && CQAreas.get('dragons')) {
+      Object.keys(CQOpponents.DRAGONS).forEach(function (did) {
+        const d = CQOpponents.DRAGONS[did];
+        if (d.first !== card.id) return;
+        dragonFirstReal = true;
+        routes.push({ type: 'dragon-first', real: true, area: 'dragons',
+          label: `神竜『${d.name}』初回撃破報酬` });
+      });
+    }
+
+    /* 原作の詰みの穴埋め（連続攻撃・修練の拳）。神竜の間で実際に配線済みなら、
+     * 上の dragon-first が real:true を立てているので、ここは重ねて出さない。 */
+    if (DRAGON_FIX[card.id] && !dragonFirstReal) {
+      routes.push(Object.assign({ type: 'dragon-fix', real: false }, DRAGON_FIX[card.id]));
+    }
 
     /* まだ実装していない地形タグ（原作の記述はある＝予定）。 */
     if (typeof card.g === 'string') {
