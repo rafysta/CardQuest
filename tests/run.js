@@ -7755,7 +7755,7 @@ t('ACT_TITLES：幕2「七つの罪」・幕3「門と審判」の見出しも�
 
 section('M8.1 WP7: 台本（山地・海辺・砂漠の導入。js/lore.js）');
 
-/* 洞窟（幕2）の台本は M8.2 WP11 で本人が書く。ここでは幕1のぶんだけを固定する。 */
+/* 洞窟（幕2）の台本は M8.2 WP11 で本人（台本v1.0）が書いた。ここでは幕1のぶんだけを固定する（幕2は次のセクション）。 */
 t('第一幕の全エリアに導入の台本がある（無いとアンバーの案内が丸ごと飛ぶ）', () => {
   CQAreas.list().filter((a) => a.act === 1).forEach((a) => {
     const lore = CQLore.LORE.areas[a.id];
@@ -7781,6 +7781,28 @@ t('台本§0の規約：1吹き出しは2行まで・1行28字以内・感嘆符
         eq(/[!！]/.test(line), false, `${a.id}：感嘆符を使わない（${line}）`);
       });
     }));
+  });
+});
+
+section('M8.2 WP11: 台本（洞窟の台本を本人の台本v1.0から反映。js/lore.js）');
+
+t('七つの洞窟すべてに台本がある（first・repeat・masterIntro・depart。fogは常に無し）', () => {
+  CQAreas.list().filter((a) => /^cave/.test(a.id)).forEach((a) => {
+    const lore = CQLore.LORE.areas[a.id];
+    eq(!!lore, true, `${a.id}：台本がある`);
+    eq(lore.first.length >= 1, true, `${a.id}：初回の導入がある`);
+    eq(lore.repeat.length >= 1, true, `${a.id}：2回目以降の候補がある`);
+    eq((lore.masterIntro || []).length === 1, true, `${a.id}：七罪人の一言（1つ）がある`);
+    eq((lore.depart || []).length === 1, true, `${a.id}：送り出しがある`);
+    eq(lore.fog, null, `${a.id}：洞窟は常時暗闇なのでfogは持たない`);
+  });
+});
+
+t('七罪人の一言は area.sinName（罪の名）をそのまま含む', () => {
+  CQAreas.list().filter((a) => /^cave/.test(a.id)).forEach((a) => {
+    const lore = CQLore.LORE.areas[a.id];
+    const text = lore.masterIntro[0].lines.join('');
+    eq(text.indexOf('『' + a.sinName + '』') >= 0, true, `${a.id}：masterIntroに『${a.sinName}』が入っている`);
   });
 });
 
