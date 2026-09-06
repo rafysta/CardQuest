@@ -119,6 +119,15 @@
   function ids() { return Object.keys(MASTERS).map(Number); }
   function get(masterId) { return MASTERS[masterId] || null; }
 
+  /** マスターの表示名（『title』name）。原作でも無名の枠（7・16〜19は name はあるが
+   * title が無い／7 はどちらも無い）はそのまま素直に組み立てる。MASTERS に無いIDや、
+   * name も無い枠（7）は null——呼び出し側がエリア名などにフォールバックする。 */
+  function displayName(masterId) {
+    const m = MASTERS[masterId];
+    if (!m || !m.name) return null;
+    return (m.title ? '『' + m.title + '』' : '') + m.name;
+  }
+
   /** マスターの40枚デッキ（{id:count}形式）。RAW_DECKS に無いIDは null。 */
   function deck40(masterId, cards) {
     const raw = RAW_DECKS[masterId];
@@ -134,7 +143,7 @@
 
   const api = {
     RAW_DECKS, DECK_SIZE, BLANK, MASTERS, ROOM_REWARDS,
-    convert50to40, toIdArray, deck40, bossDeckArray, get, ids
+    convert50to40, toIdArray, deck40, bossDeckArray, get, ids, displayName
   };
   global.CQOpponents = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -259,7 +259,7 @@ function enterHome() {
     script = script.concat(CQLore.fill(CQLore.LORE.home.onLevelUp, { n: (meta.known || []).length }));
   }
   const unlockedIds = CQAreas.list()
-    .filter(function (a) { return CQAreas.isUnlocked(a.id, meta.cleared || []); })
+    .filter(function (a) { return CQAreas.isUnlocked(a.id, meta); })
     .map(function (a) { return a.id; });
   CQSave.checkAreaOpen(meta, unlockedIds).forEach(function (id) {
     const area = CQAreas.get(id);
@@ -315,15 +315,16 @@ function renderHome() {
 /* ================= エリア選択 ================= */
 
 function renderAreaSelect() {
-  const cleared = RUI.meta.cleared || [];
+  const meta = RUI.meta;
+  const cleared = meta.cleared || [];
   const tiles = CQAreas.list().map(function (a) {
-    const unlocked = CQAreas.isUnlocked(a.id, cleared);
+    const unlocked = CQAreas.isUnlocked(a.id, meta);
     const done = cleared.indexOf(a.id) >= 0;
     return `<div class="area-tile ${unlocked ? '' : 'locked'}" data-act="${unlocked ? 'go-start' : ''}" data-id="${a.id}"
         style="background-image:url('${a.bg}')">
       <div class="area-tile-fade"></div>
       <div class="area-tile-name">${esc(a.name)}${done ? '<span class="area-clear">クリア済</span>' : ''}</div>
-      ${unlocked ? '' : `<div class="area-tile-lock">🔒 ${esc(CQAreas.get(a.unlock).name)}をクリアすると解放</div>`}
+      ${unlocked ? '' : `<div class="area-tile-lock">🔒 ${esc(CQAreas.unlockLabel(a.id))}</div>`}
     </div>`;
   }).join('');
   runRoot().innerHTML = `
@@ -1261,7 +1262,7 @@ function renderBattleIntro() {
         ? `<img class="battle-intro-foe" src="assets/cutouts/${n.enemy.id}.png" alt="" draggable="false"
              onerror="nodeArtFallback(this, ${n.enemy.id})">`
         : '');
-  const title = isBoss ? area.bossName
+  const title = isBoss ? CQRun.bossDisplayName(run, area)
     : (n.strength === 'elite' ? '精鋭' : n.strength === 'strong' ? '強敵' : '')
       + (n.enemy ? (n.strength === 'normal' ? '' : '　') + CARD_BY_ID[n.enemy.id].n + ' ×' + n.enemy.count : '');
   /* マップを下に敷いてから、その上にカットインを重ねる（四角の後ろにマップが見える）。
@@ -1979,7 +1980,7 @@ const RECORD_KEYS_TOTAL = 7;
 
 function recordGoalHTML(meta) {
   const areas = CQAreas.list().map(function (a) {
-    return { id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, meta.cleared || []) };
+    return { id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, meta) };
   });
   const goal = CQCollection.nextGoal(meta, areas);
   return `<div class="rec-goal">
@@ -2005,7 +2006,7 @@ function recordTitlesHTML(meta) {
 function recordAreasHTML(meta) {
   const cleared = meta.cleared || [];
   return CQAreas.list().map(function (a) {
-    const unlocked = CQAreas.isUnlocked(a.id, cleared);
+    const unlocked = CQAreas.isUnlocked(a.id, meta);
     const done = cleared.indexOf(a.id) >= 0;
     return `<div class="rec-row">
         <span>${esc(a.name)}</span>
@@ -2267,7 +2268,7 @@ function finishRun(run) {
     area: area ? area.name : run.areaId,
     count: (run.gainedCards || []).length,
     lp: run.lp,
-    master: area ? area.bossName : 'マスター'
+    master: area ? CQRun.bossDisplayName(run, area) : 'マスター'
   });
   CQRun.pushJournal(meta, line);
   if (run.settled) {

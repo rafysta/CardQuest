@@ -78,13 +78,37 @@
   }
 
   /** ボスのデッキ：プール上位（価格上限area.bossPriceMax以下）を集めて組む */
-  function buildBossDeck(cards, area) {
-    /* M8.1 WP2：エリアに本物のマスター（area.bossId）が割り当たっていれば、原作の
-     * デッキを40枚化したもの（js/opponents.js）をそのまま使う。まだ割り当てが無い
-     * エリア（草原・森は WP3 で bossId が付くまでの間）は、従来どおりの簡易生成に
-     * フォールバックする——挙動を変えずに済むための互換パスであり、恒久的な仕様ではない。 */
-    if (area.bossId && CQOpponents) {
-      const real = CQOpponents.bossDeckArray(area.bossId, cards);
+  /** そのボス戦で実際に相手をするマスターのID（実装計画M8 §1-2 案B）。
+   * bossPool が無い／1人しかいないエリアは常に bossId（後方互換・草原以外もこれで安全）。
+   * 初回訪問（run.repeatVisit が false）は必ず顔（bossId）。2回目以降の周回だけ、
+   * run.seed から確定的に組（bossPool）の中から1人を選ぶ——同じランなら常に同じ結果になる
+   * （マップ生成のロールと同じ考え方。js/run/map.js rollEnemy 参照）。 */
+  function bossMasterOf(run, area) {
+    if (!area || area.bossId == null) return null;
+    if (!area.bossPool || area.bossPool.length <= 1) return area.bossId;
+    if (!run || !run.repeatVisit) return area.bossId;
+    const r = CQRng.create((run.seed >>> 0) ^ 0x8f1bbcdc);
+    return r.pick(area.bossPool);
+  }
+
+  /** ボスの表示名（バトル導入カットイン・日誌）。bossMasterOf() が選んだ相手を
+   * opponents.js の表示名で出す。名前の無い枠（7）や opponents.js 未参照時は
+   * area.bossName（エリア定義の既定表示）にフォールバックする。 */
+  function bossDisplayName(run, area) {
+    if (!area) return 'マスター';
+    const masterId = bossMasterOf(run, area);
+    const name = (masterId != null && CQOpponents && CQOpponents.displayName) ? CQOpponents.displayName(masterId) : null;
+    return name || area.bossName || 'マスター';
+  }
+
+  function buildBossDeck(cards, area, run) {
+    /* M8.1 WP2・WP3：エリアの「組」（bossPool）から選ばれたマスターの本物のデッキ
+     * （js/opponents.js・原作50枚を40枚化したもの）を使う。まだ bossId が付いていない
+     * エリアは、従来どおりの簡易生成にフォールバックする——挙動を変えずに済むための
+     * 互換パスであり、恒久的な仕様ではない。 */
+    const masterId = bossMasterOf(run, area);
+    if (masterId != null && CQOpponents) {
+      const real = CQOpponents.bossDeckArray(masterId, cards);
       if (real && real.length) return real;
     }
     const pool = CQAreas.enemyPool(cards, area.id).filter(function (e) { return e.price <= area.bossPriceMax; });
@@ -143,6 +167,11 @@
     return {
       areaId: areaId, seed: seed, map: map,
       at: map.start,
+      /* M8.1 WP3（実装計画§1-2 案B）：このエリアを過去にクリアしたことがあるか。
+       * ラン開始時に一度だけ確定させ、run自体に持たせる（cq_runに保存されるので
+       * 中断・再開しても変わらない）。ボスの「組」からの抽選（bossMasterOf）は
+       * これを見て、初回は必ず顔、2回目以降だけ抽選にする。 */
+      repeatVisit: (meta.cleared || []).indexOf(areaId) >= 0,
       lp: lp0, maxLp: CQCollection.LP_CAP,
       gold: meta.gold,
       /* M6.6 WP11：清算のひっ算（持ち込み／今日の獲得／減額）と称号「無傷の一日」の判定に、
@@ -320,7 +349,7 @@
     return {
       cards: cards,
       selfDeck: buildPlayerDeck(run),
-      enemyDeck: isBoss ? buildBossDeck(cards, area) : buildBattleDeck(cards, area, n),
+      enemyDeck: isBoss ? buildBossDeck(cards, area, run) : buildBattleDeck(cards, area, n),
       first: firstTurnOf(run, n),
       opponentId: 900 + (n.seg == null ? 90 : n.seg * 10) + (n.slot || 0),
       fieldRules: n.fieldRules || [],
@@ -590,13 +619,22 @@
 
   /** 称号の初期セット4つ（追補§4 WP11-5）。cond(run, meta) が true なら獲得。
    * meta を見てよいのは「初めて」を判定するため（cleared は settle() より前の状態を見る）。 */
+  /* エリアの踏破称号（M8.1 WP3・実装計画§2-4）：草原・森だけの手書きだったものを
+   * エリア表から自動生成する。key は既存セーブとの互換のため 'clear' + Pascal(areaId)
+   * のまま（草原→clearGrassland・森→clearForest は生成結果も従来と完全に同じ文字列）。 */
+  function pascal(id) { return id.charAt(0).toUpperCase() + id.slice(1); }
+  const AREA_TITLES = CQAreas.list().map(function (area) {
+    return {
+      key: 'clear' + pascal(area.id), name: area.name + 'の踏破者',
+      desc: area.name + 'のマスターを初めて撃破',
+      cond: function (run) { return run.outcome === 'win' && run.areaId === area.id; }
+    };
+  });
+
   const TITLES = [
     { key: 'firstReturn', name: '初めての帰還', desc: '初めてランを終えた',
-      cond: function () { return true; } },                       /* 終わり方は問わない */
-    { key: 'clearGrassland', name: '草原の踏破者', desc: '草原のマスターを初めて撃破',
-      cond: function (run) { return run.outcome === 'win' && run.areaId === 'grassland'; } },
-    { key: 'clearForest', name: '森の踏破者', desc: '森のマスターを初めて撃破',
-      cond: function (run) { return run.outcome === 'win' && run.areaId === 'forest'; } },
+      cond: function () { return true; } }                        /* 終わり方は問わない */
+  ].concat(AREA_TITLES).concat([
     /* 「無傷の一日」＝クリア時のＬＰが出発時（10）以上（2026-08-29 本人確定）。
      * 追補の原文は「ＬＰ満タンのまま」だが、ランは 10／15 で始まる＝満タンではないため、
      * 文字どおりだと回復してからクリアしないと取れない称号になってしまう。
@@ -605,7 +643,7 @@
       cond: function (run) {
         return run.outcome === 'win' && run.lp >= (run.startLp != null ? run.startLp : run.lp);
       } }
-  ];
+  ]);
 
   /** このランで**新しく**得た称号（既に持っているものは返さない）。副作用なし。 */
   function earnedTitles(run, meta) {
@@ -673,6 +711,7 @@
 
   const api = {
     DECK_SIZE, BLANK, DRAFT_ROUNDS, RENTAL_MAX, buildBattleDeck, buildBossDeck, buildPlayerDeck,
+    bossMasterOf, bossDisplayName,
     start, gainCard, beginDraftRound, applyDraft, draftTarget, hasBlankSlot, depart,
     node, currentNode, choices, advance,
     battleSeed, firstTurnOf, battleSetup, reportBattle, reportFlee,

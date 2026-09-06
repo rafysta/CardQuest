@@ -6507,7 +6507,11 @@ const AREAS_FOR_GOAL = (cleared) => CQAreas.list().map((a) => ({
 }));
 
 t('★「いまの目標」は進行に応じて変わる（世界観§6.6・省略しない1行）', () => {
-  /* ①デッキが未完成 → ②まだ倒していないマスター → ③次のコレクション段階 → ④終わり */
+  /* ①デッキが未完成 → ②まだ倒していないマスター → ③次のコレクション段階 → ④終わり
+   * M8.1 WP3で山地・海辺・砂漠が増えたぶん、途中の道のりも伸びた。
+   * 海辺だけは解放条件が cleared ではなく level（記憶データ20種）なので、
+   * この検査では known を意図的に1枚のまま止めておき、「他を全部クリアしても
+   * 海辺だけロックされたまま」でも収集段階（collection）へ抜けられることを確かめる。 */
   const m = { book: { 8: 50 }, deck: {}, known: [8], gold: 0, cleared: [] };
   eq(CQCollection.nextGoal(m, AREAS_FOR_GOAL([])).key, 'deck', 'まずデッキを組む');
   CQCollection.moveToDeck(m, 8, 40);
@@ -6520,8 +6524,16 @@ t('★「いまの目標」は進行に応じて変わる（世界観§6.6・省
   eq(g3.id, 'forest', '草原クリアで解放された森が目標になる');
   m.cleared = ['grassland', 'forest'];
   const g4 = CQCollection.nextGoal(m, AREAS_FOR_GOAL(m.cleared));
-  eq(g4.key, 'collection', '行ける場所を全部踏破したら、記憶データ集めが目標になる');
-  eq(g4.n, CQCollection.nextStageNeed(m.known.length), '「あと何種」は段階の残りと一致する');
+  eq(g4.key, 'area', '森を倒したら次のエリア（M8.1で増えた山地）');
+  eq(g4.id, 'mountain', '森クリアで解放された山地が目標になる');
+  m.cleared = ['grassland', 'forest', 'mountain'];
+  const g5 = CQCollection.nextGoal(m, AREAS_FOR_GOAL(m.cleared));
+  eq(g5.key, 'area', '山地を倒したら次のエリア（海辺はまだロックのため飛ばされる）');
+  eq(g5.id, 'desert', '海辺（level解放）はまだ未達なので、山地クリアで解放された砂漠が目標になる');
+  m.cleared = ['grassland', 'forest', 'mountain', 'desert'];
+  const g6 = CQCollection.nextGoal(m, AREAS_FOR_GOAL(m.cleared));
+  eq(g6.key, 'collection', '海辺だけロックされたままでも、行ける場所を全部踏破したら記憶データ集めが目標になる');
+  eq(g6.n, CQCollection.nextStageNeed(m.known.length), '「あと何種」は段階の残りと一致する');
   for (let i = 1; i <= 168; i++) if (m.known.indexOf(i) < 0) m.known.push(i);
   eq(CQCollection.nextGoal(m, AREAS_FOR_GOAL(m.cleared)).key, 'done', '全部やったら「ひとまず終えた」');
 });
@@ -7313,11 +7325,37 @@ t('buildBossDeck：エリアに bossId があれば opponents.js のデッキを
   eq(deck, CQOpponents.bossDeckArray(11, CARD_BY_ID), 'opponents.js の変換結果と一致');
 });
 
-t('buildBossDeck：bossId が無いエリアは従来どおりの簡易生成（草原・森は未変更）', () => {
-  const area = CQAreas.get('grassland');
-  const deck = CQRun.buildBossDeck(CARD_BY_ID, area);
-  eq(deck.length, CQRun.DECK_SIZE, '従来どおりDECK_SIZE枚');
-  eq(area.bossId, undefined, '草原にはまだ bossId が付いていない（M8.1 WP3で付ける）');
+t('buildBossDeck：bossId が無いエリア定義は従来どおりの簡易生成にフォールバックする', () => {
+  const fakeArea = { id: 'test-area-no-boss', priceMax: 99999, bossPriceMax: 99999 };
+  const deck = CQRun.buildBossDeck(CARD_BY_ID, fakeArea);
+  eq(deck.length, CQRun.DECK_SIZE, '従来どおりDECK_SIZE枚（bossIdが無いのでopponents.jsは使われない）');
+});
+
+t('M8.1 WP3：草原・森は本物のマスターデッキで戦う（コルーニャ・マグドラ）', () => {
+  const grassland = CQAreas.get('grassland');
+  eq(grassland.bossId, 11, '草原の顔は11 コルーニャ');
+  const gDeck = CQRun.buildBossDeck(CARD_BY_ID, grassland);
+  eq(gDeck, CQOpponents.bossDeckArray(11, CARD_BY_ID), '草原のボスデッキはコルーニャの本物のデッキ');
+  const forest = CQAreas.get('forest');
+  eq(forest.bossId, 1, '森の顔は1 マグドラ');
+  const fDeck = CQRun.buildBossDeck(CARD_BY_ID, forest);
+  eq(fDeck, CQOpponents.bossDeckArray(1, CARD_BY_ID), '森のボスデッキはマグドラの本物のデッキ');
+});
+
+t('bossMasterOf：初回訪問は必ず顔、2回目以降の周回だけ組から抽選（実装計画§1-2 案B）', () => {
+  const mountain = CQAreas.get('mountain');
+  eq(mountain.bossPool, [5, 15], '山地の組＝顔5ルピア・客分15グリンジ');
+  const freshRun = { seed: 777, repeatVisit: false };
+  eq(CQRun.bossMasterOf(freshRun, mountain), 5, '初回は必ず顔（ルピア）');
+  const repeatRun = { seed: 777, repeatVisit: true };
+  const picked = CQRun.bossMasterOf(repeatRun, mountain);
+  eq(mountain.bossPool.indexOf(picked) >= 0, true, '周回時は組の中から選ばれる');
+  eq(CQRun.bossMasterOf(repeatRun, mountain), picked, '同じrun.seedなら常に同じ結果（決定的）');
+});
+
+t('bossDisplayName：opponents.jsの表示名を返す（草原＝『占星士』コルーニャ）', () => {
+  const grassland = CQAreas.get('grassland');
+  eq(CQRun.bossDisplayName({ repeatVisit: false }, grassland), '『占星士』コルーニャ');
 });
 
 
@@ -7364,11 +7402,20 @@ t('ユニットカードは g にコレクション段階の表記があって�
 });
 
 t('マスター報酬は area.bossId が付くまで real:false（未配線）のまま', () => {
-  const laris = CARD_BY_ID[182];  // 蜜月＝『傭兵』ラリー（coast）の初回撃破報酬
-  const routes = CQRoutesTest.routesFor(laris, CARD_BY_ID);
+  // 渇望＝『竜使い』リンフォート（temple）の初回撃破報酬。temple はまだ無い（M8.3待ち）。
+  const katsubo = CARD_BY_ID[103];
+  const routes = CQRoutesTest.routesFor(katsubo, CARD_BY_ID);
   const bossRoute = routes.find((r) => r.type === 'boss-reward');
   eq(!!bossRoute, true, 'マスター報酬の経路はある');
-  eq(bossRoute.real, false, 'coastエリアはまだ無い（M8.1 WP3待ち）ので real:false');
+  eq(bossRoute.real, false, 'templeエリアはまだ無い（M8.3待ち）ので real:false');
+});
+
+t('M8.1 WP3：マスター報酬はエリアのボス配線が済むと real:true になる（蜜月＝coastのラリー）', () => {
+  const mitsuduki = CARD_BY_ID[182];  // 蜜月＝『傭兵』ラリー（coast）の初回撃破報酬
+  const routes = CQRoutesTest.routesFor(mitsuduki, CARD_BY_ID);
+  const bossRoute = routes.find((r) => r.type === 'boss-reward');
+  eq(!!bossRoute, true, 'マスター報酬の経路はある');
+  eq(bossRoute.real, true, 'coastエリアにbossIdが付いたのでreal:true');
 });
 
 /* ================= 結果 ================= */
