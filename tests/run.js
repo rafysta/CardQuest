@@ -7679,7 +7679,7 @@ section('M8.3 WP14: 外部教会（バルザミコス・エンディングの合
 t('church：ボスの組・価格帯だけの敵プールがある', () => {
   const area = CQAreas.get('church');
   eq(area.bossId, 99, '初回は99『神官』バルザミコス');
-  eq(area.bossPool, [99, 13], '周回の組は99・13（ルームＳ①〜④はWP17で足す）');
+  eq(area.bossPool, [99, 13, 16, 17, 18, 19], 'area.bossPoolには静的にルームＳ①〜④(16-19)も含む（M8.3 WP17・routes.jsのbossWired向け）');
   eq(area.unlock, { card: 15 }, '解放はカード15（エグゼデグゼス）の所持');
   eq(area.poolMode, 'priceRange', '地形タグではなく価格帯で選ぶ');
 });
@@ -7869,7 +7869,7 @@ t('reportDragonBattle：勝てば確定でその神竜のカードが手に入�
   const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
   CQCollection.ensure(meta);
   const lose = CQRun.reportDragonBattle(10, { winner: 'enemy' }, meta);
-  eq(lose, { win: false, gained: [], trueEnding: false }, '負けでは何も渡さない');
+  eq(lose, { win: false, gained: [], trueEnding: false, titles: [] }, '負けでは何も渡さない（M8.3 WP17でtitlesフィールドが増えた）');
   eq(meta.known.indexOf(10) < 0, true, 'known にも登録されない');
 
   const win = CQRun.reportDragonBattle(10, { winner: 'self' }, meta);
@@ -7934,6 +7934,128 @@ t('coverageReport：神竜9体＋154／187が神竜の間の実装でOKになる
     eq(byId[id].routes.some((r) => r.type === 'monument' && r.area === 'dragons' && r.real), true,
       `カード${id}：monument経路がdragonsを指してreal:true`);
   });
+});
+
+
+section('M8.3 WP17: 実績の拡張（鍵7・エンディング・全169種）とルームＳの周回解放');
+
+t('TITLES：鍵7・エンディング・全169種の3つはmetaOnly（runを見ない）', () => {
+  const found = {};
+  CQRun.TITLES.forEach((t) => { found[t.key] = t; });
+  ['allKeys', 'endingSeen', 'allSpecies'].forEach((key) => {
+    eq(!!found[key], true, `${key}：TITLESにある`);
+    eq(found[key].metaOnly, true, `${key}：metaOnly`);
+  });
+});
+
+t('earnedTitles：metaOnlyの称号は対象にしない（runの無い呼び出しで例外にならないため）', () => {
+  const run = { outcome: 'win', areaId: 'grassland', lp: 10, startLp: 10 };
+  const meta = { book: {}, deck: {}, known: [], gold: 0, cleared: [], keys: Array(7).fill('cave1'), endingSeen: true };
+  CQCollection.ensure(meta);
+  const titles = CQRun.earnedTitles(run, meta);
+  eq(titles.some((t) => t.metaOnly), false, 'earnedTitlesはmetaOnlyを含まない（allKeys/endingSeenが真でも）');
+});
+
+t('earnedMetaTitles：鍵7／エンディング／全169種のそれぞれで正しく判定する（重複取得はしない）', () => {
+  const meta = { book: {}, deck: {}, known: [], gold: 0, cleared: [], titles: [] };
+  CQCollection.ensure(meta);
+  eq(CQRun.earnedMetaTitles(meta), [], '何も満たしていなければ空');
+
+  meta.keys = Array(7).fill(0).map((_, i) => 'cave' + i);
+  let earned = CQRun.earnedMetaTitles(meta);
+  eq(earned.map((t) => t.key), ['allKeys'], '鍵7つでallKeysだけ満たす');
+  earned.forEach((t) => meta.titles.push(t.key));
+  eq(CQRun.earnedMetaTitles(meta), [], '一度得たら二度と返さない（had判定）');
+
+  meta.endingSeen = true;
+  earned = CQRun.earnedMetaTitles(meta);
+  eq(earned.map((t) => t.key), ['endingSeen'], 'エンディング到達でendingSeenを満たす（allKeysは既得なので重ねて出ない）');
+  earned.forEach((t) => meta.titles.push(t.key));
+
+  for (let id = 1; id <= 200; id++) if (CARD_BY_ID[id]) meta.known.push(id);
+  earned = CQRun.earnedMetaTitles(meta);
+  eq(earned.map((t) => t.key), ['allSpecies'], '全169種（＋空白などを含めても実害無し）でallSpeciesを満たす');
+});
+
+t('CQRun.COLLECTION_TOTAL は169——js/run-ui.jsのCOLLECTION_TOTALと同じ式で再計算した値と一致', () => {
+  const total = CARDS.filter((c) => (c.t === 'U' || c.t === 'M' || c.t === 'S') && c.id !== CQRun.BLANK).length;
+  eq(CQRun.COLLECTION_TOTAL, total, 'run.js側の複製値が実際の169と一致（BLANKの二重管理と同じ理由で複製している）');
+});
+
+t('settle()：ランの終わりに鍵が7本目になったら、そのランの中でallKeysも一緒に得る', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [], keys: ['cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6'] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'cave7', 1, meta);
+  run.outcome = 'win';
+  run.bossMasterOverride = null;
+  CQRun.settle(run, meta);
+  eq((meta.keys || []).length, 7, '鍵が7本になった');
+  eq(run.settled.titles.some((t) => t.key === 'allKeys'), true, '同じランの結果にallKeysが混ざっている');
+  eq(meta.titles.indexOf('allKeys') >= 0, true, 'meta.titlesにも積まれている');
+});
+
+t('effectiveBossPool：meta.endingSeenが立つ前はendingOnlyのマスター（ルームＳ①〜④）を組から除く', () => {
+  const area = CQAreas.get('church');
+  const metaBefore = { book: {}, deck: {}, known: [], gold: 0, cleared: [], endingSeen: false };
+  eq(CQRun.effectiveBossPool(area, metaBefore), [99, 13], 'エンディング前は99・13だけ');
+
+  const metaAfter = { book: {}, deck: {}, known: [], gold: 0, cleared: [], endingSeen: true };
+  eq(CQRun.effectiveBossPool(area, metaAfter), [99, 13, 16, 17, 18, 19], 'エンディング後はルームＳ①〜④も混ざる');
+});
+
+t('start()：run.bossPoolはstart()時点のmeta.endingSeenで確定し、以後はbossMasterOfがこれを優先する', () => {
+  const metaBefore = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: ['church'], endingSeen: false };
+  CQCollection.ensure(metaBefore);
+  const runBefore = CQRun.start(CARD_BY_ID, 'church', 1, metaBefore);
+  eq(runBefore.bossPool, [99, 13], 'エンディング前に出発したランはルームＳ抽選なし');
+  runBefore.repeatVisit = true;
+  for (let i = 0; i < 20; i++) {
+    const id = CQRun.bossMasterOf(Object.assign({}, runBefore, { seed: i }), CQAreas.get('church'));
+    eq([99, 13].indexOf(id) >= 0, true, `シード${i}：ルームＳは絶対に選ばれない`);
+  }
+
+  const metaAfter = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: ['church'], endingSeen: true };
+  CQCollection.ensure(metaAfter);
+  const runAfter = CQRun.start(CARD_BY_ID, 'church', 1, metaAfter);
+  eq(runAfter.bossPool, [99, 13, 16, 17, 18, 19], 'エンディング後に出発したランはルームＳも組にある');
+});
+
+t('reportDragonBattle：神竜討伐でmetaOnlyの称号（鍵7・全169種など）が満たされたら一緒に返す・meta.titlesにも積む', () => {
+  const meta = { book: {}, deck: {}, known: [], gold: 0, cleared: [], titles: [] };
+  CQCollection.ensure(meta);
+  meta.keys = Array(7).fill(0).map((_, i) => 'cave' + i);   /* 鍵はすでに7本（あと1枚で称号が立つ状態を作る） */
+  const r = CQRun.reportDragonBattle(10, { winner: 'self' }, meta);
+  eq(r.win, true, '勝った');
+  eq(r.titles.map((t) => t.key), ['allKeys'], '神竜討伐（settle()を経由しない）でもmetaOnlyの称号が立つ');
+  eq(meta.titles, ['allKeys'], 'meta.titlesにも積まれている');
+});
+
+t('CQSave.checkExeCard：カード15を初めて手に入れた回だけtrue（アップデート直後の既存プレイヤーには出さない）', () => {
+  const already = { known: [15] };
+  eq(CQSave.checkExeCard(already, true), false, '既に持っている状態で最初に呼ばれた回は基準を記録するだけ');
+  eq(CQSave.checkExeCard(already, true), false, '2回目以降も変化なし');
+
+  const fresh = {};
+  eq(CQSave.checkExeCard(fresh, false), false, '未所持で最初に呼ばれた回も基準を記録するだけ');
+  eq(CQSave.checkExeCard(fresh, true), true, '次に所持済みで呼ばれた回だけtrue（神殿クリアの直後）');
+  eq(CQSave.checkExeCard(fresh, true), false, '以後は出さない');
+});
+
+t('js/run/areas.js：church.bossPoolは静的に[99,13,16,17,18,19]（routes.jsのbossWired向け）', () => {
+  eq(CQAreas.get('church').bossPool, [99, 13, 16, 17, 18, 19]);
+});
+
+t('coverageReport：M8.3の全WPを終えて全169種がOK（FAIL・PLANNEDともに0）', () => {
+  /* 注意：js/meta/routes.js の require は「M8.1 WP1」節（このWP17節より後方）で
+   * const CQRoutesTest として1回だけ行われる。このテストはそれより前で走るため、
+   * TDZ（Cannot access 'CQRoutesTest' before initialization）を避けてここだけ
+   * 個別にrequireする（M8.3 WP16のcoverageReportテストと同じ対処）。 */
+  const CQRoutesWP17 = require(path.join(root, 'js/meta/routes.js'));
+  const { summary, rows } = CQRoutesWP17.coverageReport(CARD_BY_ID);
+  eq(summary.ok, 169, '全169種がOK');
+  eq(summary.planned || 0, 0, 'PLANNEDは0（潜行爆弾137も church.bossPool の16でreal:trueになった）');
+  eq(summary.fail || 0, 0, 'FAILは0');
+  eq(rows.length, 169, '網羅表の行数も169');
 });
 
 
@@ -8339,14 +8461,12 @@ t('ユニットカードは g にコレクション段階の表記があって�
   eq(routes.some((r) => r.type === 'shop'), false, 'ユニットはショップ経路を持たない（js/meta/collection.js shopPool の種別フィルタと一致）');
 });
 
-t('マスター報酬は area.bossId が付くまで real:false（未配線）のまま', () => {
-  // 潜行爆弾＝ルームＳ①（16）の初回撃破報酬。ルームＳ①〜④はエンディング後だけ
-  // churchのbossPoolに混ざる予定（M8.3 WP17）で、いまはまだどのエリアにも配線されていない。
+t('M8.3 WP17：潜行爆弾（ルームＳ①・16の初回撃破報酬）は church.bossPool に16が入って real:true になる', () => {
   const senkoubakudan = CARD_BY_ID[137];
   const routes = CQRoutesTest.routesFor(senkoubakudan, CARD_BY_ID);
   const bossRoute = routes.find((r) => r.type === 'boss-reward');
   eq(!!bossRoute, true, 'マスター報酬の経路はある');
-  eq(bossRoute.real, false, 'ルームＳ①はまだどのエリアにも配線されていない（M8.3 WP17待ち）ので real:false');
+  eq(bossRoute.real, true, 'church.bossPoolに16が入ったのでreal:true（routes.jsのbossWiredは配列の有無だけを見る）');
 });
 
 t('M8.3 WP14：churchが立ったのでバルザミコス／ギンリットのマスター報酬もreal:trueになる', () => {

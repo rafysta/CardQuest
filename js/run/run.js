@@ -24,6 +24,10 @@
     ? require('../engine/rng.js') : global.CQRng;
   const DECK_SIZE = (CQTurnRef && CQTurnRef.DECK_SIZE) || 40;
   const BLANK = 180;
+  /* コレクション対象（U/M/S・空白180を除く）の総数。js/run-ui.js の COLLECTION_TOTAL と
+   * 同じ式（169）——run.js は cards 配列を受け取らない純関数群なので数だけ複製する
+   * （BLANKの二重管理と同じ理由）。tests/run.js に両者が一致することを確認する固定テストがある。 */
+  const COLLECTION_TOTAL = 169;
   /* おまかせドラフトの回数（マップ仕様書§1.2は3回だったが、実装計画追補M6.6 §2-4で
    * 最大2回に変更。1回目＝エリアの敵／2回目＝いま買える魔法・技能）。 */
   const DRAFT_ROUNDS = 2;
@@ -120,22 +124,42 @@
       room: room, threshold: threshold, roomCard: roomCard };
   }
 
+  /** area.bossPool から、そのランで実際に抽選対象になる組を作る（M8.3 WP17）。
+   * ルームＳ①〜④(16〜19)のような endingOnly のマスターは、area.bossPool には
+   * **静的に**含めておく（js/meta/routes.js の bossWired は配列の有無だけを見るので、
+   * これで「機構としては存在する」real:trueになる）が、meta.endingSeen が立つ前は
+   * 抽選から除く——エンディングを見る前にルームＳの4人と当たってしまう事故を防ぐ。
+   * start() が一度だけ確定させ run.bossPool に持たせる（run.repeatVisit と同じ考え方）。 */
+  function effectiveBossPool(area, meta) {
+    const base = area && area.bossPool;
+    if (!base) return base;
+    if (meta && meta.endingSeen) return base;
+    return base.filter(function (id) {
+      const m = CQOpponents.get(id);
+      return !(m && m.endingOnly);
+    });
+  }
+
   function bossMasterOf(run, area) {
     if (!area || area.bossId == null) return null;
+    /* run.bossPool（start()が meta.endingSeen を見て確定させた組）があればそれを使う。
+     * テストなどで run を直接組み立てた場合（bossPool が無い）は area.bossPool へフォールバック
+     * ——挙動は従来どおり。 */
+    const pool = (run && run.bossPool) || area.bossPool;
     /* 開発用（js/devpresets.js「ボス戦へ直行」）：組の中のidを直接指定できる。
      * 組に無いidは無視する（デバッグメニュー以外からは決して立たないフィールド）。 */
     if (run && run.bossMasterOverride != null
-        && (area.bossPool || [area.bossId]).indexOf(+run.bossMasterOverride) >= 0) return +run.bossMasterOverride;
+        && (pool || [area.bossId]).indexOf(+run.bossMasterOverride) >= 0) return +run.bossMasterOverride;
     /* M8.3 WP13（実装計画§4 WP13）：封印（モニュメント）を持つエリア（神殿・神竜の間）は、
      * 初回訪問だけ area.bossId／bossPool とは別の相手（area.monumentCard）と戦う。
      * ここで null を返すことで、bossBonusOf／bossDisplayName／buildBossDeck／settle() の
      * どれも「闘技場マスターは居ない」（七罪人と同じ扱い）になり、初回封印戦で
      * area.bossId のマスターへ実績や初回撃破報酬を誤って付けてしまう事故を防ぐ。 */
     if (area.monumentCard != null && !(run && run.repeatVisit)) return null;
-    if (!area.bossPool || area.bossPool.length <= 1) return area.bossId;
+    if (!pool || pool.length <= 1) return area.bossId;
     if (!run || !run.repeatVisit) return area.bossId;
     const r = CQRng.create((run.seed >>> 0) ^ 0x8f1bbcdc);
-    return r.pick(area.bossPool);
+    return r.pick(pool);
   }
 
   /** ボスの表示名（バトル導入カットイン・日誌）。bossMasterOf() が選んだ相手を
@@ -219,6 +243,9 @@
        * 中断・再開しても変わらない）。ボスの「組」からの抽選（bossMasterOf）は
        * これを見て、初回は必ず顔、2回目以降だけ抽選にする。 */
       repeatVisit: (meta.cleared || []).indexOf(areaId) >= 0,
+      /* M8.3 WP17：このランで実際に抽選対象になるボスの組（endingOnlyの除外込み）を
+       * ここで一度だけ確定させる。bossMasterOf はこれを見る（無ければ area.bossPool）。 */
+      bossPool: effectiveBossPool(area, meta),
       lp: lp0, maxLp: CQCollection.LP_CAP,
       gold: meta.gold,
       /* M6.6 WP11：清算のひっ算（持ち込み／今日の獲得／減額）と称号「無傷の一日」の判定に、
@@ -594,9 +621,9 @@
    * （run.gainedCards／lootPending）のような「後で振り分ける」保留は無く、原作どおり
    * 倒した瞬間に確定で貰える（実装計画§1-1「案Bの注意」と同じ考え方）。 */
   function reportDragonBattle(cardId, M, meta) {
-    if (!M || M.winner !== 'self') return { win: false, gained: [], trueEnding: false };
+    if (!M || M.winner !== 'self') return { win: false, gained: [], trueEnding: false, titles: [] };
     const d = CQOpponents.dragonOf(cardId);
-    if (!d) return { win: false, gained: [], trueEnding: false };
+    if (!d) return { win: false, gained: [], trueEnding: false, titles: [] };
     const gained = [];
     const already = (meta.dragonWins && meta.dragonWins[cardId]) || 0;
     meta.dragonWins = meta.dragonWins || {};
@@ -612,7 +639,12 @@
       meta.trueEndingSeen = true;
       trueEnding = true;
     }
-    return { win: true, gained: gained, trueEnding: trueEnding };
+    /* M8.3 WP17：神竜の間はラン（settle()）を経由しないので、metaOnly の称号
+     * （鍵7・エンディング・全169種）はここで別途チェックする——連続攻撃154／修練の拳187が
+     * 最後の1種になって全169種が完成する、という筋道が実際にあるため。 */
+    const titles = earnedMetaTitles(meta);
+    titles.forEach(function (t) { meta.titles.push(t.key); });
+    return { win: true, gained: gained, trueEnding: trueEnding, titles: titles };
   }
 
   /** 逃走してマップへ戻ったときの反映（M6.6 WP12・追補§4 WP12）。
@@ -936,13 +968,40 @@
         const area = CQAreas.get(run.areaId);
         return !!(area && HIGH_ROOMS[roomOf(area)] && run.bossTurns <= 10);
       } }
+  ]).concat([
+    /* M8.3 WP17（実装計画§4 WP17）：ここからの3つは meta だけで判定できる称号
+     * （metaOnly:true）。settle()（ランの終わり）だけでなく reportDragonBattle()
+     * （神竜の間・ランを経由しない）でもチェックする——鍵7・全169種は神竜討伐が
+     * きっかけで達成することもあるため（連続攻撃154・修練の拳187は神竜討伐報酬）。
+     * cond の第一引数（run）は使わない（metaOnly の呼び出し側は常に null を渡す）。 */
+    { key: 'allKeys', name: '七つの鍵', desc: '七つの鍵をすべて集めた', metaOnly: true,
+      cond: function (run, meta) { return !!(meta && (meta.keys || []).length >= 7); } },
+    { key: 'endingSeen', name: '結末を見た者', desc: 'エンディングに到達した', metaOnly: true,
+      cond: function (run, meta) { return !!(meta && meta.endingSeen); } },
+    /* 169＝コレクション対象（U/M/S・空白180を除く）の総数（js/run-ui.js の COLLECTION_TOTAL・
+     * tests/run.js で毎回169であることを固定している値と同じ。run.js は cards 配列を
+     * 受け取らない純関数群なので、ここでも同じ値を独立して持つ——BLANKの二重管理と同じ理由）。 */
+    { key: 'allSpecies', name: '記録の完成', desc: '全169種の記憶データを集めた', metaOnly: true,
+      cond: function (run, meta) { return !!(meta && (meta.known || []).length >= COLLECTION_TOTAL); } }
   ]);
 
-  /** このランで**新しく**得た称号（既に持っているものは返さない）。副作用なし。 */
+  /** このランで**新しく**得た称号（既に持っているものは返さない）。副作用なし。
+   * metaOnly の称号はここでは判定しない（earnedMetaTitles が担当）——run が無い
+   * 呼び出し元（reportDragonBattle）で cond(run) が run.outcome 等に触れて例外に
+   * なる事故を防ぐため、2つの関数を分けてある。 */
   function earnedTitles(run, meta) {
     const had = (meta && meta.titles) || [];
     return TITLES.filter(function (t) {
-      return had.indexOf(t.key) < 0 && t.cond(run, meta);
+      return !t.metaOnly && had.indexOf(t.key) < 0 && t.cond(run, meta);
+    });
+  }
+
+  /** meta だけで判定できる称号（metaOnly:true）のうち、まだ持っていないものを返す。
+   * run を経由しない場所（reportDragonBattle）からも呼べる。副作用なし。 */
+  function earnedMetaTitles(meta) {
+    const had = (meta && meta.titles) || [];
+    return TITLES.filter(function (t) {
+      return !!t.metaOnly && had.indexOf(t.key) < 0 && t.cond(null, meta);
     });
   }
 
@@ -1016,8 +1075,11 @@
       }
     }
     /* 称号は cleared を更新する**前**に判定する（「初めて撃破」が cleared 由来ではなく
-     * meta.titles 由来なので実害は無いが、判定材料の並びを素直に保つ）。 */
-    const titles = earnedTitles(run, meta);
+     * meta.titles 由来なので実害は無いが、判定材料の並びを素直に保つ）。
+     * M8.3 WP17：metaOnly の称号（鍵7・エンディング・全169種）は、このランで
+     * 鍵やカードが増えた結果として今まさに満たされることがあるので、通常の称号と
+     * 同じ1つの配列（run.settled.titles）に混ぜて結果画面へ渡す。 */
+    const titles = earnedTitles(run, meta).concat(earnedMetaTitles(meta));
     titles.forEach(function (t) { meta.titles.push(t.key); });
     meta.day = (meta.day || 0) + 1;
     /* M7 WP10：記録画面の統計。終わり方の内訳・ボス撃破数・累計の獲得枚数を数える。
@@ -1043,8 +1105,8 @@
     canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
     sellPrice, buyoutPrice, buyout, buyoutLeave, resolveQuestion, retire, settle,
-    SETTLE_CUT, settleGold, TITLES, earnedTitles, pushJournal,
-    roomOf, bossBonusOf,
+    SETTLE_CUT, settleGold, TITLES, earnedTitles, earnedMetaTitles, COLLECTION_TOTAL, pushJournal,
+    roomOf, bossBonusOf, effectiveBossPool,
     dragonSacrificeOk, dragonSacrificeConsume, dragonBattleSetup, reportDragonBattle
   };
   global.CQRun = api;

@@ -287,6 +287,12 @@ function enterHome() {
   const keyMile = CQSave.checkKeys(meta, (meta.keys || []).length);
   if (keyMile === 'first') script = script.concat(CQLore.LORE.home.onFirstKey);
   else if (keyMile === 'all') script = script.concat(CQLore.LORE.home.onAllKeys);
+  /* M8.3 WP17：エグゼデグゼス（カード15）を初めて手に入れた節目（台本§2.3 onExeCard）。
+   * 神殿クリア→教会（エンディング）への案内。鍵と同じ「見逃し不可」の節目として、
+   * ここに続けて出す（同じ訪問で複数の節目が重なったら全部続けて出す・関数コメント参照）。 */
+  if (CQSave.checkExeCard(meta, (meta.known || []).indexOf(15) >= 0)) {
+    script = script.concat(CQLore.LORE.home.onExeCard);
+  }
   const wasFirst = CQSave.markHomeVisited(meta);
   if (!script.length) {
     script = wasFirst ? CQLore.LORE.home.first.slice() : CQLore.pickOne(CQLore.LORE.home.idle).slice();
@@ -2124,7 +2130,11 @@ function onDragonBattleOver(M) {
     const r = CQRun.reportDragonBattle(cardId, M, RUI.meta);
     CQSave.saveMeta(RUN_STORAGE, RUI.meta);
     if (r.win) {
-      runFlash(r.gained.map(function (id) { return CARD_BY_ID[id].n; }).join('・') + ' を手に入れた！');
+      let msg = r.gained.map(function (id) { return CARD_BY_ID[id].n; }).join('・') + ' を手に入れた！';
+      if (r.titles && r.titles.length) {
+        msg += ' 称号「' + r.titles.map(function (t) { return t.name; }).join('」「') + '」を得た！';
+      }
+      runFlash(msg);
     } else {
       runFlash('敗れた……捧げ物は消費された。');
     }

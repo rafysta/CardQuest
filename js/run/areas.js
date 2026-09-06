@@ -363,8 +363,12 @@
      * 敵プールは地形タグではなく「2000Ｇ以上の全ユニット」（神竜9体・エグゼデグゼスを除く。
      * マスターズソウル(64)はenemyPool側で常に除外済み）——poolMode:'priceRange' を使う。
      * ボスは初回が『神官』バルザミコス（bossId:99）、2回目以降は13『奴隷戦士』ギンリットも
-     * 混ざる（bossPool:[99,13]）。ルームＳ①〜④(16〜19)はエンディング後だけ混ざる予定
-     * （M8.3 WP17で bossPool に足す。それまでは endingOnly のマスターが選ばれることはない）。 */
+     * 混ざる。ルームＳ①〜④(16〜19)は**静的には**bossPoolに含めておく（js/meta/routes.jsの
+     * bossWiredはこの配列の有無だけを見るので、これで154/187と同じく「機構としては存在する」
+     * real:trueになる）が、**実際に抽選対象へ入るのはmeta.endingSeenが立ってから**——
+     * js/run/run.js の start() が area.bossPool から meta.endingSeen を見て
+     * endingOnly のマスターを取り除いた run.bossPool を作り、bossMasterOf() はそちらを
+     * 優先して見る（M8.3 WP17・実装計画§3-5）。 */
     church: {
       id: 'church', name: '外部教会', tags: [], order: 13, act: 3,
       bg: 'assets/map/bg_church.png', master: 'assets/masters/m_balsamicos.png',
@@ -377,7 +381,7 @@
       eliteMin: 20000,
       rareTier: 'final',
       bossName: '『神官』バルザミコス',
-      bossId: 99, bossPool: [99, 13],
+      bossId: 99, bossPool: [99, 13, 16, 17, 18, 19],
       bossLp: 40, bossPriceMax: 20000,
       fieldRuleChance: 0.45,
       bossRank: 'rankA',

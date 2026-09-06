@@ -22,7 +22,7 @@
  * 実装状況（2026-09-02 M7 WP5時点）：
  *   opening … WP1で実装（従来 js/run-ui.js に直書きしていたものをここへ移した）
  *   areas   … WP4で実装（開始マスの案内）。cave1〜cave7はM8.2 WP11で追加（台本v1.0 §9）
- *   home    … WP5で実装（ホーム画面。onFirstKey/onAllKeys/onExeCardはM8以降まで未使用）
+ *   home    … WP5で実装（ホーム画面。onFirstKey/onAllKeysはM8.2 WP10・onExeCardはM8.3 WP17で使用開始）
  *   result / journal … M6.6 WP11で実装
  *   hints   … carryOut のみ実装。残り15種は将来の宿題（段階的開示の索引化とあわせて）
  *   nodes   … 未実装
@@ -347,9 +347,9 @@
      *   idle  … 通常、ホームに戻るたびランダムに1つ（§2.2・候補群）
      *   onLevelUp / onAreaOpen … 節目（§2.3）。条件を満たした最初のホームで必ず出す。
      *     {n} はマスターレベル上昇時の記憶データ種類数、{area} は解放されたエリア名。
-     *   onFirstKey / onAllKeys / onExeCard … 台本§2.3にある残り3つの節目。鍵・エグゼデグゼスは
-     *     M8以降で入る要素で、現行コードには対応する状態が無いため今はまだ呼び出されない
-     *     （文面だけ先にここへ置いておく。WP5実施メモに申し送り済み）。 */
+     *   onFirstKey / onAllKeys … 鍵の節目（M8.2 WP10・CQSave.checkKeys）。
+     *   onExeCard … カード15（エグゼデグゼス）を初めて手に入れた節目（M8.3 WP17・
+     *     CQSave.checkExeCard）。神殿クリア→エンディングへの導線として使う。 */
     home: {
       first: [                                                    /* 台本§2.1 */
         { face: 'calm', lines: ['ジェイルタウン。島で唯一の街よ。'] },

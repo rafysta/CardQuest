@@ -182,6 +182,15 @@
     return null;
   }
 
+  /** M8.3 WP17（台本§2.3 onExeCard）：エグゼデグゼス（カード15）を初めて手に入れた回だけ
+   * true。checkLevelUp／checkKeys と同じく、**最初の1回は基準を記録するだけ**（アップデート
+   * 直後に、既に神殿をクリア済みのプレイヤーへ今さら「とうとう」を見せてしまわないように）。 */
+  function checkExeCard(meta, hasCard) {
+    if (meta.homeSeenExeCard == null) { meta.homeSeenExeCard = !!hasCard; return false; }
+    if (hasCard && !meta.homeSeenExeCard) { meta.homeSeenExeCard = true; return true; }
+    return false;
+  }
+
   /** ホームへ来たのが初めてか（呼ぶと同時に既読にする）。 */
   function markHomeVisited(meta) {
     const first = !meta.homeVisited;
@@ -242,7 +251,7 @@
     loadMeta, saveMeta, clearMeta, loadRun, saveRun, clearRun, toDeckCounts, migrate, initialMeta,
     ensureFields, visitCount, markVisit, hintSeen, markHint,
     TUTORIAL_HINT_KEYS, migrateTutorial,
-    checkLevelUp, checkAreaOpen, checkKeys, markHomeVisited
+    checkLevelUp, checkAreaOpen, checkKeys, checkExeCard, markHomeVisited
   };
   global.CQSave = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
