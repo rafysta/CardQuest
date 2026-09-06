@@ -7586,6 +7586,16 @@ t('節目の演出：milestone既定はホームで「上がった／開いた�
   eq(CQSave.checkAreaOpen(off, unlockedIds), [], 'falseならエリアの節目も出ない');
 });
 
+t('summarize：セーブスロットの要約は「日目・Lv・記憶・踏破（／ラン中）」の1行', () => {
+  const m = CQDevPresets.build('p3', CARD_BY_ID);
+  eq(CQDevPresets.summarize(m, null), '2日目・Lv2・記憶24種・踏破2', 'ランなし');
+  const run = CQDevPresets.bossJumpRun(CARD_BY_ID, m, { areaId: 'mountain', seed: 1 });
+  eq(CQDevPresets.summarize(m, run), '2日目・Lv2・記憶24種・踏破2／山地のラン中', '中断中のランがあれば末尾に');
+  run.outcome = 'win';
+  eq(CQDevPresets.summarize(m, run), '2日目・Lv2・記憶24種・踏破2', '終わったランは数えない');
+  eq(CQDevPresets.summarize(null, null), '（メタなし）', 'メタが無い');
+});
+
 t('addKnown：未知のカードを安い順にn種、本へ1枚ずつ', () => {
   const m = CQDevPresets.build('p1', CARD_BY_ID);
   const before = m.known.length;

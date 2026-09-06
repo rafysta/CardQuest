@@ -1732,6 +1732,12 @@ td.nm{font-weight:800}
 .dbg-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;padding:2px}
 .dbg-grid label{display:flex;flex-direction:column;gap:2px;color:var(--dim)}
 .dbg-grid select,.dbg-grid input{width:100%;font-size:12px;padding:3px 4px;background:var(--panel2);color:inherit;border:1px solid var(--line);border-radius:6px}
+.dbg-slot{display:grid;grid-template-columns:78px 1fr auto auto;gap:6px;align-items:center;padding:3px 2px;border-bottom:1px dotted var(--line)}
+.dbg-slot-n{font-weight:700}
+.dbg-slot-n small{display:block;font-weight:400;color:var(--dim)}
+.dbg-slot-l{color:var(--dim);min-width:0;word-break:break-all}
+.dbg-slot-l b{color:inherit}
+.dbg-slot-auto{border-bottom:none;opacity:.85}
 
 /* ---- ⚙ メニュー（js/menu.js・2026-09-06・本人指定） ----
    遊ぶ人がいつでも開けるメニュー。位置と枠は 🛠 のメニューに揃えるが、こちらは

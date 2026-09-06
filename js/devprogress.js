@@ -4,10 +4,14 @@
  * 進めた状態を作れるようにする。中身の組み立ては js/devpresets.js（DOM非依存・Nodeから
  * テスト可）に置き、ここは**フォームと localStorage への読み書きだけ**を持つ。
  *
- *   💾 退避     … いまの cq_meta／cq_run を1世代だけ `cqdev_stash` に取っておき、いつでも戻せる。
- *                 ①と③は適用の前に**自動で退避**する（本番のセーブで遊んでいる人が使うため）。
+ *   💾 セーブスロット … 手動3つ（cqdev_slot1〜3）＋「直前の状態」1つ（cqdev_slot_auto）。
+ *                 いまの cq_meta／cq_run を文字列のまま（バックアップと同じ「1バイトも変えない」
+ *                 方式）日時・版・要約と一緒に取っておき、いつでも読み込める。①と③は適用の前に
+ *                 **自動枠だけ**を上書きする——手動スロットには決して触らない（2026-09-06：
+ *                 1世代の自動退避だけだったときに、続けて2回適用して元の状態を失った反省）。
  *                 キーを cq_ で始めないのは、バックアップ（js/meta/backup.js＝cq_* 全部）に
- *                 混ぜないため。
+ *                 混ぜないため。開発者モードの中に置くのは、ラン途中まで戻せるスロットが
+ *                 プレイヤーに渡るとリタイヤ／ゲームオーバーの清算が意味を失うため。
  *   ① プリセット … 5つの到達点から cq_meta を丸ごと作り直してホームへ。
  *   ② 少し動かす … 記憶データを +N種（19→20種でLv2、のような境目の確認）／
  *                 いまのランを勝利で終える（清算→称号→日誌→エリア解放の一連を本物の流れで）。
@@ -15,49 +19,123 @@
  *                 ボスマスの1つ手前に立った状態のランを作る。そこから先は本物の流れ。
  *
  * デバッグメニュー（js/debug.js）から開かれる。開発者モードのときだけ届く画面なので、
- * ここで作った状態が本番のセーブに残ることはある——それが目的なので、退避で守る。
+ * ここで作った状態が本番のセーブに残ることはある——それが目的なので、スロットで守る。
  */
 'use strict';
 
 const CQDevProgress = (function () {
 
-  const STASH_KEY = 'cqdev_stash';
+  const SLOT_KEYS = { 1: 'cqdev_slot1', 2: 'cqdev_slot2', 3: 'cqdev_slot3', auto: 'cqdev_slot_auto' };
+  const OLD_STASH_KEY = 'cqdev_stash';   /* 1世代退避だった頃のキー。見つけたら自動枠へ移す */
 
   function storage() { return (typeof RUN_STORAGE !== 'undefined') ? RUN_STORAGE : null; }
 
-  /* ---- 💾 退避（1世代） ---------------------------------------------------- */
+  /* ---- 💾 セーブスロット ----------------------------------------------------- */
 
-  function readStash() {
+  function readSlot(id) {
     const s = storage();
-    if (!s) return null;
-    try { const raw = s.getItem(STASH_KEY); return raw ? JSON.parse(raw) : null; } catch (_) { return null; }
+    if (!s || !SLOT_KEYS[id]) return null;
+    try { const raw = s.getItem(SLOT_KEYS[id]); return raw ? JSON.parse(raw) : null; } catch (_) { return null; }
   }
 
-  /** いまの cq_meta／cq_run を退避する（前の退避は上書き＝1世代）。 */
-  function stash() {
+  /** いまの cq_meta／cq_run をスロットへ。中身は文字列のまま。要約は保存時に作って持たせる
+   * （読むたびに JSON.parse しなくてよいように）。 */
+  function saveSlot(id) {
     const s = storage();
-    if (!s) return false;
-    const data = { savedAt: new Date().toISOString(), meta: s.getItem('cq_meta'), run: s.getItem('cq_run') };
-    try { s.setItem(STASH_KEY, JSON.stringify(data)); } catch (_) { return false; }
+    if (!s || !SLOT_KEYS[id]) return false;
+    const metaStr = s.getItem('cq_meta'), runStr = s.getItem('cq_run');
+    let meta = null, run = null;
+    try { meta = metaStr ? JSON.parse(metaStr) : null; run = runStr ? JSON.parse(runStr) : null; } catch (_) { /* 要約だけ諦める */ }
+    const data = {
+      savedAt: new Date().toISOString(),
+      version: (typeof APP_VERSION === 'string') ? APP_VERSION : '',
+      summary: CQDevPresets.summarize(meta, run),
+      meta: metaStr, run: runStr
+    };
+    try { s.setItem(SLOT_KEYS[id], JSON.stringify(data)); } catch (_) { return false; }
     return true;
   }
 
-  function restore() {
+  function loadSlot(id) {
     const s = storage();
-    const st = readStash();
+    const st = readSlot(id);
     if (!s || !st) return false;
     if (st.meta != null) s.setItem('cq_meta', st.meta); else s.removeItem('cq_meta');
     if (st.run != null) s.setItem('cq_run', st.run); else s.removeItem('cq_run');
     return true;
   }
 
-  function stashLabel() {
-    const st = readStash();
-    if (!st) return '退避：なし';
+  /** 旧・1世代退避（cqdev_stash）が残っていれば自動枠へ移す（自動枠が空のときだけ）。 */
+  function migrateOldStash() {
+    const s = storage();
+    if (!s) return;
+    const raw = s.getItem(OLD_STASH_KEY);
+    if (!raw) return;
+    try {
+      if (!s.getItem(SLOT_KEYS.auto)) {
+        const old = JSON.parse(raw);
+        let meta = null, run = null;
+        try { meta = old.meta ? JSON.parse(old.meta) : null; run = old.run ? JSON.parse(old.run) : null; } catch (_) { /* 要約だけ諦める */ }
+        s.setItem(SLOT_KEYS.auto, JSON.stringify({
+          savedAt: old.savedAt, version: '', summary: CQDevPresets.summarize(meta, run), meta: old.meta, run: old.run
+        }));
+      }
+      s.removeItem(OLD_STASH_KEY);
+    } catch (_) { /* 壊れていたら捨てる */ s.removeItem(OLD_STASH_KEY); }
+  }
+
+  function slotLabel(id) {
+    const st = readSlot(id);
+    if (!st) return '<span class="dbg-dim">（空）</span>';
     const d = new Date(st.savedAt);
     const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
-    return '退避：' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm
-      + '（メタ' + (st.run ? '＋中断中のラン' : '') + '）';
+    return '<b>' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm + '</b>　' + esc(st.summary || '');
+  }
+
+  function slotsHTML() {
+    const rows = [1, 2, 3].map(function (i) {
+      const has = !!readSlot(i);
+      return '<div class="dbg-slot"><span class="dbg-slot-n">スロット' + i + '</span>'
+        + '<span class="dbg-slot-l" data-slot-label="' + i + '">' + slotLabel(i) + '</span>'
+        + '<button class="tiny" data-act="slot-save" data-slot="' + i + '">保存</button>'
+        + '<button class="tiny" data-act="slot-load" data-slot="' + i + '"' + (has ? '' : ' disabled') + '>読み込み</button></div>';
+    }).join('');
+    const hasAuto = !!readSlot('auto');
+    return rows
+      + '<div class="dbg-slot dbg-slot-auto"><span class="dbg-slot-n">直前の状態<small>（自動）</small></span>'
+      + '<span class="dbg-slot-l" data-slot-label="auto">' + slotLabel('auto') + '</span>'
+      + '<span></span>'
+      + '<button class="tiny" data-act="slot-load" data-slot="auto"' + (hasAuto ? '' : ' disabled') + '>読み込み</button></div>';
+  }
+
+  function refreshSlots() {
+    const box = panel && panel.querySelector('#dp-slots');
+    if (box) box.innerHTML = slotsHTML();
+  }
+
+  function confirmThen(msg, yesLabel, then) {
+    if (typeof showConfirm === 'function') return showConfirm(msg, then, yesLabel);
+    then();
+  }
+
+  function onSlotSave(id) {
+    const doSave = function () {
+      say(saveSlot(id) ? 'スロット' + id + 'に保存しました。' : '保存できませんでした（localStorage が使えない？）。');
+      refreshSlots();
+    };
+    if (readSlot(id)) return confirmThen('スロット' + id + 'には既に保存があります。\n上書きしますか？', '上書き', doSave);
+    doSave();
+  }
+
+  function onSlotLoad(id) {
+    if (inBattle()) return say('<b>戦闘中は使えません。</b>決着してから使ってください。');
+    if (!readSlot(id)) return say('そのスロットは空です。');
+    const name = id === 'auto' ? '直前の状態' : 'スロット' + id;
+    confirmThen(name + 'を読み込みます。\nいまの状態は消えます（必要なら先に別のスロットへ保存）。\nよろしいですか？', '読み込む', function () {
+      if (!loadSlot(id)) return say('読み込めませんでした。');
+      reloadFromSave();
+      closeAll();
+    });
   }
 
   /* ---- 共通 ------------------------------------------------------------------- */
@@ -107,14 +185,13 @@ const CQDevProgress = (function () {
       + '<span class="dbg-menu-v">dev</span></div>'
       + '<div class="dbg-form">'
       /* 💾 */
-      + '<div class="dbg-sec">💾 退避（1世代）<small id="dp-stash">' + esc(stashLabel()) + '</small></div>'
-      + '<div class="dbg-btn-row"><button class="tiny" data-act="stash">いまのセーブを退避</button>'
-      + '<button class="tiny" data-act="restore"' + (readStash() ? '' : ' disabled') + '>退避から戻す</button></div>'
+      + '<div class="dbg-sec">💾 セーブスロット<small>①③を使う前に、戻りたい状態を好きなスロットへ保存。「直前の状態」は①③の適用時に自動で上書きされる保険</small></div>'
+      + '<div id="dp-slots">' + slotsHTML() + '</div>'
       /* ① */
-      + '<div class="dbg-sec">① 進行状態のプリセット<small>適用の前に自動で退避します。中断中のランは消えます</small></div>'
+      + '<div class="dbg-sec">① 進行状態のプリセット<small>いまの状態は「直前の状態」に残るだけです。中断中のランは消えます</small></div>'
       + presets
       + '<label class="dbg-check"><input type="checkbox" id="dp-milestone" checked> ホームで節目の演出（レベルアップ・エリア解放）を出す</label>'
-      + '<div class="dbg-btn-row"><button class="tiny ok" data-act="preset">退避して適用</button></div>'
+      + '<div class="dbg-btn-row"><button class="tiny ok" data-act="preset">適用</button></div>'
       /* ② */
       + '<div class="dbg-sec">② 少し動かす<small>退避はしません（+Nは本に1枚ずつ増えるだけ）</small></div>'
       + '<div class="dbg-btn-row">記憶データを <button class="tiny" data-act="known" data-n="1">+1種</button>'
@@ -123,7 +200,7 @@ const CQDevProgress = (function () {
       + '<div class="dbg-btn-row"><button class="tiny" data-act="win-run">🏁 いまのランを勝利で終える</button>'
       + '<small>清算・称号・日誌・エリア解放まで本物の流れで通す</small></div>'
       /* ③ */
-      + '<div class="dbg-sec">③ ボス戦へ直行<small>退避してからランを作り、ボスマスの1つ手前に立ちます</small></div>'
+      + '<div class="dbg-sec">③ ボス戦へ直行<small>ランを作り、ボスマスの1つ手前に立ちます（いまの状態は「直前の状態」に残ります）</small></div>'
       + '<div class="dbg-grid">'
       + '<label>エリア<select id="dp-area">' + areaOptions() + '</select></label>'
       + '<label>マスター<select id="dp-master">' + masterOptions(CQAreas.ORDER[0]) + '</select></label>'
@@ -134,7 +211,7 @@ const CQDevProgress = (function () {
       }).join('') + '</select></label>'
       + '<label>そのマスター<select id="dp-beaten"><option value="">セーブどおり</option><option value="0">まだ倒していない（初回の一枚が出る）</option><option value="1">倒したことがある</option></select></label>'
       + '</div>'
-      + '<div class="dbg-btn-row"><button class="tiny ok" data-act="boss">退避して直行</button></div>'
+      + '<div class="dbg-btn-row"><button class="tiny ok" data-act="boss">直行</button></div>'
       + '</div>'
       + '<div class="dbg-out" id="dbg-out"></div>';
   }
@@ -142,10 +219,6 @@ const CQDevProgress = (function () {
   function say(msg) {
     const el = panel && panel.querySelector('#dbg-out');
     if (el) el.innerHTML = msg;
-    const st = panel && panel.querySelector('#dp-stash');
-    if (st) st.textContent = stashLabel();
-    const rb = panel && panel.querySelector('[data-act="restore"]');
-    if (rb) rb.disabled = !readStash();
   }
 
   /* ---- 操作 ------------------------------------------------------------------- */
@@ -155,7 +228,7 @@ const CQDevProgress = (function () {
     const key = (panel.querySelector('input[name="dp-preset"]:checked') || {}).value;
     const milestone = !!panel.querySelector('#dp-milestone').checked;
     if (!key) return say('プリセットを選んでください。');
-    if (!stash()) return say('退避できませんでした（localStorage が使えない？）。中止します。');
+    if (!saveSlot('auto')) return say('「直前の状態」を残せませんでした（localStorage が使えない？）。中止します。');
     const meta = CQDevPresets.build(key, CARD_BY_ID, { milestone: milestone });
     CQSave.saveMeta(RUN_STORAGE, meta);
     CQSave.clearRun(RUN_STORAGE);
@@ -199,7 +272,7 @@ const CQDevProgress = (function () {
     const repeatV = panel.querySelector('#dp-repeat').value;
     const clearsV = panel.querySelector('#dp-clears').value;
     const beatenV = panel.querySelector('#dp-beaten').value;
-    if (!stash()) return say('退避できませんでした。中止します。');
+    if (!saveSlot('auto')) return say('「直前の状態」を残せませんでした。中止します。');
 
     const meta = RUI.meta;
     CQCollection.ensure(meta);
@@ -245,6 +318,7 @@ const CQDevProgress = (function () {
    * onBack(closeMenu) … ←で元のメニューに戻す／true を渡すとメニューごと閉じる。 */
   function open(panelEl, onBack) {
     panel = panelEl; back = onBack;
+    migrateOldStash();
     panel.classList.add('dbg-wide');
     panel.innerHTML = html();
     panel.querySelector('#dp-area').addEventListener('change', function (ev) {
@@ -255,10 +329,8 @@ const CQDevProgress = (function () {
       if (!b || !panel.contains(b)) return;
       switch (b.dataset.act) {
         case 'back': return back(false);
-        case 'stash': return say(stash() ? '退避しました。' : '退避できませんでした。');
-        case 'restore':
-          if (!restore()) return say('退避がありません。');
-          reloadFromSave(); return closeAll();
+        case 'slot-save': return onSlotSave(isNaN(+b.dataset.slot) ? b.dataset.slot : +b.dataset.slot);
+        case 'slot-load': return onSlotLoad(isNaN(+b.dataset.slot) ? b.dataset.slot : +b.dataset.slot);
         case 'preset': return applyPreset();
         case 'known': return addKnown(+b.dataset.n);
         case 'win-run': return winRun();
@@ -267,5 +339,5 @@ const CQDevProgress = (function () {
     });
   }
 
-  return { open, stash, restore, readStash, STASH_KEY };
+  return { open, saveSlot, loadSlot, readSlot, SLOT_KEYS };
 })();

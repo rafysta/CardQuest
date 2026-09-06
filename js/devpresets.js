@@ -188,7 +188,28 @@
     return run;
   }
 
-  const api = { PRESETS, STARTER, list, get, build, addKnown, bossJumpRun, bossNodeOf, realCardsByPrice };
+  /* ---- セーブスロットの要約（js/devprogress.js の表示用） ---------------------------- */
+
+  /** メタ（と中断中のラン）を1行に要約する。日付だけでは3つ並んだときに区別がつかないため。
+   * 例：「3日目・Lv2・記憶24種・踏破2／山地のラン中」。meta が無ければ「（メタなし）」。 */
+  function summarize(meta, run) {
+    if (!meta) return '（メタなし）';
+    const known = (meta.known || []).length;
+    const parts = [
+      (meta.day || 0) + '日目',
+      'Lv' + CQCollection.masterLevel(known),
+      '記憶' + known + '種',
+      '踏破' + (meta.cleared || []).length
+    ];
+    let s = parts.join('・');
+    if (run && !run.outcome) {
+      const area = CQAreas.get(run.areaId);
+      s += '／' + (area ? area.name : run.areaId) + 'のラン中';
+    }
+    return s;
+  }
+
+  const api = { PRESETS, STARTER, list, get, build, addKnown, bossJumpRun, bossNodeOf, realCardsByPrice, summarize };
   global.CQDevPresets = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
