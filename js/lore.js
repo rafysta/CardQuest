@@ -288,6 +288,30 @@
           { face: 'down', lines: ['底に『憤怒』が居るわ。', '……私は、あれの前で本を落としたの。'] }
         ],
         fog: null
+      },
+      /* M8.3 WP13（2026-09-07）：神殿のぶん。台本『CardQuest 台本（アンバーの
+       * セリフ集）v1.0』本人執筆版§10をそのまま反映（正はそちら）。doorOpen（封印を解いた
+       * 直後・初回のみの一言）は js/run-ui.js の buildGuideAfter() が masterIntro／depart の
+       * 後ろに続けて出す。 */
+      temple: {
+        first: [
+          { face: 'calm', lines: ['神殿よ。門があるわ。', 'やったわ。七つの鍵で、封が解けるわ。'] },
+          { face: 'calm', lines: ['門の向こうは、島の外よ。', '渡れなかった者が、皆ここで止まったの。'] }
+        ],
+        depart: [
+          { face: 'calm', lines: ['さあ、鍵を差すのよ。扉が開くわ。'] }
+        ],
+        repeat: [
+          [{ face: 'calm', lines: ['神殿よ。門は開いたままよ。'] }],
+          [{ face: 'calm', lines: ['今日は誰が守っているかしら。'] }]
+        ],
+        masterIntro: [
+          { face: 'calm', lines: ['門の内側に居るのが魔神エグゼデグゼスよ。'] }
+        ],
+        doorOpen: [
+          { face: 'calm', lines: ['やったわ。'] }
+        ],
+        fog: null
       }
     },
 

@@ -130,6 +130,18 @@
       });
     }
 
+    /* 神殿モニュメント（M8.3 WP13）。倒し方に関わらず勝てば確定でその札が手に入る
+     * （js/run/run.js reportBattle・実装計画§1-1「案Bの注意」）。area.monumentCard を持つ
+     * エリアが実装済みのものだけ real:true——下の「神殿モニュメント」タグは、まだ配線
+     * されていないカード（神竜9体・マスターズソウル・M8.3 WP16の神竜の間待ち）にだけ残る。 */
+    if (CQAreas) {
+      CQAreas.list().forEach(function (def) {
+        if (def.monumentCard !== card.id) return;
+        routes.push({ type: 'monument', real: true, area: def.id,
+          label: `封印（モニュメント）を解く：${def.name}` });
+      });
+    }
+
     /* 原作の詰みの穴埋め（連続攻撃・修練の拳）。 */
     if (DRAGON_FIX[card.id]) routes.push(Object.assign({ type: 'dragon-fix', real: false }, DRAGON_FIX[card.id]));
 

@@ -7576,6 +7576,104 @@ t('鍵：七罪人を降すと確定で1本、周回しても増えない（実�
   eq(meta.clears.cave1, 2, '累計クリアだけ増える');
 });
 
+section('M8.3 WP13: 神殿の封印（エグゼデグゼス1体勝負・確定カード・周回はマスター戦）');
+
+t('temple：封印（モニュメント）と周回マスターの組がある', () => {
+  const area = CQAreas.get('temple');
+  eq(area.monumentCard, 15, '封印の相手はカード15（エグゼデグゼス）');
+  eq(area.monumentOpponentId, 215, '原作の対戦相手ID215');
+  eq(CARD_BY_ID[15].n, 'エグゼデグゼス', 'カード15は実在するエグゼデグゼス');
+  eq(area.bossId, 12, '周回の顔は12『竜使い』リンフォート');
+  eq(area.bossPool, [12, 14], '周回の組は12・14（原作opponents.js）');
+});
+
+t('bossMasterOf：封印を持つエリアは初回訪問だけ null（闘技場マスターは居ない扱い）', () => {
+  const area = CQAreas.get('temple');
+  const freshRun = { seed: 1, repeatVisit: false };
+  eq(CQRun.bossMasterOf(freshRun, area), null, '初回はnull（七罪人と同じ扱い）');
+  const repeatRun = { seed: 1, repeatVisit: true };
+  const picked = CQRun.bossMasterOf(repeatRun, area);
+  eq(area.bossPool.indexOf(picked) >= 0, true, '2回目以降は組の中から選ばれる');
+});
+
+t('battleSetup：神殿の初回はエグゼデグゼス1体勝負（ＬＰ無し・逃走不可・硬直なし）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [], keys: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'temple', 3, meta);
+  eq(run.repeatVisit, false, '初回訪問');
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, boss, meta);
+  eq(setup.mode, 'field', '全滅戦（七罪人と同じ枠組み）');
+  eq(setup.enemyOpts, undefined, '敵にＬＰを持たせない');
+  eq(setup.noFlee, true, '逃走不可');
+  eq(setup.enemyStiff, false, '初期硬直なし');
+  eq(setup.foeName, '魔神『エグゼデグゼス』', 'バトル画面の相手表示');
+  eq(setup.opponentId, 215, '原作の対戦相手ID215（monumentOpponentId優先）');
+  eq(setup.enemyBoard, [15], '場に立つのはエグゼデグゼス1体だけ');
+  eq(setup.enemyDeck.length, 40, '支援デッキ40枚');
+  eq(setup.aiPreset, 'rankA', 'ＡＩはＡ級（area.bossRank）');
+});
+
+t('battleSetup：神殿の2回目以降は普通のマスター戦（リンフォート／ルードの組）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: ['temple'], keys: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'temple', 3, meta);
+  eq(run.repeatVisit, true, '2回目以降');
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, boss, meta);
+  eq(setup.mode, undefined, '通常のＬＰ勝負に戻る');
+  eq(setup.enemyOpts.lp, CQAreas.get('temple').bossLp, '敵にＬＰがある');
+  eq(setup.noFlee, undefined, '逃走不可の指定は無い（mode任せ）');
+  eq(setup.enemyStiff, undefined, '硬直の指定も無い（通常のボス戦のまま）');
+  const masterId = CQRun.bossMasterOf(run, CQAreas.get('temple'));
+  eq([12, 14].indexOf(masterId) >= 0, true, '対戦相手はリンフォート(12)かルード(14)のどちらか');
+  eq(setup.enemyDeck.length, 40, '本物の40枚デッキが組まれる');
+});
+
+t('reportBattle：封印に勝てば倒し方に関わらず確定でカード15が手に入る（重複させない）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [], keys: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'temple', 3, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  /* 魔法で倒した想定＝loot は空。それでも15は確定で手に入る（実装計画§1-1「案Bの注意」）。 */
+  CQRun.reportBattle(run, boss, { winner: 'self', loot: [], turn: 5, players: { self: { lp: 20 } } }, meta);
+  eq(run.gainedCards.filter((id) => id === 15).length, 1, 'カード15が1枚だけ手に入る');
+  eq(run.lootPending.filter((id) => id === 15).length, 1, 'lootPendingにも1枚だけ乗る');
+});
+
+t('reportBattle：通常攻撃で倒してlootに15が混ざっていても重複しない', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [], keys: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'temple', 4, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  CQRun.reportBattle(run, boss, { winner: 'self', loot: [15], turn: 5, players: { self: { lp: 20 } } }, meta);
+  eq(run.gainedCards.filter((id) => id === 15).length, 1, '通常lootの15と重複しない');
+});
+
+t('settle：封印の初回撃破は meta.bossWins を汚さない（後で本物のリンフォート初撃破が消えない）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [], keys: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'temple', 5, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  CQRun.reportBattle(run, boss, { winner: 'self', loot: [], turn: 5, players: { self: { lp: 20 } } }, meta);
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  eq(meta.bossWins, {}, '封印戦は闘技場マスターの初回撃破としてカウントされない');
+  eq(meta.clears.temple, 1, 'エリアの累計クリアは増える');
+  eq(meta.cleared.indexOf('temple') >= 0, true, '次回からrepeatVisitになる');
+
+  /* 2回目：本物のリンフォート／ルード戦。ここで初めてbossWinsが増える。 */
+  const run2 = CQRun.start(CARD_BY_ID, 'temple', 6, meta);
+  eq(run2.repeatVisit, true, '2回目はrepeatVisit');
+  const boss2 = Object.keys(run2.map.nodes).map((k) => run2.map.nodes[k]).find((n) => n.type === 'boss');
+  CQRun.reportBattle(run2, boss2, { winner: 'self', loot: [], turn: 5, players: { self: { lp: 20 } } }, meta);
+  run2.outcome = 'win';
+  CQRun.settle(run2, meta);
+  const masterId = CQRun.bossMasterOf(run2, CQAreas.get('temple'));
+  eq(meta.bossWins[masterId], 1, '2回目でリンフォート／ルードの初回撃破が正しくカウントされる');
+});
+
+
 section('M8.1 WP4: ボス報酬（初回撃破の一枚・部屋の累計3/5/7報酬・速攻実績）');
 
 /* このセクション専用の使い捨てメタ（book/deck/known/gold/cleared一式が揃っていればよい）。
@@ -7726,9 +7824,9 @@ t('bossBonusOfは読み取り専用（呼んだだけではmeta.bossWins／meta.
 
 section('M8.1 WP5: エリア選択画面の幕分け（js/run/areas.js CQAreas.byAct）');
 
-t('byAct：幕1（草原〜砂漠）と幕2（七つの洞窟）の2段を返す（実装計画§1-4）', () => {
+t('byAct：幕1（草原〜砂漠）・幕2（七つの洞窟）・幕3（神殿）の3段を返す（実装計画§1-4・M8.3 WP13）', () => {
   const groups = CQAreas.byAct();
-  eq(groups.length, 2, '幕3（神殿・教会・神竜の間）はM8.3待ちなので2段');
+  eq(groups.length, 3, '幕3（神殿）がM8.3 WP13で加わったので3段');
   eq(groups[0].act, 1, '1段目は幕1');
   eq(groups[0].title, '白紙', '幕1の見出しは世界観§4どおり「白紙」');
   eq(groups[0].areas.map((a) => a.id), ['grassland', 'forest', 'mountain', 'coast', 'desert'],
@@ -7737,12 +7835,16 @@ t('byAct：幕1（草原〜砂漠）と幕2（七つの洞窟）の2段を返す
   eq(groups[1].title, '七つの罪', '幕2の見出しは「七つの罪」');
   eq(groups[1].areas.map((a) => a.id), ['cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7'],
     '幕2の中身は7つの洞窟');
+  eq(groups[2].act, 3, '3段目は幕3');
+  eq(groups[2].title, '門と審判', '幕3の見出しは「門と審判」');
+  eq(groups[2].areas.map((a) => a.id), ['temple'], '幕3の中身は神殿（教会・神竜の間はWP14・16で加わる）');
 });
 
 t('byAct：エリアはどれも act を持ち、幕ごとに正しく分かれる', () => {
   CQAreas.list().forEach((a) => {
-    eq(a.act === 1 || a.act === 2, true, `${a.id}はact:1か2`);
-    eq(/^cave/.test(a.id) ? a.act === 2 : a.act === 1, true, `${a.id}の幕が正しい`);
+    eq(a.act === 1 || a.act === 2 || a.act === 3, true, `${a.id}はact:1〜3`);
+    const expectAct = /^cave/.test(a.id) ? 2 : (a.id === 'temple' ? 3 : 1);
+    eq(a.act === expectAct, true, `${a.id}の幕が正しい`);
   });
 });
 
@@ -7973,12 +8075,21 @@ t('ユニットカードは g にコレクション段階の表記があって�
 });
 
 t('マスター報酬は area.bossId が付くまで real:false（未配線）のまま', () => {
-  // 渇望＝『竜使い』リンフォート（temple）の初回撃破報酬。temple はまだ無い（M8.3待ち）。
+  // ストライフ＝『奴隷戦士』ギンリット（church）の初回撃破報酬。church はまだ無い（M8.3 WP14待ち）。
+  const straif = CARD_BY_ID[61];
+  const routes = CQRoutesTest.routesFor(straif, CARD_BY_ID);
+  const bossRoute = routes.find((r) => r.type === 'boss-reward');
+  eq(!!bossRoute, true, 'マスター報酬の経路はある');
+  eq(bossRoute.real, false, 'churchエリアはまだ無い（M8.3 WP14待ち）ので real:false');
+});
+
+t('M8.3 WP13：マスター報酬はtempleにbossId/bossPoolが付いたのでreal:trueになる（渇望＝リンフォート）', () => {
+  // 渇望＝『竜使い』リンフォート（temple・周回ボス）の初回撃破報酬。
   const katsubo = CARD_BY_ID[103];
   const routes = CQRoutesTest.routesFor(katsubo, CARD_BY_ID);
   const bossRoute = routes.find((r) => r.type === 'boss-reward');
   eq(!!bossRoute, true, 'マスター報酬の経路はある');
-  eq(bossRoute.real, false, 'templeエリアはまだ無い（M8.3待ち）ので real:false');
+  eq(bossRoute.real, true, 'templeエリアにbossPool:[12,14]が付いたのでreal:true');
 });
 
 t('M8.1 WP3：マスター報酬はエリアのボス配線が済むと real:true になる（蜜月＝coastのラリー）', () => {

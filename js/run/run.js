@@ -126,6 +126,12 @@
      * 組に無いidは無視する（デバッグメニュー以外からは決して立たないフィールド）。 */
     if (run && run.bossMasterOverride != null
         && (area.bossPool || [area.bossId]).indexOf(+run.bossMasterOverride) >= 0) return +run.bossMasterOverride;
+    /* M8.3 WP13（実装計画§4 WP13）：封印（モニュメント）を持つエリア（神殿・神竜の間）は、
+     * 初回訪問だけ area.bossId／bossPool とは別の相手（area.monumentCard）と戦う。
+     * ここで null を返すことで、bossBonusOf／bossDisplayName／buildBossDeck／settle() の
+     * どれも「闘技場マスターは居ない」（七罪人と同じ扱い）になり、初回封印戦で
+     * area.bossId のマスターへ実績や初回撃破報酬を誤って付けてしまう事故を防ぐ。 */
+    if (area.monumentCard != null && !(run && run.repeatVisit)) return null;
     if (!area.bossPool || area.bossPool.length <= 1) return area.bossId;
     if (!run || !run.repeatVisit) return area.bossId;
     const r = CQRng.create((run.seed >>> 0) ^ 0x8f1bbcdc);
@@ -482,26 +488,34 @@
      * 場に3体立って始まり、全滅させれば勝ち。ＬＰ勝負ではないので敵にＬＰを持たせず、
      * 逃走は封じ、初期硬直も無し（§6リスク表）。相手の呼び名は罪の名で出す。 */
     const isSin = isBoss && area.sinId != null && CQOpponents.sinOf(area.sinId);
-    const poolIds = isSin ? CQAreas.enemyPool(cards, area.id).map(function (e) { return e.id; }) : null;
+    /* M8.3 WP13（実装計画§ 4 WP13）：神殿の封印（エグゼデグゼスとの1体勝負）。
+     * 七罪人と同じ「ボスだがフリーユニット戦」だが、場に立つのは1体（area.monumentCard）だけ。
+     * bossMasterOf() が初回訪問だけ null を返すようにしたので、ここでは run.repeatVisit で判定すればよい
+     * （bossMasterOf と同じ式）。 */
+    const isMonument = isBoss && !run.repeatVisit && area.monumentCard != null;
+    const poolIds = (isSin || isMonument) ? CQAreas.enemyPool(cards, area.id).map(function (e) { return e.id; }) : null;
     applyTutorialNode(run, meta, n);          /* 固定戦闘なら、マスの敵と戦場ルールをそろえてから組む */
     return {
       cards: cards,
       selfDeck: buildPlayerDeck(run),
       enemyDeck: isSin ? CQOpponents.sinDeck(area.sinId, cards, poolIds)
-        : (isBoss ? buildBossDeck(cards, area, run) : buildBattleDeck(cards, area, n)),
+        : (isMonument ? CQOpponents.monumentDeck(area.monumentCard, cards, poolIds)
+        : (isBoss ? buildBossDeck(cards, area, run) : buildBattleDeck(cards, area, n))),
       first: firstTurnOf(run, n),
-      opponentId: isSin ? area.sinId : 900 + (n.seg == null ? 90 : n.seg * 10) + (n.slot || 0),
+      opponentId: isSin ? area.sinId
+        : (isMonument ? (area.monumentOpponentId != null ? area.monumentOpponentId : area.monumentCard)
+        : 900 + (n.seg == null ? 90 : n.seg * 10) + (n.slot || 0)),
       fieldRules: n.fieldRules || [],
       selfOpts: { lp: run.lp, maxLp: run.maxLp },
-      enemyOpts: (isBoss && !isSin) ? { lp: area.bossLp, maxLp: area.bossLp } : undefined,
+      enemyOpts: (isBoss && !isSin && !isMonument) ? { lp: area.bossLp, maxLp: area.bossLp } : undefined,
       /* M6.6 WP6：通常戦闘はフリーユニット戦（敵は配置済み・召還不可・場が空になれば勝ち）。
        * マスター戦（ボス）だけは従来どおりのＬＰ勝負なので mode を付けない（§2-6）。
-       * 七罪人（M8.2 WP9）はボスだがフリーユニット戦なので mode を付ける。 */
-      mode: (isBoss && !isSin) ? undefined : 'field',
-      enemyBoard: isSin ? CQOpponents.sinBoard(area.sinId, poolIds) : (isBoss ? undefined : enemyBoardOf(n)),
-      enemyStiff: isSin ? false : undefined,
-      noFlee: isSin ? true : undefined,
-      foeName: isSin ? area.bossName : undefined,
+       * 七罪人（M8.2 WP9）と封印（M8.3 WP13）はボスだがフリーユニット戦なので mode を付ける。 */
+      mode: (isBoss && !isSin && !isMonument) ? undefined : 'field',
+      enemyBoard: isSin ? CQOpponents.sinBoard(area.sinId, poolIds) : (isMonument ? [area.monumentCard] : (isBoss ? undefined : enemyBoardOf(n))),
+      enemyStiff: (isSin || isMonument) ? false : undefined,
+      noFlee: (isSin || isMonument) ? true : undefined,
+      foeName: (isSin || isMonument) ? area.bossName : undefined,
       /* M7.10 WP1：ゲーム仕様書§4.2・§5どおりのＡＩ強さ。通常戦闘は弱ＡＩ設定（free）固定、
        * ボスはエリアの帯（bossRank）。js/layout.js の startRunBattle() がこれを見て aiConfig を組む。
        * M8.5：チュートリアルの固定戦闘だけ、攻撃を待ってくれる 'tutorial' を使う。 */
@@ -556,24 +570,39 @@
         run.lootPending.push(id);
       });
       const area = CQAreas.get(run.areaId);
+      /* M8.3 WP13（実装計画§1-1「案Bの注意」）：封印（モニュメント）は、
+       * 倒し方に関わらず勝てば確定でその札が手に入る（原作の「魔法で倒すと戦利品が
+       * 出ない」を意図的に逸脱）。battleSetup() と同じ式で判定する。 */
+      const isMonument = n.type === 'boss' && !run.repeatVisit && area.monumentCard != null;
       let gold = 0;
       if (n.type === 'boss') {
         const repeat = !!(meta && meta.cleared && meta.cleared.indexOf(run.areaId) >= 0);
         gold = Math.round((area.fightMoney || 0) * (repeat ? 0.5 : 1));
-        /* M8.1 WP4（実装計画§3-3）：ボス報酬。戦利品の振り分け画面（M6.6 WP7）に一緒に
-         * 載せるため、ここで確定させて lootPending／gainedCards に足す。実際の
-         * meta.bossWins／meta.clears への加算は settle() が行う（bossBonusOf は読むだけ）。 */
         run.bossTurns = M.turn;
-        run.bossBonus = bossBonusOf(run, area, meta);
-        if (run.bossBonus.masterCard != null) {
-          run.gainedCards.push(run.bossBonus.masterCard);
-          run.lootPending.push(run.bossBonus.masterCard);
-          run.log.push('マスター初回撃破報酬：' + run.bossBonus.masterName + 'の一枚');
-        }
-        if (run.bossBonus.roomCard != null) {
-          run.gainedCards.push(run.bossBonus.roomCard);
-          run.lootPending.push(run.bossBonus.roomCard);
-          run.log.push('部屋（' + run.bossBonus.room + '）累計' + run.bossBonus.threshold + '回クリア報酬');
+        if (isMonument) {
+          /* すでに通常の loot（自分の一撃で倒した分）に同じIDが混ざっていることがあるので、
+           * 重複させない。bossBonusOf（マスター初回撃破／部屋累計）は使わない（bossMasterOf が
+           * この封印戦では null を返すので、使っても何も付与しない）。 */
+          if (loot.indexOf(area.monumentCard) < 0) {
+            run.gainedCards.push(area.monumentCard);
+            run.lootPending.push(area.monumentCard);
+          }
+          run.log.push('封印を解いた：' + (area.bossName || 'モニュメント') + 'の一枚');
+        } else {
+          /* M8.1 WP4（実装計画§3-3）：ボス報酬。戦利品の振り分け画面（M6.6 WP7）に一緒に
+           * 載せるため、ここで確定させて lootPending／gainedCards に足す。実際の
+           * meta.bossWins／meta.clears への加算は settle() が行う（bossBonusOf は読むだけ）。 */
+          run.bossBonus = bossBonusOf(run, area, meta);
+          if (run.bossBonus.masterCard != null) {
+            run.gainedCards.push(run.bossBonus.masterCard);
+            run.lootPending.push(run.bossBonus.masterCard);
+            run.log.push('マスター初回撃破報酬：' + run.bossBonus.masterName + 'の一枚');
+          }
+          if (run.bossBonus.roomCard != null) {
+            run.gainedCards.push(run.bossBonus.roomCard);
+            run.lootPending.push(run.bossBonus.roomCard);
+            run.log.push('部屋（' + run.bossBonus.room + '）累計' + run.bossBonus.threshold + '回クリア報酬');
+          }
         }
       }
       run.gold += gold;

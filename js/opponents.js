@@ -165,14 +165,11 @@
 
   function sinOf(sinId) { return SINS[sinId] || null; }
 
-  /** 七罪人の支援デッキ（40枚）。**1本の型**＝バルザミコスの40枚から魔法・技能だけを借り、
-   * 同種3枚を上限にID順で増やして SIN_SHELL_SIZE 枚にする（罪が違っても同じ型）。
-   * 差し色は最後の6枚＝**場に立つ3体をそれぞれ2枚ずつ**（敵は召還できないのでチャネル弾になる。
-   * 固有ユニットが1種しかない憤怒でも同種3枚の規則を破らないよう、場の編成から取る）。
-   * poolIds を省略すると固有ユニットだけで埋める（テスト用）。 */
-  function sinDeck(sinId, cards, poolIds) {
-    const sin = sinOf(sinId);
-    if (!sin) return null;
+  /** 支援デッキの共通の型（M8.2 WP9・M8.3 WP13で共用）：バルザミコスの40枚から魔法・技能
+   * だけを借り、同種3枚を上限にID順で増やして SIN_SHELL_SIZE 枚の「型」にする。
+   * 七罪人（3体）も神殿のモニュメント（1体）も、場に立つユニットが違うだけで支援の型は同じ。
+   * 戻り値の counts／ids は「まだ足りないときに支援側で埋め戻す」ための作業用。 */
+  function shellDeck(cards) {
     const base = deck40(FINAL_MASTER, cards) || {};
     const counts = {};
     Object.keys(base).forEach(function (k) { if (+k >= 101) counts[+k] = base[k]; });
@@ -184,8 +181,12 @@
       if (counts[id] < SIN_KIND_MAX) { counts[id] += 1; total += 1; }
       i++; guard++;
     }
-    const deck = toIdArray(counts).slice(0, SIN_SHELL_SIZE);
-    const fodder = (poolIds ? sinBoard(sinId, poolIds) : sin.units).slice();
+    return { deck: toIdArray(counts).slice(0, SIN_SHELL_SIZE), counts: counts, ids: ids };
+  }
+
+  /** deck（支援シェルの配列。書き換えて返す）に、fodder（チャネル弾にするユニットidの並び）を
+   * 同種3枚まで・順に回しながら DECK_SIZE 枚まで積む。 */
+  function fillWithFodder(deck, fodder) {
     const used = {};
     for (let k = 0; deck.length < DECK_SIZE && fodder.length; k++) {
       const id = fodder[k % fodder.length];
@@ -193,13 +194,45 @@
       used[id] = (used[id] || 0) + 1;
       deck.push(id);
     }
-    /* それでも足りない（固有ユニットが少ない）ときは支援を足して40枚にする */
+    return deck;
+  }
+
+  /** シェルだけでは40枚に届かない（チャネル弾が薄い）とき、支援側を同種3枚まで増やして埋める。 */
+  function topUpShell(deck, shell) {
     let g = 0;
-    while (deck.length < DECK_SIZE && ids.length && g < 100) {
-      const id = ids[g % ids.length];
-      if ((counts[id] || 0) < SIN_KIND_MAX) { counts[id] = (counts[id] || 0) + 1; deck.push(id); }
+    while (deck.length < DECK_SIZE && shell.ids.length && g < 100) {
+      const id = shell.ids[g % shell.ids.length];
+      if ((shell.counts[id] || 0) < SIN_KIND_MAX) { shell.counts[id] = (shell.counts[id] || 0) + 1; deck.push(id); }
       g++;
     }
+    return deck;
+  }
+
+  /** 七罪人の支援デッキ（40枚）。差し色は最後の6枚＝**場に立つ3体をそれぞれ2枚ずつ**
+   * （敵は召還できないのでチャネル弾になる。固有ユニットが1種しかない憤怒でも同種3枚の
+   * 規則を破らないよう、場の編成から取る）。poolIds を省略すると固有ユニットだけで埋める
+   * （テスト用）。 */
+  function sinDeck(sinId, cards, poolIds) {
+    const sin = sinOf(sinId);
+    if (!sin) return null;
+    const shell = shellDeck(cards);
+    const deck = shell.deck.slice();
+    const fodder = (poolIds ? sinBoard(sinId, poolIds) : sin.units).slice();
+    fillWithFodder(deck, fodder);
+    topUpShell(deck, shell);
+    return deck;
+  }
+
+  /** 神殿モニュメント（1体勝負・M8.3 WP13）の支援デッキ。同じ支援の型に、盤面の1体
+   * （unitId・最大3枚）＋そのエリアの敵プール上位（poolIds・価格の高い順）で残りを埋める
+   * （固有ユニットが1体しかないので、七罪人のように3体ぶんの差し色は作れないため）。
+   * 神竜9体・マスターズソウル（M8.3 WP16）もこの関数を使う。 */
+  function monumentDeck(unitId, cards, poolIds) {
+    const shell = shellDeck(cards);
+    const deck = shell.deck.slice();
+    const fodder = [unitId].concat((poolIds || []).slice().reverse());
+    fillWithFodder(deck, fodder);
+    topUpShell(deck, shell);
     return deck;
   }
 
@@ -220,7 +253,7 @@
 
   const api = {
     RAW_DECKS, DECK_SIZE, BLANK, MASTERS, ROOM_REWARDS,
-    SINS, SIN_BOARD_SIZE, SIN_SHELL_SIZE, sinOf, sinDeck, sinBoard,
+    SINS, SIN_BOARD_SIZE, SIN_SHELL_SIZE, sinOf, sinDeck, sinBoard, monumentDeck,
     convert50to40, toIdArray, deck40, bossDeckArray, get, ids, displayName
   };
   global.CQOpponents = api;

@@ -329,10 +329,38 @@
       fieldRuleChance: 0.45,
       bossRank: 'rankA',
       enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    },
+
+    /* ---- 第三幕：門と審判（M8.3 WP13・実装計画追補§3-5/§4） --------------------------
+     * 神殿は「封印（モニュメント）」を持つ最初のエリア。初回訪問はエグゼデグゼス（カード15・
+     * 原作の対戦相手ID215）との1体勝負（全滅戦・逃走不可）——js/run/run.js の
+     * battleSetup()／bossMasterOf() が area.monumentCard を見て枝分かれする。勝てば
+     * 倒し方に関わらず確定でカード15が手に入る（実装計画§1-1「案Bの注意」）。
+     * 2回目以降は下の bossId／bossPool（12『竜使い』リンフォート／14『異端審問官』ルード）
+     * の通常マスター戦に切り替わる。 */
+    temple: {
+      id: 'temple', name: '神殿', tags: ['ダンジョン内Ｌ６', 'ダンジョン内Ｌ７', '荒野'], order: 12, act: 3,
+      bg: 'assets/map/bg_temple.png', master: 'assets/cards/15.webp',
+      unlock: { keys: 7 },              // 七つの鍵がすべて揃うと開く（実装計画§1-3）
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 2000,
+      fog: { chance: 0 },
+      /* Ｌ6＋Ｌ7＋荒野の合流タグ（cave7と同じくネクロスフィア30万Ｇを含められる高さ）。 */
+      priceMax: 300000,
+      eliteMin: 20000,
+      rareTier: 'final',
+      monumentCard: 15,
+      monumentOpponentId: 215,
+      bossName: '魔神『エグゼデグゼス』',
+      bossId: 12, bossPool: [12, 14],
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: 3, elite: 3 }
     }
   };
   const ORDER = ['grassland', 'forest', 'mountain', 'coast', 'desert',
-    'cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7'];
+    'cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7', 'temple'];
 
   /* M8.1 WP5（実装計画§1-4）：エリア選択画面の「幕」見出し（世界観§4）。
    * 幕1＝白紙（草原〜砂漠）・幕2＝七つの罪（M8.2でダンジョンが増える）・

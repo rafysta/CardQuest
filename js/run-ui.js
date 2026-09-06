@@ -426,7 +426,10 @@ function buildGuideBefore(run, meta) {
 function buildGuideAfter(run, meta) {
   const area = CQLore.LORE.areas[run.areaId];
   if (!area || !firstVisitHere(run, meta)) return [];
-  return (area.masterIntro || []).concat(area.depart || []);
+  /* M8.3 WP13：神殿など「封印（モニュメント）」を持つエリアは、送り出しのすぐ後に
+   * 「門が開いた直後の一言」（area.doorOpen・台本§10.5）が続く。他のエリアには
+   * doorOpen が無いので、この行を足しても挙動は変わらない（常に空配列が足されるだけ）。 */
+  return (area.masterIntro || []).concat(area.depart || []).concat(area.doorOpen || []);
 }
 
 /** アンバーの吹き出し1つ（肖像＋本文＋タップ送り）。マップの上に重ねる前提の部品。
