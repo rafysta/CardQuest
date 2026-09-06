@@ -151,6 +151,15 @@ const SHOPBUY_STAT = { attempts: 0, failedGold: 0, bought: 0 };
  * 1枚を超えた分の合計。経済追補§4-2bの一括換金がどれだけの量を処理することになるかの目安。 */
 const GOLD_STAT = { careers: 0, endGold: 0 };
 const DUPE_STAT = { careers: 0, total: 0, bulkG: 0, bulkSheets: 0 };
+/* M8.3 WP18（実装計画§4 WP18）：第一幕〜第三幕を通した節目への到達——それぞれ
+ * 「そのキャリアの何ラン目で初めて満たしたか」を記録する（careerRunsの予算内に
+ * 到達できなければそのキャリアは対象外＝到達率に含めるが所要ラン数の平均には含めない）。
+ * 一段深い節目ほど手前の節目を包含する必要はない（山地解放は森踏破・鍵7は7洞窟クリア・
+ * 神殿クリアはカード15所持・エンディングはバルザミコス撃破と、それぞれ別の条件で見る）。 */
+const MILESTONE_STAT = {
+  careers: 0,
+  mountain: [], cave1: [], temple: [], church: [], ending: []
+};
 function careerDupeCount(meta) {
   const ids = {};
   Object.keys(meta.book || {}).forEach((k) => { ids[k] = true; });
@@ -508,6 +517,8 @@ for (let seed = 1; seed <= trials; seed++) {
     const rng = CQRng.create(seed * 7919 + 13);
     const storage = mockStorage();
     let meta = CQSave.loadMeta(storage, STARTER);
+    /* M8.3 WP18：このキャリアで各節目に初めて到達した「何ラン目か」（1始まり）。未到達は null。 */
+    const milestoneRun = { mountain: null, cave1: null, temple: null, church: null, ending: null };
     for (let r = 0; r < careerRuns; r++) {
       autoCarryOut(meta);                 /* nextGoalの canDepart 判定に要る（持ち出し前だと常に'deck'になる） */
       const areaId = pickNextArea(meta);
@@ -521,7 +532,14 @@ for (let seed = 1; seed <= trials; seed++) {
       else ab.runLose++;
       ab.cards += (res.run.gainedCards || []).length;
       CQSave.saveMeta(storage, meta);
+      if (milestoneRun.mountain == null && CQAreas.isUnlocked('mountain', meta)) milestoneRun.mountain = r + 1;
+      if (milestoneRun.cave1 == null && CQAreas.isUnlocked('cave1', meta)) milestoneRun.cave1 = r + 1;
+      if (milestoneRun.temple == null && (meta.keys || []).length >= 7) milestoneRun.temple = r + 1;
+      if (milestoneRun.church == null && (meta.known || []).indexOf(15) >= 0) milestoneRun.church = r + 1;
+      if (milestoneRun.ending == null && meta.endingSeen) milestoneRun.ending = r + 1;
     }
+    MILESTONE_STAT.careers++;
+    Object.keys(milestoneRun).forEach((k) => { if (milestoneRun[k] != null) MILESTONE_STAT[k].push(milestoneRun[k]); });
     GOLD_STAT.careers++;
     GOLD_STAT.endGold += meta.gold;
     /* M7 WP1：このキャリアが終わった時点でのダブり枚数を集計する */
@@ -616,6 +634,25 @@ console.log(`  宝箱を開けてカードが出た割合：${pct(CHEST_STAT.car
   + `（${CHEST_STAT.cardGiven} / ${CHEST_STAT.opened} 回。抽選確率80%＋rareチェストは必中ぶん。WP4で60%→80%に調整）`);
 console.log(`  ショップ購入の試行 ${SHOPBUY_STAT.attempts} 回のうちＧ不足で失敗：${pct(SHOPBUY_STAT.failedGold, SHOPBUY_STAT.attempts)}`
   + `（${SHOPBUY_STAT.failedGold} / ${SHOPBUY_STAT.attempts} 回。M7 WP12で「いちばん安いものを買う」に変更）`);
+
+/* M8.3 WP18（総合計測）：第一幕〜第三幕を通した節目への到達率・平均所要ラン数。
+ * 到達しなかったキャリアは平均の分母に入れない（「到達できた人は何ラン要ったか」を見る）。
+ * careerRuns の予算が短いと当然ながら深い節目ほど到達率が下がる——本人が
+ * 「どれだけのランを想定した数字か」を読み取れるよう、見出しに明記する。 */
+const avg = (arr) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(1) : '—';
+console.log('');
+console.log(`--- M8.3 WP18 総合計測（節目への到達率・平均所要ラン数。予算 ${careerRuns} ラン／キャリア・${trials} キャリア） ---`);
+[
+  ['mountain', '山地の解放（第一幕・森踏破）'],
+  ['cave1', '最初の洞窟の解放（第二幕開始・マスターレベル3）'],
+  ['temple', '神殿へ行ける（鍵7本＝七罪人全滅・第二幕の終わり）'],
+  ['church', '外部教会へ行ける（カード15＝神殿クリア・第三幕開始）'],
+  ['ending', 'エンディングに到達（バルザミコス初撃破）']
+].forEach(([key, label]) => {
+  const arr = MILESTONE_STAT[key];
+  console.log(`  ${label}：到達率 ${pct(arr.length, MILESTONE_STAT.careers)}`
+    + `（${arr.length} / ${MILESTONE_STAT.careers} キャリア）・到達できた場合の平均 ${avg(arr)} ラン目`);
+});
 
 /* M7 WP8：買い取り所の実効性（経済追補§4-5の「空振り」がどれだけ起きるか）。
  * レンタルを1枚も持たずに出発したランでは、買い取り所は必ず空振りになる。 */
