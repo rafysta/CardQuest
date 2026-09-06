@@ -167,7 +167,7 @@
    * `CQCollection.shopPool()` からの抽選にした。母集団はラン開始時に一度だけ確定し
    * （generate() 側で計算した spellPool を毎回渡すだけ）、抽選そのものはシードで決定的。
    * モンスターは絶対に混ざらない（shopPool 自体がモンスターを返さないため）。 */
-  function rollShop(rng, spellPool, fogActive) {
+  function rollShop(rng, spellPool, canDispelFog) {
     const stock = [];
     const n = Math.min(4, spellPool.length);
     const bag = spellPool.slice();
@@ -175,13 +175,13 @@
       const idx = rng.int(0, bag.length - 1);
       stock.push(bag.splice(idx, 1)[0].id);
     }
-    return { type: 'shop', stock: stock, healCost: 100, fogClearCost: 100, hasFogClear: fogActive };
+    return { type: 'shop', stock: stock, healCost: 100, fogClearCost: 100, hasFogClear: canDispelFog };
   }
 
-  function makeNode(rng, area, pool, spellPool, spec, fogActive) {
+  function makeNode(rng, area, pool, spellPool, spec, canDispelFog) {
     if (spec.type === 'battle') return makeBattleNode(rng, area, pool, spec.strength);
     if (spec.type === 'chest') return rollChest(rng, spellPool, spec.rare);
-    if (spec.type === 'shop') return rollShop(rng, spellPool, fogActive);
+    if (spec.type === 'shop') return rollShop(rng, spellPool, canDispelFog);
     if (spec.type === 'rest') return { type: 'rest', cleared: false };
     if (spec.type === 'exchange') return { type: 'exchange', cleared: false };
     if (spec.type === 'question') {
@@ -253,6 +253,9 @@
       { rareAt: CQAreas.rareThreshold(area.id), rare: 'exclude' });
     const layout = CQAreas.layout(area.id);   /* 背景の道に合わせた行yの補正（M6.5b・§4） */
     const fogActive = rng.next() < area.fog.chance;
+    /* M8.2 WP8：洞窟の「暗闇」は霧の常時版で、**払えない**（area.fog.dispel === false）。
+     * 仕組みは霧のまま——ショップに霧払いを置かないだけにして、新しい演出は作らない。 */
+    const fogDispel = fogActive && area.fog.dispel !== false;
 
     const [tplA, tplB] = pickSegTemplates(rng);
     const segTemplates = [tplA.key, tplB.key, GATE_TEMPLATE.key];
@@ -261,7 +264,7 @@
     let autoId = 0;
     function add(spec, seg, branch, slot, col, row) {
       const id = 'n' + (autoId++);
-      const n = makeNode(rng, area, pool, spellPool, spec, fogActive);
+      const n = makeNode(rng, area, pool, spellPool, spec, fogDispel);
       n.id = id; n.seg = seg; n.branch = branch; n.slot = slot;
       n.fog = fogActive && seg !== null && seg >= 1;   // §5：開始と第1セグメントは常に見える
       n.connectsTo = [];
@@ -290,14 +293,16 @@
     nodes[boss].fieldRules = rollFieldRules(rng, area, 'boss');
     nodes[boss].fog = fogActive;
 
-    /* 霧マップ制約（§5）：第1セグメントの片方の非戦闘マスを必ずショップにする */
-    if (fogActive) {
+    /* 霧マップ制約（§5）：第1セグメントの片方の非戦闘マスを必ずショップにする。
+     * ★M8.2 WP8：これは「霧払いを買う機会を必ず作る」ための制約なので、払えない暗闇
+     * （洞窟）では課さない——さもないと毎ランでショップが確定して経済が歪む。 */
+    if (fogDispel) {
       const seg0 = segDefs[0], ids0 = segIds[0];
       const nonBattleIds = [ids0.a0, ids0.a1, ids0.b0, ids0.b1].filter(function (id) { return nodes[id].type !== 'battle'; });
       const hasShop = nonBattleIds.some(function (id) { return nodes[id].type === 'shop'; });
       if (!hasShop && nonBattleIds.length) {
         const target = nodes[nonBattleIds[0]];
-        Object.assign(target, rollShop(rng, spellPool, true));
+        Object.assign(target, rollShop(rng, spellPool, fogDispel));
         target.type = 'shop';
       }
     }

@@ -406,9 +406,9 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
    * 新規セーブ時点では5タイルとも出るが、解放済みは草原だけ（森は草原クリア待ち・
    * 山地は森クリア待ち・海辺はマスターレベル2待ち・砂漠は山地クリア待ち）。 */
   const tiles = await page.$$('.area-tile');
-  ok('エリアが5つ出る（草原・森・山地・海辺・砂漠。M8.1 WP3で3エリア追加）', tiles.length === 5, String(tiles.length));
+  ok('エリアが12出る（第一幕5＋第二幕の洞窟7。M8.1 WP3・M8.2 WP8）', tiles.length === 12, String(tiles.length));
   const lockedTiles = await page.$$('.area-tile.locked');
-  ok('新規セーブでは草原以外の4つがロック表示', lockedTiles.length === 4, String(lockedTiles.length));
+  ok('新規セーブでは草原以外の11がロック表示', lockedTiles.length === 11, String(lockedTiles.length));
   const unlockedIds = await page.$$eval('.area-tile:not(.locked)', (els) => els.map((e) => e.dataset.id));
   ok('解放されているのは草原だけ', unlockedIds.length === 1 && unlockedIds[0] === 'grassland', JSON.stringify(unlockedIds));
   /* ロックされたタイルには data-act が付かない＝押しても go-start が発火しない
@@ -419,9 +419,14 @@ const CQ_DRAFT_ROUNDS = 2;   /* js/run/run.js の DRAFT_ROUNDS と同じ（M6.6 
   ok('ロック中のタイルには解放条件の文言が出る（🔒つき）', lockLabels.every((t) => t.indexOf('🔒') === 0), JSON.stringify(lockLabels));
   /* M8.1 WP5：幕（act）ごとの段組み。いまはDEFSに幕1しか無いので1段だけ。 */
   const actSections = await page.$$('.area-act');
-  ok('幕は1段だけ（幕2・3のエリアはM8.2・M8.3待ち）', actSections.length === 1, String(actSections.length));
-  const actTitle = await page.$eval('.area-act-title', (e) => e.textContent.trim());
-  ok('幕の見出しに「白紙」が出る（世界観§4）', actTitle.indexOf('白紙') >= 0, actTitle);
+  ok('幕は2段（幕3のエリアはM8.3待ち）', actSections.length === 2, String(actSections.length));
+  const actTitles = await page.$$eval('.area-act-title', (els) => els.map((e) => e.textContent.trim()));
+  ok('幕の見出しに「白紙」「七つの罪」が出る（世界観§4）',
+    actTitles[0].indexOf('白紙') >= 0 && actTitles[1].indexOf('七つの罪') >= 0, JSON.stringify(actTitles));
+  /* M8.2 WP8：第二幕のタイルには鍵の印。まだ1つも持っていないので全部沈んだ色（.on が付かない）。 */
+  const keyMarks = await page.$$('.area-key');
+  ok('第二幕の7タイルに鍵の印が出る', keyMarks.length === 7, String(keyMarks.length));
+  ok('鍵はまだ1つも手に入れていない（明るい鍵は0）', (await page.$$('.area-key.on')).length === 0);
   await shot('area-select');
 
   // --- 2) 草原を選ぶ → 開始マスの新フロー（M6.6 WP4：案内→持ち出し→ドラフト→暗転明け） ---

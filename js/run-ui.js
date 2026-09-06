@@ -337,9 +337,16 @@ function areaTileHTML(a, meta) {
   const cleared = meta.cleared || [];
   const unlocked = CQAreas.isUnlocked(a.id, meta);
   const done = cleared.indexOf(a.id) >= 0;
-  return `<div class="area-tile ${unlocked ? '' : 'locked'}" data-act="${unlocked ? 'go-start' : ''}" data-id="${a.id}"
+  /* M8.2 WP8：第二幕（洞窟）のタイルには鍵の印。手に入れた洞窟の鍵は明るく、まだの洞窟は
+   * 沈んだ色で出す——「ここに鍵がある」ことが、行く前から分かるように（鍵そのものは WP10）。 */
+  const hasKey = (meta.keys || []).indexOf(a.id) >= 0;
+  const keyMark = (a.act === 2)
+    ? `<span class="area-key${hasKey ? ' on' : ''}" title="${hasKey ? '鍵を手に入れた' : 'この奥に鍵がある'}">🔑</span>` : '';
+  return `<div class="area-tile ${unlocked ? '' : 'locked'}${a.act === 2 ? ' area-tile-sm' : ''}"
+      data-act="${unlocked ? 'go-start' : ''}" data-id="${a.id}"
       style="background-image:url('${a.bg}')">
     <div class="area-tile-fade"></div>
+    ${keyMark}
     <div class="area-tile-name">${esc(a.name)}${done ? '<span class="area-clear">クリア済</span>' : ''}</div>
     ${unlocked ? '' : `<div class="area-tile-lock">🔒 ${esc(CQAreas.unlockLabel(a.id))}</div>`}
   </div>`;

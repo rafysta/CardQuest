@@ -7509,18 +7509,23 @@ t('bossBonusOfは読み取り専用（呼んだだけではmeta.bossWins／meta.
 
 section('M8.1 WP5: エリア選択画面の幕分け（js/run/areas.js CQAreas.byAct）');
 
-t('byAct：いまはDEFSに幕1（草原〜砂漠）しか無いので、1段だけ返す（実装計画§1-4）', () => {
+t('byAct：幕1（草原〜砂漠）と幕2（七つの洞窟）の2段を返す（実装計画§1-4）', () => {
   const groups = CQAreas.byAct();
-  eq(groups.length, 1, 'まだ幕2・3のエリアは無いので1段のみ');
-  eq(groups[0].act, 1, '幕番号は1');
+  eq(groups.length, 2, '幕3（神殿・教会・神竜の間）はM8.3待ちなので2段');
+  eq(groups[0].act, 1, '1段目は幕1');
   eq(groups[0].title, '白紙', '幕1の見出しは世界観§4どおり「白紙」');
   eq(groups[0].areas.map((a) => a.id), ['grassland', 'forest', 'mountain', 'coast', 'desert'],
     '幕1の中身は草原→森→山地→海辺→砂漠の順（CQAreas.ORDERどおり）');
+  eq(groups[1].act, 2, '2段目は幕2');
+  eq(groups[1].title, '七つの罪', '幕2の見出しは「七つの罪」');
+  eq(groups[1].areas.map((a) => a.id), ['cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7'],
+    '幕2の中身は7つの洞窟');
 });
 
-t('byAct：全エリアがact:1を持つ（M8.2・M8.3でact:2/3のエリアが増えるまでは1段のまま）', () => {
+t('byAct：エリアはどれも act を持ち、幕ごとに正しく分かれる', () => {
   CQAreas.list().forEach((a) => {
-    eq(a.act, 1, `${a.id}はact:1`);
+    eq(a.act === 1 || a.act === 2, true, `${a.id}はact:1か2`);
+    eq(/^cave/.test(a.id) ? a.act === 2 : a.act === 1, true, `${a.id}の幕が正しい`);
   });
 });
 
@@ -7533,8 +7538,9 @@ t('ACT_TITLES：幕2「七つの罪」・幕3「門と審判」の見出しも�
 
 section('M8.1 WP7: 台本（山地・海辺・砂漠の導入。js/lore.js）');
 
-t('全エリアに導入の台本がある（無いとアンバーの案内が丸ごと飛ぶ）', () => {
-  CQAreas.list().forEach((a) => {
+/* 洞窟（幕2）の台本は M8.2 WP11 で本人が書く。ここでは幕1のぶんだけを固定する。 */
+t('第一幕の全エリアに導入の台本がある（無いとアンバーの案内が丸ごと飛ぶ）', () => {
+  CQAreas.list().filter((a) => a.act === 1).forEach((a) => {
     const lore = CQLore.LORE.areas[a.id];
     eq(!!lore, true, `${a.id}：台本がある`);
     eq(lore.first.length >= 1, true, `${a.id}：初回の導入がある`);
@@ -7547,7 +7553,7 @@ t('全エリアに導入の台本がある（無いとアンバーの案内が�
 });
 
 t('台本§0の規約：1吹き出しは2行まで・1行28字以内・感嘆符を使わない', () => {
-  CQAreas.list().forEach((a) => {
+  CQAreas.list().filter((a) => CQLore.LORE.areas[a.id]).forEach((a) => {
     const lore = CQLore.LORE.areas[a.id];
     const groups = [lore.first, lore.depart, lore.masterIntro, lore.fog].concat(lore.repeat);
     groups.forEach((g) => (g || []).forEach((b) => {

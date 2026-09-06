@@ -182,8 +182,157 @@
       bossRank: 'rankA',
       enemyCount: { normal: [1, 2], strong: [2, 3], elite: 3 }
     }
+,
+
+    /* ---- 第二幕：七つのダンジョン（M8.2 WP8・実装計画§3-1） --------------------------
+     * 深度プールは「Ｌk＋Ｌk+1」（cave7だけＬ7のみ）。ボス＝七罪人は WP9 で全滅戦として
+     * 実装するので、ここではまだ bossId を付けない（付けるとマスター戦＝ＬＰ勝負になる）。
+     * 解放は cave1 だけマスターレベル3、あとは1つ前の洞窟の踏破。鍵は WP10。 */
+    cave1: {
+      id: 'cave1', name: 'ウォーターケイブ', tags: ['ダンジョン内Ｌ１', 'ダンジョン内Ｌ２'], order: 5, act: 2,
+      bg: 'assets/map/bg_cave_water.png', master: 'assets/masters/m_sin_gluttony.png',
+      unlock: { level: 3 },          // マスターレベル3（記憶データ52種）で第二幕へ
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 1500,
+      /* 暗闇（実装計画§3-1）＝霧の常時版。仕組みは霧そのままで、払えない（dispel:false）。 */
+      fog: { chance: 1, dispel: false },
+      priceMax: 6000,
+      eliteMin: 1200,   /* 精鋭枠の下限：この深度のプールの上位が入る値（実測はWP12） */
+      rareTier: 'high',
+      /* 七罪人『大食』（原作の対戦相手ID 191）。M8.2 WP9で全滅戦（mode:'field'・3体配置・
+       * 逃走不可）に差し替える。それまではボスマスに立てない＝bossIdを付けない。 */
+      sinId: 191, sinName: '大食',
+      bossName: '七罪人『大食』',
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    },
+    cave2: {
+      id: 'cave2', name: 'デザートケイブ', tags: ['ダンジョン内Ｌ２', 'ダンジョン内Ｌ３'], order: 6, act: 2,
+      bg: 'assets/map/bg_cave_sand.png', master: 'assets/masters/m_sin_envy.png',
+      unlock: { cleared: 'cave1' },          // ウォーターケイブ をクリアすると開く
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 1500,
+      /* 暗闇（実装計画§3-1）＝霧の常時版。仕組みは霧そのままで、払えない（dispel:false）。 */
+      fog: { chance: 1, dispel: false },
+      priceMax: 6000,
+      eliteMin: 1200,   /* 精鋭枠の下限：この深度のプールの上位が入る値（実測はWP12） */
+      rareTier: 'high',
+      /* 七罪人『嫉妬』（原作の対戦相手ID 196）。M8.2 WP9で全滅戦（mode:'field'・3体配置・
+       * 逃走不可）に差し替える。それまではボスマスに立てない＝bossIdを付けない。 */
+      sinId: 196, sinName: '嫉妬',
+      bossName: '七罪人『嫉妬』',
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    },
+    cave3: {
+      id: 'cave3', name: 'サウスウェストケイブ', tags: ['ダンジョン内Ｌ３', 'ダンジョン内Ｌ４'], order: 7, act: 2,
+      bg: 'assets/map/bg_cave_sw.png', master: 'assets/masters/m_sin_sloth.png',
+      unlock: { cleared: 'cave2' },          // デザートケイブ をクリアすると開く
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 1500,
+      /* 暗闇（実装計画§3-1）＝霧の常時版。仕組みは霧そのままで、払えない（dispel:false）。 */
+      fog: { chance: 1, dispel: false },
+      priceMax: 6000,
+      eliteMin: 2000,   /* 精鋭枠の下限：この深度のプールの上位が入る値（実測はWP12） */
+      rareTier: 'high',
+      /* 七罪人『怠惰』（原作の対戦相手ID 193）。M8.2 WP9で全滅戦（mode:'field'・3体配置・
+       * 逃走不可）に差し替える。それまではボスマスに立てない＝bossIdを付けない。 */
+      sinId: 193, sinName: '怠惰',
+      bossName: '七罪人『怠惰』',
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    },
+    cave4: {
+      id: 'cave4', name: 'エメラルドケイブ', tags: ['ダンジョン内Ｌ４', 'ダンジョン内Ｌ５'], order: 8, act: 2,
+      bg: 'assets/map/bg_cave_emerald.png', master: 'assets/masters/m_sin_pride.png',
+      unlock: { cleared: 'cave3' },          // サウスウェストケイブ をクリアすると開く
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 1500,
+      /* 暗闇（実装計画§3-1）＝霧の常時版。仕組みは霧そのままで、払えない（dispel:false）。 */
+      fog: { chance: 1, dispel: false },
+      priceMax: 8000,
+      eliteMin: 2500,   /* 精鋭枠の下限：この深度のプールの上位が入る値（実測はWP12） */
+      rareTier: 'high',
+      /* 七罪人『傲慢』（原作の対戦相手ID 194）。M8.2 WP9で全滅戦（mode:'field'・3体配置・
+       * 逃走不可）に差し替える。それまではボスマスに立てない＝bossIdを付けない。 */
+      sinId: 194, sinName: '傲慢',
+      bossName: '七罪人『傲慢』',
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    },
+    cave5: {
+      id: 'cave5', name: 'ボルカニックケイブ', tags: ['ダンジョン内Ｌ５', 'ダンジョン内Ｌ６'], order: 9, act: 2,
+      bg: 'assets/map/bg_cave_volcanic.png', master: 'assets/masters/m_sin_lust.png',
+      unlock: { cleared: 'cave4' },          // エメラルドケイブ をクリアすると開く
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 1500,
+      /* 暗闇（実装計画§3-1）＝霧の常時版。仕組みは霧そのままで、払えない（dispel:false）。 */
+      fog: { chance: 1, dispel: false },
+      priceMax: 8000,
+      eliteMin: 3000,   /* 精鋭枠の下限：この深度のプールの上位が入る値（実測はWP12） */
+      rareTier: 'high',
+      /* 七罪人『淫欲』（原作の対戦相手ID 195）。M8.2 WP9で全滅戦（mode:'field'・3体配置・
+       * 逃走不可）に差し替える。それまではボスマスに立てない＝bossIdを付けない。 */
+      sinId: 195, sinName: '淫欲',
+      bossName: '七罪人『淫欲』',
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    },
+    cave6: {
+      id: 'cave6', name: 'クリスタルケイブ', tags: ['ダンジョン内Ｌ６', 'ダンジョン内Ｌ７'], order: 10, act: 2,
+      bg: 'assets/map/bg_cave_crystal.png', master: 'assets/masters/m_sin_greed.png',
+      unlock: { cleared: 'cave5' },          // ボルカニックケイブ をクリアすると開く
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 1500,
+      /* 暗闇（実装計画§3-1）＝霧の常時版。仕組みは霧そのままで、払えない（dispel:false）。 */
+      fog: { chance: 1, dispel: false },
+      priceMax: 20000,
+      eliteMin: 5000,   /* 精鋭枠の下限：この深度のプールの上位が入る値（実測はWP12） */
+      rareTier: 'high',
+      /* 七罪人『強欲』（原作の対戦相手ID 192）。M8.2 WP9で全滅戦（mode:'field'・3体配置・
+       * 逃走不可）に差し替える。それまではボスマスに立てない＝bossIdを付けない。 */
+      sinId: 192, sinName: '強欲',
+      bossName: '七罪人『強欲』',
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    },
+    cave7: {
+      id: 'cave7', name: 'サウスイーストケイブ', tags: ['ダンジョン内Ｌ７'], order: 11, act: 2,
+      bg: 'assets/map/bg_cave_se.png', master: 'assets/masters/m_sin_wrath.png',
+      unlock: { cleared: 'cave6' },          // クリスタルケイブ をクリアすると開く
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 2000,
+      /* 暗闇（実装計画§3-1）＝霧の常時版。仕組みは霧そのままで、払えない（dispel:false）。 */
+      fog: { chance: 1, dispel: false },
+      /* Ｌ7だけの深度。ネクロスフィア（300000Ｇ）はここの精鋭としてだけ出す
+       * （実装計画§3-5「ダンジョンＬ7 の精鋭・神殿」。ほかの洞窟はpriceMaxで弾く）。 */
+      priceMax: 300000,
+      eliteMin: 20000,   /* 精鋭枠の下限：この深度のプールの上位が入る値（実測はWP12） */
+      rareTier: 'high',
+      /* 七罪人『憤怒』（原作の対戦相手ID 197）。M8.2 WP9で全滅戦（mode:'field'・3体配置・
+       * 逃走不可）に差し替える。それまではボスマスに立てない＝bossIdを付けない。 */
+      sinId: 197, sinName: '憤怒',
+      bossName: '七罪人『憤怒』',
+      bossLp: 30, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: [2, 3], elite: 3 }
+    }
   };
-  const ORDER = ['grassland', 'forest', 'mountain', 'coast', 'desert'];
+  const ORDER = ['grassland', 'forest', 'mountain', 'coast', 'desert',
+    'cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7'];
 
   /* M8.1 WP5（実装計画§1-4）：エリア選択画面の「幕」見出し（世界観§4）。
    * 幕1＝白紙（草原〜砂漠）・幕2＝七つの罪（M8.2でダンジョンが増える）・
