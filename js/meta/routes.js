@@ -59,6 +59,17 @@
     return !!(def && def.bossId);
   }
 
+  /** その「部屋」（Ｃ／Ｂ／Ａ／Ｓ）の累計クリア報酬が実際に出るか（M8.1 WP4）。
+   * 部屋はエリアの bossRank（'rankC'など）から取り出す——js/run/run.js の roomOf() と
+   * 同じ規則だが、routes.js は run.js に依存させたくない（run.js は逆にareas.jsに依存する
+   * だけの一方向にしておきたい）ので、1行のロジックをここでも独立して持つ。
+   * その部屋に属する実装済みエリア（bossIdが付いている）が1つでもあれば real:true。 */
+  function roomWired(room) {
+    return !!(CQAreas && CQAreas.list().some(function (def) {
+      return def.bossId && typeof def.bossRank === 'string' && def.bossRank.replace('rank', '') === room;
+    }));
+  }
+
   /** カード1枚ぶんの入手経路一覧。real:true が1つでもあれば現在の実装で到達できる。 */
   function routesFor(card, cards) {
     const routes = [];
@@ -98,9 +109,10 @@
       Object.keys(CQOpponents.ROOM_REWARDS).forEach(function (room) {
         const idx = CQOpponents.ROOM_REWARDS[room].indexOf(card.id);
         if (idx < 0) return;
+        const real = roomWired(room);
         routes.push({
-          type: 'room-reward', real: false, room: room,
-          label: `闘技場ルーム${room} 累計${[3, 5, 7][idx]}クリア報酬（未実装・予定）`
+          type: 'room-reward', real: real, room: room,
+          label: `闘技場ルーム${room} 累計${[3, 5, 7][idx]}クリア報酬${real ? '' : '（未実装・予定）'}`
         });
       });
     }
@@ -146,7 +158,7 @@
     return { rows: rows, summary: summary };
   }
 
-  const api = { PLANNED_TAGS, DRAGON_FIX, isRealArea, bossWired, routesFor, realCardList, coverageReport };
+  const api = { PLANNED_TAGS, DRAGON_FIX, isRealArea, bossWired, roomWired, routesFor, realCardList, coverageReport };
   global.CQRoutes = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

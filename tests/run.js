@@ -7359,6 +7359,155 @@ t('bossDisplayName：opponents.jsの表示名を返す（草原＝『占星士�
 });
 
 
+section('M8.1 WP4: ボス報酬（初回撃破の一枚・部屋の累計3/5/7報酬・速攻実績）');
+
+/* このセクション専用の使い捨てメタ（book/deck/known/gold/cleared一式が揃っていればよい）。
+ * CQCollection.ensure が bossWins/clears を無ければ用意してくれる。 */
+function freshWp4Meta(clearedAreas) {
+  const m = { book: {}, deck: { 8: 40 }, known: [], gold: 100, cleared: (clearedAreas || []).slice() };
+  CQCollection.ensure(m);
+  return m;
+}
+/* 実戦闘を回さず、勝利したことにする最小のバトル終了モデル。 */
+function fakeWinModel(turn) {
+  return { winner: 'self', loot: [], turn: turn, players: { self: { lp: 10 } } };
+}
+
+t('meta.bossWins・meta.clearsはCQCollection.ensureで初期化される（既存セーブにも無ければ足す）', () => {
+  const m = {};
+  CQCollection.ensure(m);
+  eq(m.bossWins, {}, 'bossWinsは空オブジェクトで用意される');
+  eq(m.clears, {}, 'clearsは空オブジェクトで用意される');
+});
+
+t('roomOf：エリアのbossRankから部屋を取り出す（rankC→C・rankB→B・rankA→A）', () => {
+  eq(CQRun.roomOf(CQAreas.get('grassland')), 'C', '草原＝C');
+  eq(CQRun.roomOf(CQAreas.get('forest')), 'C', '森＝C');
+  eq(CQRun.roomOf(CQAreas.get('mountain')), 'B', '山地＝B');
+  eq(CQRun.roomOf(CQAreas.get('coast')), 'B', '海辺＝B');
+  eq(CQRun.roomOf(CQAreas.get('desert')), 'A', '砂漠＝A');
+  eq(CQRun.roomOf(null), null, 'エリアが無ければnull');
+});
+
+t('初めてマスターを降す：草原（顔=コルーニャ11）の初回撃破で固有カード117が戦利品に載る', () => {
+  const meta = freshWp4Meta();
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 1, meta);
+  const n = { type: 'boss' };
+  CQRun.reportBattle(run, n, fakeWinModel(6), meta);
+  eq(run.bossBonus.masterId, 11, '草原・初回訪問の顔はコルーニャ(11)');
+  eq(run.bossBonus.masterCard, 117, '初回撃破報酬＝障壁(117)');
+  eq(run.bossBonus.roomCard, null, 'まだエリア累計クリア1回目なので部屋報酬は無い');
+  eq(run.lootPending.indexOf(117) >= 0, true, '戦利品の振り分け画面に117が載る（lootPending）');
+  eq(run.gainedCards.indexOf(117) >= 0, true, '入手済み扱い（gainedCards）にもなる');
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  eq(meta.bossWins[11], 1, '清算後にmeta.bossWins[11]が1になる');
+  eq(meta.clears.grassland, 1, '清算後にmeta.clears.grasslandが1になる');
+});
+
+t('同じマスターへの2回目の初回撃破報酬は出ない（meta.bossWinsで既出判定）', () => {
+  const meta = freshWp4Meta(['grassland']);
+  meta.bossWins[11] = 1;                 /* コルーニャは既に一度降している */
+  meta.clears.grassland = 1;
+  /* 山地・海辺・砂漠は無関係。草原のbossPoolは[11,7]——11で固定したいので
+     bossMasterOfの抽選に左右されない直接呼び出しのテストにする。 */
+  const grassland = CQAreas.get('grassland');
+  const run = { areaId: 'grassland', seed: 1, repeatVisit: true, lootPending: [], gainedCards: [], log: [] };
+  const bonus = CQRun.bossBonusOf(run, grassland, meta);
+  if (bonus.masterId === 11) {
+    eq(bonus.masterCard, null, '11は既出なので初回撃破報酬は無い');
+  } else {
+    eq(bonus.masterId, 7, '11でなければ組のもう一方（7）のはず');
+    eq(bonus.masterCard, 147, '7はまだ倒していないので初回撃破報酬（治癒147）が出る');
+  }
+});
+
+t('部屋の累計クリア報酬：山地（B帯）のエリア累計クリアが3回目でB帯3枚目の123が出る', () => {
+  const meta = freshWp4Meta(['grassland', 'forest', 'mountain']);
+  meta.bossWins[5] = 2; meta.bossWins[15] = 2;   /* 山地の組は両方すでに初回撃破済み */
+  meta.clears.mountain = 2;                       /* 次で3回目になる */
+  const mountain = CQAreas.get('mountain');
+  const run = { areaId: 'mountain', seed: 42, repeatVisit: true, lootPending: [], gainedCards: [], log: [] };
+  const bonus = CQRun.bossBonusOf(run, mountain, meta);
+  eq(bonus.masterCard, null, '両方とも既出なので初回撃破報酬は無い');
+  eq(bonus.room, 'B', '山地はB帯');
+  eq(bonus.threshold, 3, '3回目のクリアで発火');
+  eq(bonus.roomCard, 123, 'B帯の3枚目＝発症(123)（js/opponents.js ROOM_REWARDS.B[0]）');
+});
+
+t('部屋の累計クリア報酬は3/5/7回目「ちょうど」でしか出ない（1・2・4回目では出ない）', () => {
+  const grassland = CQAreas.get('grassland');
+  [0, 1, 3].forEach((clearsSoFar) => {
+    const meta = freshWp4Meta(['grassland']);
+    meta.bossWins[11] = 1; meta.bossWins[7] = 1;
+    meta.clears.grassland = clearsSoFar;
+    const run = { areaId: 'grassland', seed: 1, repeatVisit: true, lootPending: [], gainedCards: [], log: [] };
+    const bonus = CQRun.bossBonusOf(run, grassland, meta);
+    eq(bonus.roomCard, null, `累計${clearsSoFar + 1}回目では部屋報酬は出ない`);
+  });
+});
+
+t('Ｓ帯の5回目のようにROOM_REWARDSがnullの枠は、閾値どおりでも報酬が出ない', () => {
+  eq(CQOpponents.ROOM_REWARDS.S[1], null, 'S帯の5回目枠はnull（実装計画§3-3どおり）');
+});
+
+t('速攻の実績：Ａ帯以上（砂漠）のボスを8ターン以内に降すとspeedKill8・speedKill10の両方が付く', () => {
+  const meta = freshWp4Meta(['grassland', 'forest', 'mountain', 'coast']);
+  const run = CQRun.start(CARD_BY_ID, 'desert', 5, meta);
+  const n = { type: 'boss' };
+  CQRun.reportBattle(run, n, fakeWinModel(8), meta);
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  const keys = run.settled.titles.map((t) => t.key);
+  eq(keys.indexOf('speedKill8') >= 0, true, '8ターン以内なのでspeedKill8が付く');
+  eq(keys.indexOf('speedKill10') >= 0, true, '8は10以内でもあるのでspeedKill10も付く');
+});
+
+t('速攻の実績：Ａ帯未満（草原）のボスはどれだけ速く倒しても対象外', () => {
+  const meta = freshWp4Meta();
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 5, meta);
+  const n = { type: 'boss' };
+  CQRun.reportBattle(run, n, fakeWinModel(3), meta);
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  const keys = run.settled.titles.map((t) => t.key);
+  eq(keys.indexOf('speedKill8') >= 0, false, '草原（C帯）は3ターンで倒してもspeedKill8の対象外');
+  eq(keys.indexOf('speedKill10') >= 0, false, '同じくspeedKill10も対象外');
+});
+
+t('速攻の実績：Ａ帯でも9ターンかかればspeedKill8は付かず、speedKill10だけ付く', () => {
+  const meta = freshWp4Meta(['grassland', 'forest', 'mountain', 'coast']);
+  const run = CQRun.start(CARD_BY_ID, 'desert', 5, meta);
+  const n = { type: 'boss' };
+  CQRun.reportBattle(run, n, fakeWinModel(9), meta);
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  const keys = run.settled.titles.map((t) => t.key);
+  eq(keys.indexOf('speedKill8') >= 0, false, '9ターンなのでspeedKill8は付かない');
+  eq(keys.indexOf('speedKill10') >= 0, true, '10以内なのでspeedKill10は付く');
+});
+
+t('日誌：初回撃破報酬が出たランだけ「〇〇が、一枚を渡した。」の追加行が作れる', () => {
+  const meta = freshWp4Meta();
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 1, meta);
+  const n = { type: 'boss' };
+  CQRun.reportBattle(run, n, fakeWinModel(6), meta);
+  eq(run.bossBonus.masterCard, 117, '前提：初回撃破報酬が出ている');
+  const line = CQLore.journalLine('bossReward', { master: run.bossBonus.masterName });
+  eq(line, '『占星士』コルーニャが、一枚を渡した。', '台詞のテンプレどおりに組み立たつ');
+});
+
+t('bossBonusOfは読み取り専用（呼んだだけではmeta.bossWins／meta.clearsを変えない）', () => {
+  const meta = freshWp4Meta();
+  const grassland = CQAreas.get('grassland');
+  const run = { areaId: 'grassland', seed: 1, repeatVisit: false, lootPending: [], gainedCards: [], log: [] };
+  CQRun.bossBonusOf(run, grassland, meta);
+  eq(meta.bossWins, {}, '呼んだだけではbossWinsは変わらない');
+  eq(meta.clears, {}, '呼んだだけではclearsも変わらない');
+});
+
+
+
 section('M8.1 WP1: 入手経路の網羅表（js/meta/routes.js）');
 
 const CQRoutesTest = require(path.join(root, 'js/meta/routes.js'));
@@ -7416,6 +7565,25 @@ t('M8.1 WP3：マスター報酬はエリアのボス配線が済むと real:tru
   const bossRoute = routes.find((r) => r.type === 'boss-reward');
   eq(!!bossRoute, true, 'マスター報酬の経路はある');
   eq(bossRoute.real, true, 'coastエリアにbossIdが付いたのでreal:true');
+});
+
+t('routes.js：部屋の累計報酬は、その部屋に属する実装済みエリアが1つでもあればreal:true（M8.1 WP4）', () => {
+  const hatsusho = CARD_BY_ID[123];  // 発症＝B帯の3枚目（山地・海辺がB帯として配線済み）
+  const routesB = CQRoutesTest.routesFor(hatsusho, CARD_BY_ID);
+  const roomRouteB = routesB.find((r) => r.type === 'room-reward');
+  eq(!!roomRouteB, true, 'B帯累計報酬の経路がある');
+  eq(roomRouteB.real, true, '山地・海辺がB帯として配線済みなのでreal:true');
+
+  const raijin = CARD_BY_ID[135];  // 雷撃＝A帯の1枚目（砂漠がA帯として配線済み）
+  const routesA = CQRoutesTest.routesFor(raijin, CARD_BY_ID);
+  const roomRouteA = routesA.find((r) => r.type === 'room-reward');
+  eq(roomRouteA.real, true, '砂漠がA帯として配線済みなのでreal:true');
+
+  const konrin = CARD_BY_ID[199];  // 光臨＝S帯の1枚目（教会はまだ無い＝M8.3待ち）
+  const routesS = CQRoutesTest.routesFor(konrin, CARD_BY_ID);
+  const roomRouteS = routesS.find((r) => r.type === 'room-reward');
+  eq(!!roomRouteS, true, 'S帯累計報酬の経路はある（他の経路と共存する）');
+  eq(roomRouteS.real, false, 'S帯（教会）はまだ配線されていないのでreal:false');
 });
 
 /* ================= 結果 ================= */

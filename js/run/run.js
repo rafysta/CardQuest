@@ -83,6 +83,43 @@
    * 初回訪問（run.repeatVisit が false）は必ず顔（bossId）。2回目以降の周回だけ、
    * run.seed から確定的に組（bossPool）の中から1人を選ぶ——同じランなら常に同じ結果になる
    * （マップ生成のロールと同じ考え方。js/run/map.js rollEnemy 参照）。 */
+  /** そのエリアの報酬「部屋」（実装計画M8 §3-3：エリアの帯＝部屋）。C/B/A/S。
+   * area.bossRank（'rankC'など）からそのまま取り出す——エリアのAI帯＝原作の闘技場ルームの
+   * 呼び名を流用しているので、部屋報酬の判定にもこれを使う（マスター個々の原作の部屋とは無関係。
+   * 山地はルピア＝原作C・グリンジ＝原作Bが同居するが、エリアとしての部屋はBに統一）。 */
+  function roomOf(area) {
+    if (!area || typeof area.bossRank !== 'string') return null;
+    return area.bossRank.replace('rank', '');
+  }
+  const HIGH_ROOMS = { A: true, S: true };            /* 「Ａ帯以上」＝速攻実績の対象 */
+  const ROOM_CLEAR_THRESHOLDS = [3, 5, 7];
+
+  /** M8.1 WP4（実装計画§3-3）：ボスを降した瞬間に貰える追加報酬を判定する（読み取り専用・
+   * meta は書き換えない）。実際の meta.bossWins／meta.clears への加算は settle() が行う——
+   * ここで見ているのはまだ加算される前の値＝「これで何回目になるか」の先取り判定。
+   * 戻り値：{ masterId, masterName, masterCard, room, threshold, roomCard }
+   *   masterCard：そのマスターを初めて降した記録（meta.bossWinsに無い）ときだけ非null
+   *   roomCard  ：このランでエリアの累計クリアが3／5／7回目になる、かつ原作にその枠の
+   *              報酬があるときだけ非null（Ｓ帯の5回目など、原作に無い枠はnullのまま） */
+  function bossBonusOf(run, area, meta) {
+    const masterId = bossMasterOf(run, area);
+    const m = CQOpponents.get(masterId);
+    const masterName = (CQOpponents.displayName && CQOpponents.displayName(masterId)) || (m && m.name) || 'マスター';
+    const bossWins = (meta && meta.bossWins) || {};
+    const masterCard = (!bossWins[masterId] && m && m.reward != null) ? m.reward : null;
+    const room = roomOf(area);
+    const clears = (meta && meta.clears) || {};
+    const nextCount = (clears[run.areaId] || 0) + 1;
+    const idx = ROOM_CLEAR_THRESHOLDS.indexOf(nextCount);
+    let roomCard = null, threshold = null;
+    if (idx >= 0 && room && CQOpponents.ROOM_REWARDS[room]) {
+      const c = CQOpponents.ROOM_REWARDS[room][idx];
+      if (c != null) { roomCard = c; threshold = ROOM_CLEAR_THRESHOLDS[idx]; }
+    }
+    return { masterId: masterId, masterName: masterName, masterCard: masterCard,
+      room: room, threshold: threshold, roomCard: roomCard };
+  }
+
   function bossMasterOf(run, area) {
     if (!area || area.bossId == null) return null;
     if (!area.bossPool || area.bossPool.length <= 1) return area.bossId;
@@ -411,6 +448,21 @@
       if (n.type === 'boss') {
         const repeat = !!(meta && meta.cleared && meta.cleared.indexOf(run.areaId) >= 0);
         gold = Math.round((area.fightMoney || 0) * (repeat ? 0.5 : 1));
+        /* M8.1 WP4（実装計画§3-3）：ボス報酬。戦利品の振り分け画面（M6.6 WP7）に一緒に
+         * 載せるため、ここで確定させて lootPending／gainedCards に足す。実際の
+         * meta.bossWins／meta.clears への加算は settle() が行う（bossBonusOf は読むだけ）。 */
+        run.bossTurns = M.turn;
+        run.bossBonus = bossBonusOf(run, area, meta);
+        if (run.bossBonus.masterCard != null) {
+          run.gainedCards.push(run.bossBonus.masterCard);
+          run.lootPending.push(run.bossBonus.masterCard);
+          run.log.push('マスター初回撃破報酬：' + run.bossBonus.masterName + 'の一枚');
+        }
+        if (run.bossBonus.roomCard != null) {
+          run.gainedCards.push(run.bossBonus.roomCard);
+          run.lootPending.push(run.bossBonus.roomCard);
+          run.log.push('部屋（' + run.bossBonus.room + '）累計' + run.bossBonus.threshold + '回クリア報酬');
+        }
       }
       run.gold += gold;
       run.lp = M.players.self.lp;
@@ -642,6 +694,20 @@
     { key: 'flawless', name: '無傷の一日', desc: 'ＬＰを出発時まで保ったままクリア',
       cond: function (run) {
         return run.outcome === 'win' && run.lp >= (run.startLp != null ? run.startLp : run.lp);
+      } },
+    /* M8.1 WP4（実装計画§3-3）：原作のルームＡ／Ｓ限定の速攻報酬（磁場変動・爆雷）を
+     * カードではなく実績（称号）に置き換えたもの。エリアの部屋がＡ帯以上のときだけ対象。 */
+    { key: 'speedKill8', name: '速攻の達人', desc: 'Ａ帯以上のボスを8ターン以内に降す',
+      cond: function (run) {
+        if (run.outcome !== 'win' || run.bossTurns == null) return false;
+        const area = CQAreas.get(run.areaId);
+        return !!(area && HIGH_ROOMS[roomOf(area)] && run.bossTurns <= 8);
+      } },
+    { key: 'speedKill10', name: '疾風の一撃', desc: 'Ａ帯以上のボスを10ターン以内に降す',
+      cond: function (run) {
+        if (run.outcome !== 'win' || run.bossTurns == null) return false;
+        const area = CQAreas.get(run.areaId);
+        return !!(area && HIGH_ROOMS[roomOf(area)] && run.bossTurns <= 10);
       } }
   ]);
 
@@ -692,6 +758,16 @@
     (run.gainedCards || []).forEach(function (id) { CQCollection.registerKnown(meta, id); });
     const gold = settleGold(run);
     meta.gold = gold.final;
+    /* M8.1 WP4（実装計画§3-3）：ボス報酬のカウンタ加算。bossBonusOf（reportBattle側）は
+     * この加算より前の値を読んで「初めて／何回目」を判定しているので、ここでの加算は
+     * 判定そのものには使わない——次のラン以降のための記録。bossMasterOf は run.seed と
+     * run.repeatVisit だけで決まる純関数なので、戦闘時と同じマスターIDが再現される。 */
+    if (run.outcome === 'win') {
+      const bossArea = CQAreas.get(run.areaId);
+      const masterId = bossMasterOf(run, bossArea);
+      meta.bossWins[masterId] = (meta.bossWins[masterId] || 0) + 1;
+      meta.clears[run.areaId] = (meta.clears[run.areaId] || 0) + 1;
+    }
     /* 称号は cleared を更新する**前**に判定する（「初めて撃破」が cleared 由来ではなく
      * meta.titles 由来なので実害は無いが、判定材料の並びを素直に保つ）。 */
     const titles = earnedTitles(run, meta);
@@ -709,6 +785,7 @@
     return meta;
   }
 
+
   const api = {
     DECK_SIZE, BLANK, DRAFT_ROUNDS, RENTAL_MAX, buildBattleDeck, buildBossDeck, buildPlayerDeck,
     bossMasterOf, bossDisplayName,
@@ -718,7 +795,8 @@
     canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
     sellPrice, buyoutPrice, buyout, buyoutLeave, resolveQuestion, retire, settle,
-    SETTLE_CUT, settleGold, TITLES, earnedTitles, pushJournal
+    SETTLE_CUT, settleGold, TITLES, earnedTitles, pushJournal,
+    roomOf, bossBonusOf
   };
   global.CQRun = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

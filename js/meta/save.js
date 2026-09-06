@@ -15,6 +15,12 @@
  *                                 §2.3 onLevelUp を1回だけ出す（checkLevelUp）
  *   homeSeenAreas: [areaId, ...]  節目として見せ終えたエリア解放。新しく解放された分だけ
  *                                 §2.3 onAreaOpen を出す（checkAreaOpen）
+ *   bossWins:    {masterId: count}  マスターごとの撃破回数（M8.1 WP4）。0→1になった瞬間が
+ *                                 「初めて降した」＝固有カード報酬の判定に使う。js/meta/collection.js
+ *                                 ensure() が用意し、js/run/run.js settle() が加算する
+ *   clears:      {areaId: count}   エリアごとの累計クリア回数（M8.1 WP4）。3／5／7回目で
+ *                                 部屋の累計報酬が出る。既存の meta.cleared（配列・解放条件用）
+ *                                 とは別物なので混同しないこと
  *   gold / cleared / …           その他のメタ
  * cq_run … 中断中のランのオートセーブ（js/run/run.js の run オブジェクトそのもの）
  *

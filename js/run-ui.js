@@ -2271,8 +2271,17 @@ function finishRun(run) {
     master: area ? CQRun.bossDisplayName(run, area) : 'マスター'
   });
   CQRun.pushJournal(meta, line);
+  /* M8.1 WP4（実装計画§3-3）：マスターを初めて降した回だけ、追加でもう1行
+   * （「〇〇が、一枚を渡した。」）。部屋の累計報酬（roomCard）はマスター個人の台詞では
+   * ないので、ここでは扱わない（戦利品としてはローンの振り分け画面で既に渡っている）。 */
+  let bonusLine = null;
+  if (run.bossBonus && run.bossBonus.masterCard != null) {
+    bonusLine = CQLore.journalLine('bossReward', { master: run.bossBonus.masterName });
+    CQRun.pushJournal(meta, bonusLine);
+  }
   if (run.settled) {
     run.settled.journal = line;
+    run.settled.bonusJournal = bonusLine;
     run.settled.knownBefore = knownBefore;
     /* 台本§5 gameOverFirst＝『世界観とプレイヤー案内』§6.3 #13「記録は失われない」。
      * 原作最大のストレスが無いことを、プレイヤーが最初に不安になる瞬間に伝える一節。 */
@@ -2401,6 +2410,7 @@ function renderResult() {
         </div>
         <div class="res-foot-right">
           <p class="res-journal">${esc(st.journal || '')}</p>
+          ${st.bonusJournal ? `<p class="res-journal res-journal-bonus">${esc(st.bonusJournal)}</p>` : ''}
           <p class="res-carry-note">デッキは次の冒険にそのまま持ち越されます。</p>
           <button class="btn ok res-done" data-act="back-home">今回の探検を終える</button>
         </div>

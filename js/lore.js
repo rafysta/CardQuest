@@ -191,7 +191,11 @@
       clear:     '{day}日目。{area}。書き留めた魂 {count}。ＬＰ {lp}で戻る。',
       bossFirst: '{day}日目。{area}。{master} を降す。',
       retire:    '{day}日目。{area}。引き返す。',
-      gameOver:  '{day}日目。{area}。倒れて戻る。'
+      gameOver:  '{day}日目。{area}。倒れて戻る。',
+      /* M8.1 WP4（実装計画§3-3）：マスターを初めて降したときの追加報酬（固有カード）を
+       * 告げる1行。bossFirst の直後に別行として積む（同じ行に混ぜない＝両方の情報を
+       * 後から個別に扱えるように）。 */
+      bossReward: '{master}が、一枚を渡した。'
     }
   };
 

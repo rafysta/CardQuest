@@ -51,6 +51,12 @@
     /* M7 WP10：記録画面の統計。終わり方の内訳とボス撃破数を数える（古いセーブには無いので
      * ここで用意する＝それ以前の記録は0から数え直しになるが、壊れはしない）。 */
     if (!meta.stats) meta.stats = { win: 0, retire: 0, lose: 0, boss: 0, cards: 0 };
+    /* M8.1 WP4：ボス報酬の判定用カウンタ。
+     *   bossWins: {masterId: 撃破回数}   … 初めて降したか（＝0→1になった瞬間）の判定に使う
+     *   clears:   {areaId: クリア回数}   … 部屋の累計3／5／7回報酬の判定に使う（負けても減らない）
+     * 既存の meta.cleared（配列・そのエリアを一度でもクリアしたか＝解放条件用）とは別物。 */
+    if (!meta.bossWins || typeof meta.bossWins !== 'object') meta.bossWins = {};
+    if (!meta.clears || typeof meta.clears !== 'object') meta.clears = {};
     return meta;
   }
 
