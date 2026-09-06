@@ -1,11 +1,18 @@
-/* CardQuest — ラン（分岐マップ）のヘッドレス自動プレイ（M6）
+/* CardQuest — ラン（分岐マップ）のヘッドレス自動プレイ（M6・M8.1 WP6で一般化）
  *
- *   node tools/simulate-run.js [試行回数=300] [1キャリアのラン数=2] [--real]
+ *   node tools/simulate-run.js [試行回数=300] [1キャリアのラン数=2] [--real] [--area=<id>]
  *
- * 「キャリア」＝同じ cq_meta を使い続けて2ラン連続で遊ぶ（1本目は必ず草原、2本目は
- * 解放されていれば森も選ぶ）。各マスの選択はランダム（分岐・ドラフト・購入・売却・
- * リタイヤも一定確率で）。戦闘は既存の敵ＡＩ同士（tools/simulate.js と同じ駆動）で
- * 自動決着させる。例外・不変条件違反が無いことを確認する回帰チェック。
+ * 「キャリア」＝同じ cq_meta を使い続けて複数ラン連続で遊ぶ。エリアの選び方は既定で
+ * **解放グラフを歩く**（実際のゲームの「いまの目標」＝CQCollection.nextGoal と同じ判断で、
+ * まだ踏破していない解放済みエリアへ順に進む。M8.1でエリアが5つに増えたので、
+ * 草原→森決め打ちだった旧仕様はこれに置き換えた）。全部踏破したら（あるいは--areaを
+ * 付けたら）解放済みのいちばん奥／指定したエリアを周回する（長期計測用）。
+ * `--area=<grassland|forest|mountain|coast|desert>` を付けると、キャリア全体をそのエリア
+ * 固定で遊ぶ（解放条件は無視——そのエリア1本の当たり外れだけを大量に見たいとき用）。
+ * 各マスの選択はランダム（分岐・ドラフト・購入・売却・リタイヤも一定確率で）。
+ * 戦闘は既存の敵ＡＩ同士（tools/simulate.js と同じ駆動）で自動決着させる。
+ * 例外・不変条件違反が無いことを確認する回帰チェック。エリア別の勝率・ボス勝率・
+ * 獲得枚数の内訳は「--- M8.1 WP6：エリア別の内訳 ---」に出す。
  *
  * 敵ＡＩの強さ（M7.10 WP4）：既定は速い近似——通常戦闘（フリーユニット戦）の敵は
  * 本番と同じ行動制限（最初の2手番は攻撃しない・マリガン無し＝CQAi.PRESETS.free相当）を
@@ -73,6 +80,22 @@ const BSTAT = {
   field: { n: 0, win: 0, loot: 0, turns: 0, fled: 0 },
   boss: { n: 0, win: 0, loot: 0, turns: 0, fled: 0 }
 };
+
+/* M8.1 WP6（実装計画§4）：エリア別の内訳。上のBSTATは全エリア合算（既存の基準値と
+ * 比較できるよう、集計ロジックにも表示にも一切手を入れていない）。AREA_STATは
+ * それと並行して同じ値をエリアIDごとにも積む——2箇所で数え直すのではなく、
+ * 同じ戦闘結果を両方へ足すだけ（playRun側の1箇所だけ）。 */
+const AREA_STAT = {};
+function areaBucket(areaId) {
+  if (!AREA_STAT[areaId]) {
+    AREA_STAT[areaId] = {
+      field: { n: 0, win: 0, loot: 0, turns: 0 },
+      boss: { n: 0, win: 0, loot: 0, turns: 0 },
+      runs: 0, runWin: 0, runLose: 0, runRetire: 0, cards: 0
+    };
+  }
+  return AREA_STAT[areaId];
+}
 /* M6.6 WP12/§2-11：**先攻・後攻それぞれの勝率**。ここがWP5以降いちばん見たい数字。
  * 全体の勝率だけ見ていると「後攻+1ドロー」の効果は測れない——この補正は
  * 「後攻の側」に付くので、自分が後攻のときも相手が後攻のときも等しく効き、
@@ -288,6 +311,12 @@ function playRun(areaId, seed, meta, rng) {
         if (M.fled) bucket.fled++;
         if (M.winner === 'self') { bucket.win++; bucket.loot += (M.loot || []).length; }
         bucket.turns += M.turn;
+        /* M8.1 WP6：同じ戦闘結果をエリア別の内訳にも足す（逃走の回数だけは全体側にしか無い
+         * ——エリア別の表では見なくてよい細かさなので追わない）。 */
+        const areaBkt = areaBucket(areaId)[n.type === 'boss' ? 'boss' : 'field'];
+        areaBkt.n++;
+        if (M.winner === 'self') { areaBkt.win++; areaBkt.loot += (M.loot || []).length; }
+        areaBkt.turns += M.turn;
         /* 先攻・後攻べつの勝率（逃走で終わった戦闘は勝敗が付かないので数えない） */
         if (!M.fled) {
           const fb = (M.first === 'self') ? FSTAT.first : FSTAT.second;
@@ -446,30 +475,56 @@ const trials = parseInt(process.argv[2], 10) || 300;
  * 3以上を渡すと、解放済みのいちばん奥のエリアを繰り返し遊ぶ**長いキャリア**になる
  * ——Ｇは cq_meta に積み上がるので、「何ランぶん貯めれば買い物が成立するか」を見るのに使う。 */
 const careerRuns = Math.max(2, parseInt(process.argv[3], 10) || 2);
-const stat = { win: 0, lose: 0, retire: 0, battles: 0, turns: 0, forestRuns: 0, errors: [] };
+/* M8.1 WP6（実装計画§4）：--area=desert のように渡すと、キャリア全体を毎回そのエリア固定で
+ * 遊ぶ（解放条件は無視する＝そのエリア1本の当たり外れだけを大量に見たいときのモード）。
+ * 省略時は従来どおり「解放グラフを歩く」——CQCollection.nextGoal と同じ判断（ホーム画面の
+ * 「いまの目標」が指す先）で、次に行くべき未踏破の解放済みエリアを選ぶ。M8.1でエリアが
+ * 5つに増えたので、grassland→forest決め打ちだった旧ロジックをこれに置き換えた。 */
+const FIXED_AREA_ARG = process.argv.find((a) => /^--area=/.test(a));
+const FIXED_AREA = FIXED_AREA_ARG ? FIXED_AREA_ARG.slice('--area='.length) : null;
+if (FIXED_AREA && !CQAreas.get(FIXED_AREA)) {
+  console.error(`未知のエリア: ${FIXED_AREA}（node tools/simulate-run.js 300 2 --area=<${CQAreas.ORDER.join('|')}>）`);
+  process.exit(1);
+}
+/** メタが解放しているエリアの一覧（{id, name, unlocked}）。CQCollection.nextGoal の
+ * 第2引数の形（js/meta/collection.js §記録画面の「いまの目標」と同じ規約）。 */
+function areasForGoal(meta) {
+  return CQAreas.list().map((a) => ({ id: a.id, name: a.name, unlocked: CQAreas.isUnlocked(a.id, meta) }));
+}
+/** 次に行くべきエリアを、実際のゲームの「いまの目標」と同じロジックで選ぶ。
+ * まだ踏破していない解放済みエリアがあればその先頭、無ければ（全部踏破済み＝
+ * 'collection'／'done'）解放済みのいちばん奥のエリアを周回する（旧来の「3本目以降は
+ * いちばん奥を周回する」という長期計測の趣旨を、エリアが増えても保つ）。 */
+function pickNextArea(meta) {
+  if (FIXED_AREA) return FIXED_AREA;
+  const goal = CQCollection.nextGoal(meta, areasForGoal(meta));
+  if (goal.key === 'area') return goal.id;
+  const unlockedIds = CQAreas.list().filter((a) => CQAreas.isUnlocked(a.id, meta)).map((a) => a.id);
+  return unlockedIds[unlockedIds.length - 1] || CQAreas.ORDER[0];
+}
+const stat = { win: 0, lose: 0, retire: 0, battles: 0, turns: 0, errors: [] };
 for (let seed = 1; seed <= trials; seed++) {
   try {
     const rng = CQRng.create(seed * 7919 + 13);
     const storage = mockStorage();
     let meta = CQSave.loadMeta(storage, STARTER);
-    /* キャリア1本目：草原（森はまだ解放されていない） */
-    let res = playRun('grassland', seed * 2, meta, rng);
-    stat[res.run.outcome] = (stat[res.run.outcome] || 0) + 1;
-    stat.battles += res.battles; stat.turns += res.totalTurns;
-    CQSave.saveMeta(storage, meta);
-    /* キャリア2本目以降：森が解放されていればそちらを、まだなら草原をもう一度。
-     * （2本目までは従来どおり＝WP1〜WP4の基準値と同じ条件。3本目以降は WP12 の長期計測用） */
-    for (let r = 1; r < careerRuns; r++) {
-      const areaId = CQAreas.isUnlocked('forest', meta.cleared) ? 'forest' : 'grassland';
-      if (areaId === 'forest') stat.forestRuns++;
-      res = playRun(areaId, seed * 100 + r, meta, rng);
+    for (let r = 0; r < careerRuns; r++) {
+      autoCarryOut(meta);                 /* nextGoalの canDepart 判定に要る（持ち出し前だと常に'deck'になる） */
+      const areaId = pickNextArea(meta);
+      const res = playRun(areaId, r === 0 ? seed * 2 : seed * 100 + r, meta, rng);
       stat[res.run.outcome] = (stat[res.run.outcome] || 0) + 1;
       stat.battles += res.battles; stat.turns += res.totalTurns;
+      const ab = areaBucket(areaId);
+      ab.runs++;
+      if (res.run.outcome === 'win') ab.runWin++;
+      else if (res.run.outcome === 'retire') ab.runRetire++;
+      else ab.runLose++;
+      ab.cards += (res.run.gainedCards || []).length;
       CQSave.saveMeta(storage, meta);
     }
     GOLD_STAT.careers++;
     GOLD_STAT.endGold += meta.gold;
-    /* M7 WP1：このキャリア（草原→森）が終わった時点でのダブり枚数を集計する */
+    /* M7 WP1：このキャリアが終わった時点でのダブり枚数を集計する */
     DUPE_STAT.careers++;
     DUPE_STAT.total += careerDupeCount(meta);
     /* M7 WP12：ダブりを一括換金したらいくらになるか（実際には換金しない・見積もりだけ）。
@@ -482,8 +537,9 @@ for (let seed = 1; seed <= trials; seed++) {
   }
 }
 console.log(`敵ＡＩ：${REAL_AI ? '本番のランク（search方策・--real）' : '近似（eval方策・既定）'}`);
-console.log(`${trials} キャリア（草原→森）：勝ち ${stat.win} / 負け ${stat.lose} / リタイヤ ${stat.retire}`
-  + `（うち森に到達 ${stat.forestRuns} 回）`);
+const careerLabel = FIXED_AREA ? `${CQAreas.get(FIXED_AREA).name}固定` : '解放グラフを歩く';
+console.log(`${trials} キャリア（${careerLabel}・${careerRuns}ラン／キャリア）：`
+  + `勝ち ${stat.win} / 負け ${stat.lose} / リタイヤ ${stat.retire}`);
 console.log(`戦闘 ${stat.battles} 回・平均 ${(stat.turns / Math.max(1, stat.battles)).toFixed(1)} ターン/戦`);
 /* M6.6 WP6（§7-5）の較正表。通常戦闘＝フリーユニット戦（場を空にすれば勝ち）、
  * ボス＝従来どおりのＬＰ勝負。獲得枚数は勝った戦闘あたりの平均。 */
@@ -511,6 +567,22 @@ console.log(`  1ランあたり：獲得カード ${(ESTAT.cards / Math.max(1, E
   + ` / 清算前の所持Ｇ ${(ESTAT.goldEnd / Math.max(1, ESTAT.runs)).toFixed(0)}`
   + ` / 清算後 ${(ESTAT.goldKept / Math.max(1, ESTAT.runs)).toFixed(0)}`
   + ` / 減額 ${(ESTAT.goldCut / Math.max(1, ESTAT.runs)).toFixed(0)}`);
+
+/* M8.1 WP6（実装計画§4）：エリア別の内訳。CQAreas.ORDER順（草原→森→山地→海辺→砂漠）で、
+ * 実際に1回でも訪れたエリアだけ出す（--areaで固定したときは1行だけになる）。 */
+console.log('');
+console.log('--- M8.1 WP6：エリア別の内訳 ---');
+CQAreas.ORDER.filter((id) => AREA_STAT[id]).forEach((id) => {
+  const ab = AREA_STAT[id];
+  const runRate = (n) => pct(n, ab.runs);
+  console.log(`  ${CQAreas.get(id).name}：${ab.runs}ラン`
+    + `（クリア ${runRate(ab.runWin)}／敗北 ${runRate(ab.runLose)}／リタイヤ ${runRate(ab.runRetire)}）`
+    + ` / 獲得カード ${(ab.cards / Math.max(1, ab.runs)).toFixed(2)} 枚/ラン`);
+  console.log(`    通常戦闘：${ab.field.n}回・勝率 ${pct(ab.field.win, ab.field.n)}・`
+    + `平均 ${(ab.field.turns / Math.max(1, ab.field.n)).toFixed(1)} ターン`
+    + ` ／ ボス：${ab.boss.n}回・勝率 ${pct(ab.boss.win, ab.boss.n)}・`
+    + `平均 ${(ab.boss.turns / Math.max(1, ab.boss.n)).toFixed(1)} ターン`);
+});
 
 /* M7 WP1（実装計画追補_M7_カード入手経路の再配分.md §5）：変更前の基準値。
  * ここから下は今回追加した計測。ロジックは一切変えていない。 */
