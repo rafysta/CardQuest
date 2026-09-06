@@ -312,6 +312,33 @@
           { face: 'calm', lines: ['やったわ。'] }
         ],
         fog: null
+      },
+      /* M8.3 WP14（2026-09-07）：外部教会のぶん。台本『CardQuest 台本（アンバーの
+       * セリフ集）v1.0』本人執筆版§11をそのまま反映（正はそちら）。balsamicosIntro は
+       * 話者がアンバーではなくバルザミコス自身（face:'balsamicos'。原作の台詞ほぼそのまま・
+       * 世界観§3.6）——js/run-ui.js のポートレート出し分けに 'balsamicos' を足して対応。
+       * victory（初回撃破・エンディングへ入る前の2言）はWP15のエンディング画面が使う想定で
+       * ここに置くだけにする（表示のフックはWP15の仕事）。 */
+      church: {
+        first: [
+          { face: 'calm', lines: ['外の教会だ。神官が待っている。', '私たちと同じものを持っている。'] }
+        ],
+        depart: [
+          { face: 'calm', lines: ['裁くために書いてきたのではないわ。', '行きなさい。'] }
+        ],
+        repeat: [
+          [{ face: 'calm', lines: ['教会だ。あれはまだ立っている。'] }]
+        ],
+        masterIntro: [
+          { face: 'balsamicos', lines: ['よくぞこの島に眠りし七罪人と', '霊界の魔王エグゼデグゼスを手中に収めたものよ。'] },
+          { face: 'balsamicos', lines: ['死者の書とは、全ての魂を裁くための権利。', '最後の審判の時が訪れるのだ。'] },
+          { face: 'balsamicos', lines: ['お前のカードはまだ白紙だ。', '白紙の者に、裁く資格はない。'] }
+        ],
+        victory: [
+          { face: 'calm', lines: ['終わったわね。'] },
+          { face: 'calm', lines: ['見て、おなたの記録よ。'] }
+        ],
+        fog: null
       }
     },
 

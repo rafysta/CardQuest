@@ -439,7 +439,12 @@ function buildGuideAfter(run, meta) {
  *   一言にも同じものを使えるよう、face（calm/down）とタップ送りだけを引数にしてある。 */
 function amberBubbleHTML(bubble, opts) {
   const o = opts || {};
-  const portrait = bubble.face === 'down' ? 'assets/chars/amber_down.png' : 'assets/chars/amber_calm.png';
+  /* M8.3 WP14：外部教会だけ、話者がアンバーではなくバルザミコス自身になる
+   * （台本§11.3・原作の台詞ほぼそのまま。世界観§3.6）。肖像を差し替えるだけで、
+   * 吹き出しの形・タップ送りは共通のまま——他のfaceには影響しない。 */
+  const portrait = bubble.face === 'down' ? 'assets/chars/amber_down.png'
+    : bubble.face === 'balsamicos' ? 'assets/masters/m_balsamicos.png'
+      : 'assets/chars/amber_calm.png';
   const lines = bubble.lines.map(esc).join('<br>');
   /* 2026-09-02 本人指摘：「スキップ」は画面右上（HUDの位置）ではなく、吹き出しの下に置く。
    * DOM順を row→skip にし、overlay側のflex-column（align-items:stretch）に任せて

@@ -357,10 +357,35 @@
       fieldRuleChance: 0.45,
       bossRank: 'rankA',
       enemyCount: { normal: 2, strong: 3, elite: 3 }
+    },
+
+    /* 外部教会（M8.3 WP14・実装計画追補§3-5/§4）。解放はカード15（エグゼデグゼス）の所持。
+     * 敵プールは地形タグではなく「2000Ｇ以上の全ユニット」（神竜9体・エグゼデグゼスを除く。
+     * マスターズソウル(64)はenemyPool側で常に除外済み）——poolMode:'priceRange' を使う。
+     * ボスは初回が『神官』バルザミコス（bossId:99）、2回目以降は13『奴隷戦士』ギンリットも
+     * 混ざる（bossPool:[99,13]）。ルームＳ①〜④(16〜19)はエンディング後だけ混ざる予定
+     * （M8.3 WP17で bossPool に足す。それまでは endingOnly のマスターが選ばれることはない）。 */
+    church: {
+      id: 'church', name: '外部教会', tags: [], order: 13, act: 3,
+      bg: 'assets/map/bg_church.png', master: 'assets/masters/m_balsamicos.png',
+      unlock: { card: 15 },
+      layout: { up: 0, down: 0, mid: 0 },
+      fightMoney: 2000,
+      fog: { chance: 0 },
+      poolMode: 'priceRange', priceMin: 2000, priceMax: 300000,
+      poolExclude: [10, 11, 12, 13, 14, 15, 16, 17, 18],
+      eliteMin: 20000,
+      rareTier: 'final',
+      bossName: '『神官』バルザミコス',
+      bossId: 99, bossPool: [99, 13],
+      bossLp: 40, bossPriceMax: 20000,
+      fieldRuleChance: 0.45,
+      bossRank: 'rankA',
+      enemyCount: { normal: 2, strong: 3, elite: 3 }
     }
   };
   const ORDER = ['grassland', 'forest', 'mountain', 'coast', 'desert',
-    'cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7', 'temple'];
+    'cave1', 'cave2', 'cave3', 'cave4', 'cave5', 'cave6', 'cave7', 'temple', 'church'];
 
   /* M8.1 WP5（実装計画§1-4）：エリア選択画面の「幕」見出し（世界観§4）。
    * 幕1＝白紙（草原〜砂漠）・幕2＝七つの罪（M8.2でダンジョンが増える）・
@@ -428,11 +453,20 @@
     const def = DEFS[areaId];
     if (!def) return [];
     const tags = def.tags || [];
+    const exclude = def.poolExclude || [];
     const res = [];
     Object.keys(cards).forEach(function (k) {
       const c = cards[k];
       if (c.t !== 'U' || c.id === 64) return;
       if (typeof c.p !== 'number' || c.p <= 0 || c.p > def.priceMax) return;
+      if (exclude.indexOf(c.id) >= 0) return;
+      /* M8.3 WP14（実装計画§3-5・church）：地形タグではなく「価格帯だけ」で選ぶエリア。
+       * poolExclude（神竜・エグゼデグゼスなど、モニュメント専用ユニット）と合わせて使う。 */
+      if (def.poolMode === 'priceRange') {
+        if (c.p < (def.priceMin || 0)) return;
+        res.push({ id: c.id, price: c.p });
+        return;
+      }
       if (typeof c.g !== 'string') return;
       if (tags.some(function (t) { return c.g.indexOf(t) >= 0; })) res.push({ id: c.id, price: c.p });
     });

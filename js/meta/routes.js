@@ -53,9 +53,15 @@
   /** そのエリアのボスが「本物のマスターデッキ」まで配線済みか（M8.1 WP3・area.bossId）。
    * まだのうちはマスター報酬もルーム報酬も「予定」のまま——報酬を渡す仕組み自体が
    * まだ無い（WP4の仕事）ため。 */
-  function bossWired(areaId) {
+  function bossWired(areaId, masterId) {
     const def = CQAreas && CQAreas.get(areaId);
-    return !!(def && def.bossId);
+    if (!def || !def.bossId) return false;
+    /* M8.3 WP14：エリアが実装済みでも、その特定のマスターが実際に bossId／bossPool に
+     * 居るとは限らない（church の16〜19＝ルームＳ①〜④は、エンディング後だけ bossPool に
+     * 混ざる予定＝M8.3 WP17。それまではここで false のまま）。masterId を渡さない
+     * 呼び出し（互換）は従来どおりエリアの有無だけで見る。 */
+    if (masterId == null) return true;
+    return def.bossId === masterId || (def.bossPool || []).indexOf(masterId) >= 0;
   }
 
   /** その「部屋」（Ｃ／Ｂ／Ａ／Ｓ）の累計クリア報酬が実際に出るか（M8.1 WP4）。
@@ -98,7 +104,7 @@
       Object.keys(CQOpponents.MASTERS).forEach(function (mid) {
         const m = CQOpponents.MASTERS[mid];
         if (m.reward !== card.id) return;
-        const real = bossWired(m.area);
+        const real = bossWired(m.area, +mid);
         const disp = (m.title ? '『' + m.title + '』' : '') + (m.name || `（マスター${mid}）`);
         routes.push({
           type: 'boss-reward', real: real, master: +mid, area: m.area,

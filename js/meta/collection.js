@@ -62,6 +62,9 @@
     /* M8.2 WP9：七罪人を降して手に入れた鍵（洞窟のareaIdの配列・7つで神殿が開く）。 */
     if (!Array.isArray(meta.keys)) meta.keys = [];
     if (!meta.clears || typeof meta.clears !== 'object') meta.clears = {};
+    /* M8.3 WP14：バルザミコス（role:'final'）に初めて勝った印。エンディング画面（WP15）・
+     * 教会の周回ボスにルームＳ①〜④を混ぜる判定（WP17）の両方がこれを見る。 */
+    if (typeof meta.endingSeen !== 'boolean') meta.endingSeen = false;
     /* 2026-09-06（本人指定）：閲覧済みのカード {id: true}。known にあって seen に無いものが
      * コレクションで「NEW」になり、詳細を見た時点で消える。**無いセーブでは known 全部を
      * 閲覧済みにして初期化する**（アップデート直後の既存プレイヤーに、これまで集めた全部を

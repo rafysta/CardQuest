@@ -908,7 +908,19 @@
       const masterId = bossMasterOf(run, bossArea);
       /* 七罪人のエリア（洞窟）には闘技場マスターが居ないので masterId は null。
        * そのときは bossWins を触らない（"null" というキーを作らない）。 */
-      if (masterId != null) meta.bossWins[masterId] = (meta.bossWins[masterId] || 0) + 1;
+      if (masterId != null) {
+        meta.bossWins[masterId] = (meta.bossWins[masterId] || 0) + 1;
+        /* M8.3 WP14（実装計画§4 WP14）：バルザミコス（role:'final'）に初めて勝つと
+         * meta.endingSeen を立てる——原作の「ルームＳ3連勝で光臨」をエンディング到達の
+         * 証に置き換えた（実装計画§3-3の該当行）。role で判定するので、area/idを
+         * ハードコードしない（今のところ99だけだが、将来increaseしても対応できる）。
+         * run.endingSeenNow は「今回のランで初めて立った」ことをUI（WP15）へ伝える印。 */
+        const mInfo = CQOpponents.get(masterId);
+        if (mInfo && mInfo.role === 'final' && !meta.endingSeen) {
+          meta.endingSeen = true;
+          run.endingSeenNow = true;
+        }
+      }
       meta.clears[run.areaId] = (meta.clears[run.areaId] || 0) + 1;
       /* M8.2 WP9（実装計画§3-4）：七罪人を降すと**鍵が確定で手に入る**。1つの洞窟につき1本
        * （周回しても増えない）。表示・節目・目標への反映は WP10。 */

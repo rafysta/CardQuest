@@ -7674,6 +7674,77 @@ t('settle：封印の初回撃破は meta.bossWins を汚さない（後で本�
 });
 
 
+section('M8.3 WP14: 外部教会（バルザミコス・エンディングの合図・周回はギンリット）');
+
+t('church：ボスの組・価格帯だけの敵プールがある', () => {
+  const area = CQAreas.get('church');
+  eq(area.bossId, 99, '初回は99『神官』バルザミコス');
+  eq(area.bossPool, [99, 13], '周回の組は99・13（ルームＳ①〜④はWP17で足す）');
+  eq(area.unlock, { card: 15 }, '解放はカード15（エグゼデグゼス）の所持');
+  eq(area.poolMode, 'priceRange', '地形タグではなく価格帯で選ぶ');
+});
+
+t('enemyPool：church は2000Ｇ以上の全ユニット（神竜9体・15・64を除く）', () => {
+  const pool = CQAreas.enemyPool(CARD_BY_ID, 'church');
+  eq(pool.every((e) => e.price >= 2000), true, '全て2000Ｇ以上');
+  const excluded = [10, 11, 12, 13, 14, 15, 16, 17, 18, 64];
+  excluded.forEach((id) => eq(pool.some((e) => e.id === id), false, `${id}は神竜/エグゼデグゼス/マスターズソウルなので混ざらない`));
+  eq(pool.some((e) => e.id === 57), true, 'ネクロスフィア(57)は2000Ｇ以上なので混ざる');
+});
+
+t('bossMasterOf：churchは初回99、周回は99/13の組から抽選', () => {
+  const area = CQAreas.get('church');
+  const freshRun = { seed: 1, repeatVisit: false };
+  eq(CQRun.bossMasterOf(freshRun, area), 99, '初回は必ずバルザミコス');
+  const repeatRun = { seed: 1, repeatVisit: true };
+  const picked = CQRun.bossMasterOf(repeatRun, area);
+  eq(area.bossPool.indexOf(picked) >= 0, true, '2回目以降は組の中から選ばれる');
+});
+
+t('battleSetup：教会のボス戦は今までどおりのＬＰ勝負（モニュメントでも七罪人でもない）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  const run = CQRun.start(CARD_BY_ID, 'church', 3, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, boss, meta);
+  eq(setup.mode, undefined, 'ＬＰ勝負');
+  eq(setup.enemyOpts.lp, 40, 'バルザミコスのＬＰは40');
+  eq(setup.noFlee, undefined, '逃走不可の指定は無い（mode任せ）');
+  eq(setup.foeName, undefined, '相手表示は「相手」のまま');
+  eq(setup.enemyDeck.length, 40, '本物の40枚デッキ');
+});
+
+t('settle：バルザミコスに初めて勝つとmeta.endingSeenが立つ（role:finalで判定）', () => {
+  const meta = { book: {}, deck: { 8: 40 }, known: [], gold: 0, cleared: [] };
+  CQCollection.ensure(meta);
+  eq(meta.endingSeen, false, 'ensureで初期値false');
+  const run = CQRun.start(CARD_BY_ID, 'church', 5, meta);
+  const boss = Object.keys(run.map.nodes).map((k) => run.map.nodes[k]).find((n) => n.type === 'boss');
+  CQRun.reportBattle(run, boss, { winner: 'self', loot: [], turn: 9, players: { self: { lp: 15 } } }, meta);
+  eq(run.bossBonus.masterCard, 199, '初回撃破報酬は光臨199（MASTERS[99].reward）');
+  run.outcome = 'win';
+  CQRun.settle(run, meta);
+  eq(meta.endingSeen, true, 'エンディング到達の印が立つ');
+  eq(run.endingSeenNow, true, '今回のランで初めて立ったことがUIへ伝わる');
+
+  /* 2回目：もう一度勝っても再入場の印は立たない（すでにtrueなので） */
+  const run2 = CQRun.start(CARD_BY_ID, 'church', 6, meta);
+  const boss2 = Object.keys(run2.map.nodes).map((k) => run2.map.nodes[k]).find((n) => n.type === 'boss');
+  CQRun.reportBattle(run2, boss2, { winner: 'self', loot: [], turn: 9, players: { self: { lp: 15 } } }, meta);
+  run2.outcome = 'win';
+  CQRun.settle(run2, meta);
+  eq(meta.endingSeen, true, '変わらずtrue');
+  eq(!!run2.endingSeenNow, false, '2回目は「今回初めて」の印は立たない');
+});
+
+t('lore.js：church のmasterIntroだけ話者がバルザミコス自身（face:balsamicos）', () => {
+  const church = CQLore.LORE.areas.church;
+  eq(church.masterIntro.every((b) => b.face === 'balsamicos'), true, 'masterIntroは全部balsamicos');
+  eq(church.first.every((b) => b.face === 'calm' || b.face === 'down'), true, 'firstはアンバー（calm/down）のまま');
+  eq(church.depart.every((b) => b.face === 'calm' || b.face === 'down'), true, 'departもアンバーのまま');
+});
+
+
 section('M8.1 WP4: ボス報酬（初回撃破の一枚・部屋の累計3/5/7報酬・速攻実績）');
 
 /* このセクション専用の使い捨てメタ（book/deck/known/gold/cleared一式が揃っていればよい）。
@@ -7837,13 +7908,13 @@ t('byAct：幕1（草原〜砂漠）・幕2（七つの洞窟）・幕3（神殿
     '幕2の中身は7つの洞窟');
   eq(groups[2].act, 3, '3段目は幕3');
   eq(groups[2].title, '門と審判', '幕3の見出しは「門と審判」');
-  eq(groups[2].areas.map((a) => a.id), ['temple'], '幕3の中身は神殿（教会・神竜の間はWP14・16で加わる）');
+  eq(groups[2].areas.map((a) => a.id), ['temple', 'church'], '幕3の中身は神殿・外部教会（神竜の間はWP16で加わる）');
 });
 
 t('byAct：エリアはどれも act を持ち、幕ごとに正しく分かれる', () => {
   CQAreas.list().forEach((a) => {
     eq(a.act === 1 || a.act === 2 || a.act === 3, true, `${a.id}はact:1〜3`);
-    const expectAct = /^cave/.test(a.id) ? 2 : (a.id === 'temple' ? 3 : 1);
+    const expectAct = /^cave/.test(a.id) ? 2 : (a.id === 'temple' || a.id === 'church' ? 3 : 1);
     eq(a.act === expectAct, true, `${a.id}の幕が正しい`);
   });
 });
@@ -7877,7 +7948,8 @@ t('台本§0の規約：1吹き出しは2行まで・1行28字以内・感嘆符
     const groups = [lore.first, lore.depart, lore.masterIntro, lore.fog].concat(lore.repeat);
     groups.forEach((g) => (g || []).forEach((b) => {
       eq(b.lines.length <= 2, true, `${a.id}：1吹き出しは2行まで`);
-      eq(['calm', 'down'].indexOf(b.face) >= 0, true, `${a.id}：faceはcalmかdown`);
+      /* M8.3 WP14：外部教会のmasterIntroだけ、話者がバルザミコス自身（'balsamicos'）になる。 */
+      eq(['calm', 'down', 'balsamicos'].indexOf(b.face) >= 0, true, `${a.id}：faceはcalm/down/balsamicosのどれか`);
       b.lines.forEach((line) => {
         eq(Array.from(line).length <= 28, true, `${a.id}：1行28字以内（${line}）`);
         eq(/[!！]/.test(line), false, `${a.id}：感嘆符を使わない（${line}）`);
@@ -8075,12 +8147,24 @@ t('ユニットカードは g にコレクション段階の表記があって�
 });
 
 t('マスター報酬は area.bossId が付くまで real:false（未配線）のまま', () => {
-  // ストライフ＝『奴隷戦士』ギンリット（church）の初回撃破報酬。church はまだ無い（M8.3 WP14待ち）。
-  const straif = CARD_BY_ID[61];
-  const routes = CQRoutesTest.routesFor(straif, CARD_BY_ID);
+  // 潜行爆弾＝ルームＳ①（16）の初回撃破報酬。ルームＳ①〜④はエンディング後だけ
+  // churchのbossPoolに混ざる予定（M8.3 WP17）で、いまはまだどのエリアにも配線されていない。
+  const senkoubakudan = CARD_BY_ID[137];
+  const routes = CQRoutesTest.routesFor(senkoubakudan, CARD_BY_ID);
   const bossRoute = routes.find((r) => r.type === 'boss-reward');
   eq(!!bossRoute, true, 'マスター報酬の経路はある');
-  eq(bossRoute.real, false, 'churchエリアはまだ無い（M8.3 WP14待ち）ので real:false');
+  eq(bossRoute.real, false, 'ルームＳ①はまだどのエリアにも配線されていない（M8.3 WP17待ち）ので real:false');
+});
+
+t('M8.3 WP14：churchが立ったのでバルザミコス／ギンリットのマスター報酬もreal:trueになる', () => {
+  const koritin = CARD_BY_ID[199];   // 光臨＝『神官』バルザミコス（church・final）
+  const straif = CARD_BY_ID[61];     // ストライフ＝『奴隷戦士』ギンリット（church・周回）
+  [koritin, straif].forEach((card) => {
+    const routes = CQRoutesTest.routesFor(card, CARD_BY_ID);
+    const bossRoute = routes.find((r) => r.type === 'boss-reward');
+    eq(!!bossRoute, true, `${card.n}：マスター報酬の経路はある`);
+    eq(bossRoute.real, true, `${card.n}：churchにbossId/bossPoolが付いたのでreal:true`);
+  });
 });
 
 t('M8.3 WP13：マスター報酬はtempleにbossId/bossPoolが付いたのでreal:trueになる（渇望＝リンフォート）', () => {
