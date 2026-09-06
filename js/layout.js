@@ -155,6 +155,26 @@ function startRunBattle(setup, onOver) {
   M.aiConfig = { enemy: CQAi.PRESETS[setup.aiPreset || aiRank] };
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
+  /* ★M8.5 WP0：チュートリアルの固定戦闘。CQRun.battleSetup が spec を付けてきたときだけ、
+   * 作り終わった対戦の盤面・手札・先攻をそのまま差し替える（デバッグの「盤面をセットして戦う」と
+   * まったく同じ道具＝CQBoardSpec）。**エンジンには触らない**ので、以降の進行は通常どおり。
+   * `const first = M.first` より前でやること——差し替えで先攻が変わるため。 */
+  if (setup.boardSpec && typeof CQBoardSpec !== 'undefined') {
+    try { CQBoardSpec.apply(M, setup.boardSpec); }
+    catch (e) { console.error('tutorial boardSpec', e); }   /* 失敗してもふつうの戦闘として続ける */
+  }
+  /* ★M8.5 WP1：戦闘中の割り込みヒント。既読フラグ（cq_meta）は js/run-ui.js が持っているので、
+   * 読み書きの2関数だけを受け取る＝layout.js も battle-hint.js もセーブの形を知らない。
+   * setup.hint が無い＝ラン外の戦闘（フリーバトル等）＝ヒントは一切出ない。 */
+  /* ★M8.5 改訂：固定戦闘は**台本（js/tutorial.js）**が進行を持つ。指示を出しっぱなしにして
+   * 1操作ずつ進めるので、タップで消える割り込みヒントは同時には使わない。 */
+  if (typeof CQTutorial !== 'undefined') CQTutorial.end();
+  const tutorialOn = !!(setup.tutorial && typeof CQTutorial !== 'undefined'
+    && CQTutorial.begin(setup.tutorial, {}));
+  if (typeof CQBattleHint !== 'undefined') {
+    CQBattleHint.begin((setup.hint && !tutorialOn)
+      ? Object.assign({}, setup.hint, { after: renderAll }) : null);
+  }
   /* M6.6 WP5：先攻／後攻は m.first に対局のあいだ保持されている（m.active は手番ごとに
    * 入れ替わるので、step() が非同期に手番を進めた後だと当てにならない）。 */
   const first = M.first;
@@ -346,6 +366,7 @@ function startPick(spec) {
   UI.mode = 'pick-target';
   flash(PICK_MSG[spec.card] || '対象を選んでください');
   renderAll();
+  hintCheck();                                       /* unpossess：憑依解除の対象選択（台本§14.1） */
   return true;
 }
 
@@ -531,6 +552,8 @@ function startFreeBattle() {
   M.aiConfig = { enemy: CQAi.PRESETS[aiRank] };     /* M5：相手ＡＩの強さ（評価関数方策） */
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null;
+  if (typeof CQBattleHint !== 'undefined') CQBattleHint.end();   /* 検証用の戦闘にヒントは出さない */
+  if (typeof CQTutorial !== 'undefined') CQTutorial.end();
   showScreen('screen-battle');
   abandonStep();                   /* 前の対戦の進行・演出を捨てる（2026-09-05） */
   renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
@@ -811,6 +834,8 @@ function startBoardBattle() {
   CQBoardSpec.apply(M, chk.spec);
   UI.mode = 'idle'; UI.info = null; UI.lane = null; UI.layers = [];
   UI.pending = null; UI.report = null; UI.pick = null; UI.chainFx = null;
+  if (typeof CQBattleHint !== 'undefined') CQBattleHint.end();   /* 検証用の戦闘にヒントは出さない */
+  if (typeof CQTutorial !== 'undefined') CQTutorial.end();
   showScreen('screen-battle');
   abandonStep();                   /* 前の対戦の進行・演出を捨てる（2026-09-05） */
   renderAll();                     /* 先に盤面を描いてから進める（相手が先攻でも、演出が新しい盤面の上に乗る） */
@@ -1507,6 +1532,20 @@ async function runStep(gen) {
     if (UI.mode !== 'battle') UI.mode = 'battle';
   } else if (UI.mode === 'battle' || UI.mode === 'over') UI.mode = 'idle';
   renderAll();
+  hintCheck();
+}
+
+/** 戦闘中の割り込みヒントを出せるか見に行く（M8.5 WP2）。
+ * **呼ぶのは「盤面を描き終えて、人の操作を待っている瞬間」だけ**：
+ *   ① runStep() の最後（手番が人に渡った）
+ *   ② 攻撃対象を選ぶ画面に入った直後
+ *   ③ 対象選択（憑依解除など）に入った直後
+ * 演出中（chain）・巻き戻し中・決着後には出さない。 */
+function hintCheck() {
+  if (typeof CQBattleHint === 'undefined' || !M) return;
+  if (M.winner || M.fled) return CQBattleHint.close();
+  if (UI.mode === 'chain' || UI.mode === 'replay' || UI.mode === 'over') return;
+  CQBattleHint.check(M, UI);
 }
 
 /* ================= 描画 ================= */
@@ -1519,6 +1558,10 @@ function renderAll() {
   if (typeof CQReport !== 'undefined' && UI.mode !== 'replay') CQReport.tick();
   renderStatus(); renderBoard(); renderHand(); renderPanel();
   renderReplayBar();
+  /* ★M8.5 改訂：チュートリアルの指示は**出しっぱなし**なので、盤面を描き直すたびに
+   * 「その手順が済んだか」を見て、済んでいれば次の指示に差し替える（js/tutorial.js）。
+   * 盤面には触らないので、ここから呼んでも進行には影響しない。 */
+  if (typeof CQTutorial !== 'undefined') CQTutorial.tick(M, UI);
 }
 
 /* ================= M7.9 第2段 B4：巻き戻して見る（2026-09-05 本人指定） =================
@@ -1615,10 +1658,12 @@ function renderStatus() {
   for (let i = 0; i < top.hand.length; i++) h += `<span class="mini" style="z-index:${20 - i}"></span>`;
   document.getElementById('ehand').innerHTML = h + `<b>${top.hand.length}</b>`;
 
+  /* M8.5 WP3：索引（用語辞典）の入口。ラン中の戦闘だけに出す——検証用の戦闘には要らない。 */
+  const helpBtn = '<button class="turn-help" data-act="glossary" title="索引">?</button>';
   document.getElementById('turnbox').innerHTML = RUN_ACTIVE
     ? `<span class="tn">第 ${M.turn} ターン</span>
        <span class="tw">${phaseLabel()}</span>
-       ${fieldChipsHTML()}`
+       ${fieldChipsHTML()}${helpBtn}`
     : `<span class="tn">第 ${M.turn} ターン</span>
        <span class="tw">${phaseLabel()}</span>
        ${fieldChipsHTML()}
@@ -1961,7 +2006,10 @@ function renderHand() {
    *   諦める … いつでも押せる。確認ダイアログを挟んで自らゲームオーバーを選ぶ
    * 単発の検証モード（RUN_ACTIVE=false）では出さない——戻る先のランが無いため。 */
   let sub = '';
-  if (RUN_ACTIVE && !M.winner && !M.fled) {
+  /* ★M8.5：チュートリアル中は出さない。相手は動かず負ける道が無いので要らないし、
+   * 押されると案内の途中で戦闘が終わってしまう。 */
+  const inTutorial = (typeof CQTutorial !== 'undefined') && CQTutorial.active();
+  if (RUN_ACTIVE && !M.winner && !M.fled && !inTutorial) {
     if (CQTurn.canFlee(M)) sub += '<button class="act-btn sub" data-act="flee">逃げる</button>';
     sub += '<button class="act-btn sub ng" data-act="give-up">諦める</button>';
   }
@@ -2300,6 +2348,12 @@ function paintNG(card, ng) {
 function doDrop(handIdx, laneIdx, pushLayer) {
   const side = M.active;
   const card = CARD_BY_ID[M.players[side].hand[handIdx]];
+  /* ★M8.5：チュートリアル中は、案内に出ているカードを自分の場へ置くことだけを通す。
+   * （相手のユニットにチャネルされると狙った数にならず、手順が詰むため） */
+  if (typeof CQTutorial !== 'undefined' && CQTutorial.active()) {
+    const g = CQTutorial.checkDrop(card.id, laneIdx);
+    if (!g.ok) return paintNG(card, g.reason);
+  }
   const ln = M.board.lanes[laneIdx];
   const mine = S_lanesOf(side).indexOf(laneIdx) >= 0;
 
@@ -2377,6 +2431,11 @@ function showDiscardConfirm(handIdx) {
 
 /** アタックを即実行する（確認なし。狙える相手だけが光っているので誤爆しにくい） */
 function doAttack(atkLane, defLane) {
+  /* ★M8.5：チュートリアル中は、案内が「攻めろ」と言っている段でだけ攻撃できる */
+  if (typeof CQTutorial !== 'undefined' && CQTutorial.active() && !CQTutorial.allowAttack()) {
+    flash('いまはまだ攻めるときではありません。案内のとおりに進めてください。');
+    return renderAll();
+  }
   markLog(); markFx();
   const r = CQCombat.declareAttack(M, atkLane, defLane);
   UI.mode = 'idle'; UI.lane = null; UI.targets = null; UI.report = null;
@@ -2536,6 +2595,12 @@ async function playForcedChain() {
       + (fc.aborted ? 'で中断（' + fc.aborted + '）' : 'を処理しました'));
   }
   renderAll();
+  /* ★M8.5 WP2：強制開放（108）が終わった直後だけヒントを出す。
+   * 判定表（battle-hint.js の RULES）ではなくここから直接出すのは、
+   * 「連鎖の演出が終わった瞬間」というタイミングがここにしか無いため。既読なら show() は何もしない。 */
+  if (fc && fc.kind === 108 && typeof CQBattleHint !== 'undefined' && !M.winner) {
+    CQBattleHint.show('forceOpen', { pos: 'bottom', glow: ['#half-e .card.ch'] });
+  }
   return true;
 }
 
@@ -2558,6 +2623,13 @@ function tryStartDestroyPick(laneIdx, layer, ch, resume) {
   const spec = CQMagic.targetsFor(M, ch.card, ctx)
     || (typeof CQUnits.targetsFor === 'function' ? CQUnits.targetsFor(M, ch.card, ctx) : null);
   if (!spec) return false;
+  /* ★M8.5：チュートリアル中は、案内が指している札を**こちらで選んでしまう**。
+   * 候補を絞るだけだと「選ぶ余地なし」になってエンジンが無作為に選んでしまうので、
+   * 決めた対象をそのまま resume に渡す（＝プレイヤーは▶を押すだけでよい）。 */
+  if (typeof CQTutorial !== 'undefined' && CQTutorial.active()) {
+    const forced = CQTutorial.forcedPick(M, spec);
+    if (forced) { resume(forced); return true; }
+  }
   return startPick({ card: ch.card, kind: spec.kind, need: spec.need,
     targets: spec.targets, resume: resume });
 }
@@ -2677,6 +2749,9 @@ function panelAct(act, data) {
     return;
   }
   if (act === 'replay') return replayEnter();
+  /* 索引は「いま何をすればいいか分からない」ときに開くものなので、演出中でも開ける
+   * （盤面には触らない・手番も進めない。M8.5 WP3） */
+  if (act === 'glossary') { if (typeof CQGlossary !== 'undefined') CQGlossary.open(); return; }
   if (busy) return;                                  /* 演出中は操作を受け付けない */
   switch (act) {
     /* M6.7 WP3：引いた札から選ぶ。予見はカードそのもの、口寄せは2つのボタン。
@@ -2750,8 +2825,13 @@ function panelAct(act, data) {
       UI.mode = 'field';
       return renderAll();
     case 'attack':
+      if (typeof CQTutorial !== 'undefined' && CQTutorial.active() && !CQTutorial.allowAttack()) {
+        flash('いまはまだ攻めるときではありません。案内のとおりに進めてください。');
+        return renderAll();
+      }
       UI.mode = 'attack'; UI.targets = CQCombat.attackTargets(M, UI.lane);
-      return renderAll();
+      renderAll();
+      return hintCheck();                            /* loot：最初の攻撃を選ぶ直前（台本§14.1） */
     case 'deck-attack':
       UI.pending = { kind: 'deck-attack', lane: UI.lane };
       return doPending();
@@ -2929,6 +3009,12 @@ document.getElementById('screen-battle').addEventListener('pointerdown', (ev) =>
   /* メインステップ：▶の付いた裏向きカードの左半分を押したら、その階層を直接開く */
   if (el.classList.contains('flippable') && !wantInfo) {
     const laneIdx = +el.dataset.lane, layer = +el.dataset.layer;
+    /* ★M8.5：チュートリアル中は、案内が指している階層だけを開かせる */
+    if (typeof CQTutorial !== 'undefined' && CQTutorial.active()
+        && !CQTutorial.allowFlip(laneIdx, layer)) {
+      flash('いまは、光っているカードを開いてください。');
+      return;
+    }
     const ch = M.board.lanes[laneIdx].channels[layer - 1];
     if (tryStartDestroyPick(laneIdx, layer, ch, (choice) => doFlip(laneIdx, layer, choice))) return;
     if (tryConfirmRitual(laneIdx, layer, ch, () => doFlip(laneIdx, layer))) return;  /* v0.15.3 */

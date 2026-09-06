@@ -72,6 +72,8 @@ const RUI = {
   shopTab: 'buy', shopBulk: false, bulkExclude: [],
   /* デッキ編集（M7 WP9）を初めて開いたときのアンバーの説明（台本§5-3・一度きり）。 */
   deckGuide: null, deckGuideStep: 0,
+  /* 戦利品の振り分け画面のアンバー（M8.5・台本§14.1 firstRecord・一度きり）。 */
+  lootGuide: null, lootGuideStep: 0,
   /* 設定画面（M7 WP11）のバックアップの結果表示（{ok, msg}）。保存はしない。 */
   backupState: null,
   /* タブごとのスクロール位置（2026-09-02 本人指摘：カード選択で画面を描き直すたびに
@@ -444,6 +446,7 @@ function amberBubbleHTML(bubble, opts) {
       <img class="amber-face" src="${portrait}" alt="" draggable="false" onerror="this.remove()">
       <div class="amber-bubble">
         <div class="amber-lines">${lines}</div>
+        ${o.ui ? `<div class="hint-ui">${esc(o.ui)}</div>` : ''}
         ${o.nextAct ? '<div class="amber-tap-hint">タップして進む</div>' : ''}
       </div>
     </div>
@@ -462,6 +465,14 @@ function renderStartGuide() {
 
 /** 案内の1つ分を終える。①のあとは持ち出しへ、②のあとは出発する。
  * 持ち出しのヒントは見せた時点で既読にする（二度と出さない・台本§5）。 */
+/** 戦利品画面のアンバーを閉じる。見せた時点で既読にする（二度と出さない・台本§14）。 */
+function finishLootGuide() {
+  RUI.lootGuide = null; RUI.lootGuideStep = 0;
+  CQSave.markHint(RUI.meta, 'firstRecord');
+  CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+  runRender();
+}
+
 function finishStartGuide() {
   RUI.guide = null; RUI.guideStep = 0;
   if (RUI.startStage === 'guide2') return departToMap();
@@ -1296,6 +1307,13 @@ const BATTLE_INTRO_MS = 4300;
 
 function renderBattleIntro() {
   const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
+  /* ★M8.5 WP0：チュートリアルの固定戦闘なら、**カットインを描く前に**マスの敵と戦場ルールを
+   * 実際に立つ盤面へそろえる（見せた相手と出てくる相手が違う・見せたルールが効かない、を防ぐ）。
+   * デバッグの「戦闘開始シーンを再生」中はランの状態を変えない約束なので触らない。 */
+  if (!RUI.battleIntroPreview && typeof CQRun.applyTutorialNode === 'function'
+      && CQRun.applyTutorialNode(run, RUI.meta, n)) {
+    runSave();
+  }
   const area = CQAreas.get(run.areaId);
   const isBoss = n.type === 'boss';
   /* ボスの立ち絵は肖像の切り抜き（m_*_cut.png）。エリアごとの肖像から機械的に作る
@@ -1349,7 +1367,29 @@ function leaveBattleIntro() {
     return;
   }
   const run = RUI.run, n = run.map.nodes[RUI.battleIntroNodeId];
-  const setup = CQRun.battleSetup(run, CARD_BY_ID, n);
+  /* ★M8.5：第4引数の meta で、チュートリアルの固定戦闘かどうかが決まる
+   * （渡さない呼び出し＝tools/simulate-run.js・tests では常にふつうの戦闘）。 */
+  const setup = CQRun.battleSetup(run, CARD_BY_ID, n, RUI.meta);
+  /* 固定戦闘に入った時点で既読にする＝途中で逃げても諦めても、二度目は固定しない（追補§2.1）。
+   * 第2戦を出し終えたら、デバッグ用の強制フラグも一緒に降ろす。 */
+  if (setup.tutorial) {
+    CQSave.markHint(RUI.meta, 'tutorialBattle' + setup.tutorial);
+    /* 台本（js/tutorial.js）がその戦いで全部教えるので、同じ内容の割り込みヒントは
+     * もう出さない（ふつうの戦闘で二重に出るのを防ぐ）。 */
+    const covered = setup.tutorial === 1
+      ? ['placement', 'faceDown', 'loot', 'open']
+      : ['hidden', 'forceOpen', 'unpossess'];
+    covered.forEach(function (k) { CQSave.markHint(RUI.meta, k); });
+    if (setup.tutorial === 2 && RUI.meta.seenHints) delete RUI.meta.seenHints.forceTutorial;
+    CQSave.saveMeta(RUN_STORAGE, RUI.meta);
+  }
+  /* 戦闘中の割り込みヒント（M8.5 WP1）。cq_meta を触る2つの関数だけを渡す＝
+   * js/layout.js も js/battle-hint.js もセーブの形を知らないままでいられる。 */
+  setup.hint = {
+    tutorial: setup.tutorial || 0,
+    seen: function (k) { return CQSave.hintSeen(RUI.meta, k); },
+    mark: function (k) { CQSave.markHint(RUI.meta, k); CQSave.saveMeta(RUN_STORAGE, RUI.meta); }
+  };
   RUI.battleIntroNodeId = null;
   /* ★2026-09-06 本人報告のフリーズ対策：カットインの覆いを残したまま戦闘へ渡さない。
    * `.battle-intro` は run-root いっぱいに広がる覆い（CSS：inset:0・z-index:900）で、
@@ -2329,7 +2369,17 @@ function lootCanSelect(run, sel, idx) {
  * ボス撃破の特別報酬は金枠＋✦で先頭に置く（bossBonusInfo）。 */
 function renderLoot() {
   const run = RUI.run;
-  if (RUI.gridCtx !== 'loot') RUI.lootSel = [];        /* 別の画面から入ってきた＝選択をやり直す */
+  if (RUI.gridCtx !== 'loot') {
+    RUI.lootSel = [];                                 /* 別の画面から入ってきた＝選択をやり直す */
+    /* ★M8.5 WP2：初めて**記憶データが増える**戦利品を持ち帰ったときだけ、アンバーが一言
+     * （台本§14.1 firstRecord）。既に知っているカードだけの日には出さず、既読にもしない。 */
+    RUI.lootGuide = null; RUI.lootGuideStep = 0;
+    if (!CQSave.hintSeen(RUI.meta, 'firstRecord')) {
+      const known = RUI.meta.known || [];
+      const fresh = (run.lootPending || []).some(function (id) { return known.indexOf(id) < 0; });
+      if (fresh) RUI.lootGuide = CQLore.LORE.hints.firstRecord.slice();
+    }
+  }
   gridEnter('loot');
   const pending = run.lootPending || [];
   const sel = RUI.lootSel || [];
@@ -2372,7 +2422,10 @@ function renderLoot() {
     </div>
     <p class="node-note cg-foot">デッキに加えたいカードだけ押して選び、「決定」を押してください。
       選ばなかったカードは<b>本へ</b>送られます（このランでは使えず、次のランから持ち出せます）。
-      何も選ばなければ全部本へ。どちらでもカードは必ず手に入ります。</p>`;
+      何も選ばなければ全部本へ。どちらでもカードは必ず手に入ります。</p>
+    ${RUI.lootGuide ? amberBubbleHTML(RUI.lootGuide[RUI.lootGuideStep || 0],
+      { nextAct: 'loot-guide-next', skipAct: 'loot-guide-skip',
+        ui: CQLore.LORE.hintsUi.firstRecord }) : ''}`;
 }
 
 /* ================= 結果画面（M6.6 WP11・追補§4 WP11） ================= */
@@ -2661,6 +2714,8 @@ function advanceAfterBattle() {
 }
 
 function onRunBattleOver(M) {
+  /* チュートリアルの台本はこの戦闘で終わり（M8.5 改訂）。 */
+  if (typeof CQTutorial !== 'undefined') CQTutorial.end();
   const run = RUI.run, n = run.map.nodes[RUI.nodeId];
   /* M6.6 WP12：逃走で終わった戦闘は勝敗が付いていない。戦利品もＧも無く、ＬＰだけ持ち越し、
    * **そのマスは cleared にしない**（追補§8-3 案A）＝マップに戻ると自分はまだそのマスに
@@ -2833,6 +2888,13 @@ function runAct(act, id, idx) {
       runSave();
       return runRender();
     }
+    case 'loot-guide-next': {
+      const next = (RUI.lootGuideStep || 0) + 1;
+      if (next < (RUI.lootGuide || []).length) { RUI.lootGuideStep = next; return runRender(); }
+      return finishLootGuide();
+    }
+    case 'loot-guide-skip':
+      return finishLootGuide();
     case 'guide-next': {
       const next = (RUI.guideStep || 0) + 1;
       if (next >= (RUI.guide || []).length) return finishStartGuide();

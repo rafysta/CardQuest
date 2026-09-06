@@ -384,7 +384,98 @@
     return out;
   }
 
-  function battleSetup(run, cards, n) {
+  /* ================= M8.5 チュートリアルの固定戦闘 =================
+   * 『実装計画追補 M8.5』§2.1〜§2.3。初めて遊ぶ人にだけ、**初期条件だけを固定した戦闘**を
+   * 2つ用意する（進行は台本にしない＝プレイヤーが何をしても壊れない）。
+   *   第1戦 … 置く／伏せる／攻める＝記録／めくる
+   *   第2戦 … 強制開放で暴く／憑依解除で剥がす（本作の華の2枚）
+   * 盤面の差し替えそのものは js/board-spec.js（デバッグの「盤面をセットして戦う」と同じ道具）が
+   * 行う。ここが返すのは**その記述だけ**で、エンジンには触らない。 */
+
+  function hintDone(meta, key) { return !!(meta && meta.seenHints && meta.seenHints[key]); }
+
+  /** そのマスが固定戦闘になるか。なるなら 1 か 2、ならなければ 0。
+   * 条件（§2.1〜§2.3）：草原の**通常戦闘マス**だけ（ボス・強敵・精鋭は対象外）。
+   *   第1戦 … まだ一度もランを終えていない人（meta.day===0）で、まだ見ていない
+   *   第2戦 … 第1戦を終えた後。**日数の上限なし**＝初回ランで踏めなければ持ち越す（本人確定⑩）
+   * meta を渡さない呼び出し（tools/simulate-run.js・tests）では常に 0＝固定しない。 */
+  function tutorialStage(run, meta, n) {
+    if (!meta || !n || !run) return 0;
+    if (run.areaId !== 'grassland') return 0;
+    if (n.type !== 'battle' || n.strength !== 'normal') return 0;
+    const force = hintDone(meta, 'forceTutorial');    /* デバッグ：日数の条件を無視する */
+    if (!hintDone(meta, 'tutorialBattle1')) return (force || (meta.day || 0) === 0) ? 1 : 0;
+    if (!hintDone(meta, 'tutorialBattle2')) return 2;
+    return 0;
+  }
+
+  /** 固定戦闘の盤面記述（CQBoardSpec の形）。数値の根拠は追補§2.2・§2.3の表。 */
+  function tutorialSpec(stage, run) {
+    const lp = Math.max(1, (run && run.lp) || 10);
+    if (stage === 1) {
+      /* 敵はアンフィビアス(23) 450/500 を1体。ピッグマン(8) 500/450 の攻撃 500 ≧ 500 で
+       * **何も置かなくても勝てる**＝詰みが無い（同値も成功）。
+       * カードを伏せれば防御が上がり（ＣＨボーナス：裏1枚につき防御+100・ゲーム仕様書§6.2⑥）、
+       * 開けば攻撃が上がる（表1枚につき攻撃+100）——どちらに転んでも攻撃は通るので罠が無い。
+       * 敵は最初から硬直していて、しかも弱ＡＩ（free）は最初の2手番は攻撃しない設定なので、
+       * 置いて・伏せて・開いて・攻める、を落ち着いて一度ずつ試せる。
+       * ピッグマンを敵にしないのは、スターターに10枚あって倒しても記憶データが増えず
+       * 「一つ、書き留めたな。」が嘘になるため。 */
+      return {
+        first: 'self', active: 'self', phase: 'placement', win: 'field',
+        lp: { self: lp, enemy: 10 },
+        hand: { self: [8, 8, 194, 193, 165, 113], enemy: [] },
+        lanes: { '3': { unit: 23, ch: [], stiff: true } }
+      };
+    }
+    if (stage === 2) {
+      /* 敵はシニスターセラフ(24) 450/400（ＣＨ数3）に、魔力の盾(153)＋空白(180)×2 を**伏せて**乗せる。
+       *
+       * ★2026-09-07 実装時に数値を組み直した。当初案（盾＋迎撃の2枚）は
+       * **ＣＨボーナス（チャネル1枚につき、裏なら防御+100／表なら攻撃+100。ゲーム仕様書§6.2⑥）**を
+       * 計算に入れ忘れていた。入れて計算し直すと次のとおりで、これで追補§2.3の狙いどおりになる：
+       *
+       *   伏せたまま   … 450 / 400+300 = **450/700**            ← ピッグマンの500では通らない
+       *   強制開放の後 … 450-100+300 / 400+200 = **650/600**    ← 3枚が表になり、盾が見える
+       *   憑依解除の後 … 450+200 / 400 = **650/400**            ← 盾が砕けて通る（500 ≧ 400）
+       *
+       * 防御が 700→600→400 と2段階で目に見えて下がる＝「この2枚だからこそ」が数で分かる。
+       *
+       * ＣＨ枠を3つとも埋めてあるのは**ＡＩに割り込ませない**ため。空きがあると相手が支援カードを
+       * 足して防御が上がり、狙った数にならない（不死(177)を引かれると倒せなくなる）。
+       *
+       * 迎撃(171)は**入れていない**（本人確定⑧を見直す必要がある点）。ＣＨボーナスを入れると
+       * 開いた後の相手の攻撃力は650まで上がり、攻撃に失敗したときの反撃 650 ≧ 自分の防御 450 で
+       * **ピッグマンが砕ける**——迎撃を選んだ理由（追補§2.3「罠は見せるが罰は与えない」）が
+       * 成り立たない。空白(180)は「効果はない。ＣＨの枠を埋めるだけの白紙のカード」なので
+       * どう攻めても罰が無く、しかも**伏せ札の大半はただの枠埋め**という手触りが出る。
+       * 迎撃に戻すときは 180 のどちらかを 171 に変えるだけでよい。 */
+      return {
+        first: 'self', active: 'self', phase: 'placement', win: 'field',
+        lp: { self: lp, enemy: 10 },
+        hand: { self: [8, 8, 108, 101, 194, 193], enemy: [] },
+        lanes: { '3': { unit: 24, stiff: true,
+          ch: [{ id: 153, up: false }, { id: 180, up: false }, { id: 180, up: false }] } }
+      };
+    }
+    return null;
+  }
+
+  /** 固定戦闘になるマスを、盤面記述と食い違わないようにそろえる（読み取りではなく**書き込み**）。
+   * ・n.enemy … 戦闘導入カットイン・マップの絵・敵デッキの花形が、実際に立つ敵と一致するように
+   * ・n.fieldRules … 固定戦闘に戦場ルールは付けない（見せてから効かない、を防ぐ）
+   * カットインを描く前に js/run-ui.js からも呼ぶ。何度呼んでも同じ結果になる。 */
+  const TUTORIAL_FOE = { 1: 23, 2: 24 };
+  function applyTutorialNode(run, meta, n) {
+    const stage = tutorialStage(run, meta, n);
+    if (!stage) return 0;
+    const id = TUTORIAL_FOE[stage];
+    if (!n.enemy || n.enemy.id !== id || n.enemy.count !== 1) n.enemy = { id: id, count: 1 };
+    if (n.fieldRules && n.fieldRules.length) n.fieldRules = [];
+    return stage;
+  }
+
+  function battleSetup(run, cards, n, meta) {
     const area = CQAreas.get(run.areaId);
     const isBoss = n.type === 'boss';
     /* M8.2 WP9（実装計画§1-1 案B）：七罪人は**ボスだがフリーユニット戦**。
@@ -392,6 +483,7 @@
      * 逃走は封じ、初期硬直も無し（§6リスク表）。相手の呼び名は罪の名で出す。 */
     const isSin = isBoss && area.sinId != null && CQOpponents.sinOf(area.sinId);
     const poolIds = isSin ? CQAreas.enemyPool(cards, area.id).map(function (e) { return e.id; }) : null;
+    applyTutorialNode(run, meta, n);          /* 固定戦闘なら、マスの敵と戦場ルールをそろえてから組む */
     return {
       cards: cards,
       selfDeck: buildPlayerDeck(run),
@@ -411,9 +503,15 @@
       noFlee: isSin ? true : undefined,
       foeName: isSin ? area.bossName : undefined,
       /* M7.10 WP1：ゲーム仕様書§4.2・§5どおりのＡＩ強さ。通常戦闘は弱ＡＩ設定（free）固定、
-       * ボスはエリアの帯（bossRank）。js/layout.js の startRunBattle() がこれを見て aiConfig を組む。 */
-      aiPreset: isBoss ? area.bossRank : 'free',
-      seed: battleSeed(run, n)
+       * ボスはエリアの帯（bossRank）。js/layout.js の startRunBattle() がこれを見て aiConfig を組む。
+       * M8.5：チュートリアルの固定戦闘だけ、攻撃を待ってくれる 'tutorial' を使う。 */
+      aiPreset: isBoss ? area.bossRank : (tutorialStage(run, meta, n) ? 'tutorial' : 'free'),
+      seed: battleSeed(run, n),
+      /* M8.5 WP0：チュートリアルの固定戦闘。js/layout.js の startRunBattle() が
+       * boardSpec を CQBoardSpec.apply に通す。meta を渡さない呼び出しでは常に null＝
+       * シミュレータ・テストの挙動は今までどおり変わらない。 */
+      boardSpec: tutorialSpec(tutorialStage(run, meta, n), run),
+      tutorial: tutorialStage(run, meta, n)
     };
   }
 
@@ -814,6 +912,7 @@
     start, gainCard, beginDraftRound, applyDraft, draftTarget, hasBlankSlot, depart,
     node, currentNode, choices, advance,
     battleSeed, firstTurnOf, battleSetup, reportBattle, reportFlee,
+    tutorialStage, tutorialSpec, applyTutorialNode,
     canAssignToDeck, resolveLootPick,
     openChest, rest, shopPrice, shopBuy, shopHeal, shopClearFog, shopLeave,
     sellPrice, buyoutPrice, buyout, buyoutLeave, resolveQuestion, retire, settle,

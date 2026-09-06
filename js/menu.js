@@ -82,6 +82,10 @@ const CQMenu = (function () {
         '<p class="am-note">「タップで1手ずつ」にすると、相手の手番は節目ごとに止まります。</p>' +
         pickRow('fx-step', stepNow(), [['auto', '自動で進める'], ['tap', 'タップで1手ずつ']]) +
       '</section>' +
+      '<button class="am-item" data-act="glossary">' +
+        '<span class="am-item-ic">📖</span>' +
+        '<span class="am-item-t"><b>索引</b>' +
+        '<small>カードの置き方・攻め方・言葉の意味を読み返す</small></span></button>' +
       '<button class="am-item" data-act="report">' +
         '<span class="am-item-ic">📮</span>' +
         '<span class="am-item-t"><b>盤面を報告</b>' +
@@ -185,6 +189,10 @@ const CQMenu = (function () {
       case 'fx-step':
         if (typeof fxSave === 'function') fxSave({ step: v });
         return render();
+      case 'glossary':
+        close();
+        if (typeof CQGlossary === 'undefined') return;
+        return CQGlossary.open();
       case 'report':
         close();
         if (typeof CQReport === 'undefined' || !CQReport.open) return;

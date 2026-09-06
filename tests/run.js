@@ -2278,6 +2278,7 @@ t('特殊行動は対象が無くても行動を消費する（仕様書§10.1�
 /* ================= M5: 敵ＡＩ（評価関数方策） ================= */
 section('M5: 敵AI・情報モデル（カンニングしない）');
 const CQAi = require(path.join(root, 'js/engine/ai.js'));
+const CQTutorialTest = require(path.join(root, 'js/tutorial.js'));
 
 t('難易度プリセット：透視率は撤廃され、差はサンプル数と読みの深さ（M5.7）', () => {
   ['free', 'rankC', 'rankB', 'rankA', 'heuristic', 'random'].forEach((k) => {
@@ -4151,9 +4152,10 @@ t('台本：開始マスの案内は2段に分かれている（2026-08-28 本�
     a2(L.areas.grassland.masterIntro));
   eq(grass.some((b) => b.lines.join('').indexOf('道は二つに分かれる') >= 0), false,
     '「道は二つに分かれる」は削除済み');
-  /* 送り出しは「行け」で終わる＝出発の直前に置く文であること */
-  eq(L.areas.grassland.depart[0].lines.join('').indexOf('行け') >= 0, true,
-    '草原の送り出しは「行け。日が暮れるまでには戻れ。」');
+  /* 送り出しは「行きなさい」で終わる＝出発の直前に置く文であること
+   * （2026-09-07 本人指定でアンバーの口調を女性の言葉づかいに変更） */
+  eq(L.areas.grassland.depart[0].lines.join('').indexOf('行きなさい') >= 0, true,
+    '草原の送り出しは「行きなさい。日が暮れるまでには戻るのよ。」');
   function a2(x) { return x || []; }
 });
 
@@ -6053,7 +6055,7 @@ section('M7 WP5: ホーム画面（ジェイルタウン）');
 t('台本§2：lore.js に home セクションが揃っている', () => {
   const home = CQLore.LORE.home;
   eq(home.first.length, 3, '初回（§2.1）は3つ');
-  eq(home.idle.length, 5, '通常（§2.2）の候補は5つ');
+  eq(home.idle.length, 4, '通常（§2.2）の候補は4つ（台本 v1.0 で本人が整理）');
   home.idle.forEach((g) => eq(Array.isArray(g), true, 'idle の各候補は吹き出し配列（pickOne前提）'));
   eq(home.onLevelUp[0].lines[0].indexOf('{n}') >= 0, true, 'onLevelUp に {n} プレースホルダ');
   eq(home.onAreaOpen[0].lines[0].indexOf('{area}') >= 0, true, 'onAreaOpen に {area} プレースホルダ');
@@ -6064,9 +6066,9 @@ t('台本§2：lore.js に home セクションが揃っている', () => {
 
 t('CQLore.fill：ホームの節目プレースホルダを実際に置換できる', () => {
   const lv = CQLore.fill(CQLore.LORE.home.onLevelUp, { n: 20 });
-  eq(lv[0].lines[0], '20種。お前の格が上がった。', '{n}が20に置換される');
+  eq(lv[0].lines[0], '20種集まったわ。', '{n}が20に置換される');
   const ao = CQLore.fill(CQLore.LORE.home.onAreaOpen, { area: '森' });
-  eq(ao[0].lines[0], '森へ行けるようになった。', '{area}が森に置換される');
+  eq(ao[0].lines[0], '森へ行けるようになったわ。', '{area}が森に置換される');
 });
 
 t('CQSave.checkLevelUp：初回は基準を記録するだけで知らせない。次に上がった回だけ知らせる', () => {
@@ -7993,6 +7995,288 @@ t('routes.js：部屋の累計報酬は、その部屋に属する実装済み�
   const roomRouteS = routesS.find((r) => r.type === 'room-reward');
   eq(!!roomRouteS, true, 'S帯累計報酬の経路はある（他の経路と共存する）');
   eq(roomRouteS.real, false, 'S帯（教会）はまだ配線されていないのでreal:false');
+});
+
+/* ================= M8.5 チュートリアル（固定戦闘） =================
+ * 『実装計画追補 M8.5』§2.2・§2.3 の表を、そのままテストにしたもの。
+ * ＡＩは通さない——「その盤面で数がどうなるか」だけを確かめる（＝盤面を変えたら
+ * ここが落ちるので、うっかり詰む編成に変えてしまったことに気づける）。 */
+section('M8.5 チュートリアル');
+
+const TUTO_RUN = { areaId: 'grassland', lp: 10, maxLp: 15 };
+function tutoMeta(patch) {
+  return Object.assign({ day: 0, seenHints: {} }, patch || {});
+}
+function tutoNode(patch) {
+  return Object.assign({ type: 'battle', strength: 'normal' }, patch || {});
+}
+/** 固定戦闘の盤面を作る（js/layout.js の startRunBattle と同じ手順）。
+ * extra で自陣のレーンを足せる＝「プレイヤーが置いた後」の盤面を作れる。 */
+function tutoBoard(stage, extra, opts) {
+  const o = opts || {};
+  const spec = CQRun.tutorialSpec(stage, TUTO_RUN);
+  Object.assign(spec.lanes, extra || {});
+  const m = CQTurn.createMatch({
+    cards: CARD_BY_ID, rng: CQRng.create(o.seed === undefined ? 3 : o.seed),
+    selfDeck: Array(40).fill(8), enemyDeck: Array(40).fill(8),
+    first: 'self', mode: 'field', enemyBoard: [8], opponentId: 101, hooks: HOOKS
+  });
+  CQBoardSpec.apply(m, spec);
+  m.phase = o.phase || 'main';
+  return m;
+}
+const PIG_LANE = { unit: 8, ch: [] };
+
+t('tutorialStage：草原の通常戦闘マスだけ・初日は第1戦・そのあと第2戦', () => {
+  const n = tutoNode();
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), n), 1, '初日の通常戦闘＝第1戦');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ seenHints: { tutorialBattle1: true } }), n), 2, '第1戦のあと＝第2戦');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ seenHints: { tutorialBattle1: true, tutorialBattle2: true } }), n), 0, '両方すんだら固定しない');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ type: 'boss' })), 0, 'ボスマスは対象外');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ strength: 'strong' })), 0, '強敵マスは対象外');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ strength: 'elite' })), 0, '精鋭マスは対象外');
+  eq(CQRun.tutorialStage({ areaId: 'forest', lp: 10 }, tutoMeta(), n), 0, '草原以外では固定しない');
+  eq(CQRun.tutorialStage(TUTO_RUN, null, n), 0, 'meta を渡さなければ固定しない（シミュレータ・テスト）');
+});
+
+t('tutorialStage：第1戦は初日だけ／第2戦は日数の上限なしで持ち越す（本人確定⑩）', () => {
+  const n = tutoNode();
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 3 }), n), 0, '2日目以降に始めた人には第1戦を出さない');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 3, seenHints: { forceTutorial: true } }), n), 1,
+    'デバッグの強制フラグがあれば日数を無視する');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ day: 9, seenHints: { tutorialBattle1: true } }), n), 2,
+    '第2戦は何日目でも出る＝初回ランで踏めなくても持ち越す');
+});
+
+t('applyTutorialNode：マスの敵と戦場ルールを、実際に立つ盤面へそろえる', () => {
+  const n = tutoNode({ enemy: { id: 8, count: 3 }, fieldRules: [{ id: 'noHighCH', max: 5 }] });
+  eq(CQRun.applyTutorialNode(TUTO_RUN, tutoMeta(), n), 1, '第1戦になる');
+  eq(n.enemy, { id: 23, count: 1 }, '敵はアンフィビアス1体（カットインとマップの絵もこれになる）');
+  eq(n.fieldRules, [], '固定戦闘に戦場ルールは付けない');
+  const n2 = tutoNode({ enemy: { id: 8, count: 2 } });
+  CQRun.applyTutorialNode(TUTO_RUN, tutoMeta({ seenHints: { tutorialBattle1: true } }), n2);
+  eq(n2.enemy, { id: 24, count: 1 }, '第2戦はシニスターセラフ1体');
+  const n3 = tutoNode({ enemy: { id: 8, count: 2 } });
+  eq(CQRun.applyTutorialNode(TUTO_RUN, tutoMeta({ seenHints: { tutorialBattle1: true, tutorialBattle2: true } }), n3), 0, '対象外なら0');
+  eq(n3.enemy, { id: 8, count: 2 }, '対象外のマスには触らない');
+});
+
+t('battleSetup：meta を渡したときだけ boardSpec が付く（シミュレータ・テストは無改修）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 31, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle' && x.strength === 'normal');
+  eq(CQRun.battleSetup(run, CARD_BY_ID, n).boardSpec, null, 'meta なし＝固定しない');
+  eq(CQRun.battleSetup(run, CARD_BY_ID, n).tutorial, 0, 'meta なし＝tutorial は0');
+  const s1 = CQRun.battleSetup(run, CARD_BY_ID, n, tutoMeta());
+  eq(s1.tutorial, 1, 'meta ありで第1戦');
+  eq(s1.boardSpec.hand.self, [8, 8, 194, 193, 165, 113], '第1戦の手札6枚（透視入り・本人確定⑨）');
+  eq(s1.fieldRules, [], '固定戦闘の戦場ルールは空');
+});
+
+/* ---- 第1戦（基本）：追補§2.2 の表 ---- */
+
+t('第1戦：敵はアンフィビアス450/500ひとりで、最初から硬直している', () => {
+  const m = tutoBoard(1);
+  eq([m.board.lanes[3].unit, m.board.lanes[3].atk, m.board.lanes[3].def], [23, 450, 500], '450/500');
+  eq(m.board.lanes[3].stiff, true, '初期硬直（ふつうのフリーユニット戦と同じ）');
+  eq([m.board.lanes[4].unit, m.board.lanes[5].unit], [null, null], '敵は1体だけ');
+  eq(m.players.self.hand.length, 6, '手札は6枚');
+});
+
+t('第1戦：何も置かなくてもピッグマンの500で通る（＝詰みが無い）', () => {
+  const m = tutoBoard(1, { '0': PIG_LANE });
+  eq([m.board.lanes[0].atk, m.board.lanes[0].def], [500, 450], 'ピッグマン500/450');
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[3].unit], [true, null], '500 ≧ 500 で成功（同値も成功）');
+  eq(m.loot.indexOf(23) >= 0, true, '通常攻撃で倒したので戦利品になる');
+});
+
+t('第1戦：伏せれば守りが、開けば攻めが上がる（ＣＨボーナス）。どちらでも攻撃は通る', () => {
+  /* ゲーム仕様書§6.2⑥：チャネル1枚につき、裏なら防御+100・表なら攻撃+100。
+   * 追補§2.2の「罠が無い」は、この2通りのどちらに転んでも 500 ≧ 500 が崩れないこと。 */
+  const back = tutoBoard(1, { '0': { unit: 8, ch: [{ id: 194, up: false }] } });
+  eq([back.board.lanes[0].atk, back.board.lanes[0].def], [500, 550], '裏1枚＝防御+100');
+  CQCombat.declareAttack(back, 0, 3);
+  eq(fin(back).success, true, '伏せていても 500 ≧ 500 で通る');
+
+  const front = tutoBoard(1, { '0': { unit: 8, ch: [{ id: 193, up: true }] } });
+  eq(front.board.lanes[0].atk, 650, '表1枚＝攻撃+100、さらに赤の聖霊陣で+50');
+  CQCombat.declareAttack(front, 0, 3);
+  eq(fin(front).success, true, '開いていればなお通る');
+});
+
+t('第1戦：青の聖霊陣を伏せておけば、敵の450では抜かれない', () => {
+  const m = tutoBoard(1, { '0': { unit: 8, ch: [{ id: 194, up: false }] } });
+  m.active = 'enemy';
+  m.board.lanes[3].stiff = false;
+  CQCombat.declareAttack(m, 3, 0);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[0].unit], [false, 8], '450 < 550 で守れる');
+});
+
+t('第1戦：ピッグマンを2体置いて孤高の戦士が消えても、攻撃は通る（罠が無い）', () => {
+  const m = tutoBoard(1, { '0': { unit: 8, ch: [{ id: 165, up: true }] }, '1': PIG_LANE });
+  eq(m.board.lanes[0].atk, 600, '他に味方が居るので孤高の戦士の+100は乗らない（表のＣＨ+100だけ）');
+  CQCombat.declareAttack(m, 0, 3);
+  eq(fin(m).success, true, 'それでも 600 ≧ 500 で通る');
+});
+
+/* ---- 第2戦（華の2枚）：追補§2.3 の表（2026-09-07 にＣＨボーナスを入れて組み直したもの） ---- */
+
+/** 第2戦の「プレイヤーが置き終えた」盤面。1階層目＝強制開放、2階層目＝憑依解除。 */
+function tutoBoard2() {
+  return tutoBoard(2, { '0': { unit: 8, ch: [{ id: 108, up: false }, { id: 101, up: false }] } });
+}
+
+t('第2戦：伏せ札3枚で守りが固く（450/700）、ピッグマンの500では通らない', () => {
+  const m = tutoBoard(2, { '0': PIG_LANE });
+  eq([m.board.lanes[3].atk, m.board.lanes[3].def], [450, 700], '400 + 裏3枚×100 = 700');
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.up]), [[153, false], [180, false], [180, false]],
+    '魔力の盾と空白2枚が裏');
+  eq(m.board.lanes[3].free, 0, 'ＣＨ枠が埋まっている＝ＡＩが支援を足して数を狂わせられない');
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[3].unit], [false, 24], '500 < 700 で失敗');
+  eq(m.board.lanes[0].unit, 8, '失敗しても自分は無傷＝罰を与えない（追補§2.3）');
+});
+
+t('第2戦：強制開放で3枚とも表になり、盾が見えて 650/600 になる（108自身は砕ける）', () => {
+  const m = tutoBoard2();
+  const r = CQTurn.reverseAction(m, 0, [1], { cont: true, choice: { lane: 3 } });
+  eq(r.ok, true, '1階層目の強制開放が開く');
+  eq(m.lastForcedChain.kind, 108, '強制開放の連鎖が回った');
+  eq(m.board.lanes[3].channels.map((c) => [c.card, c.up]), [[153, true], [180, true], [180, true]],
+    '3枚とも表になった＝何が伏せてあったかが盤面に残る（技能は消えない）');
+  eq([m.board.lanes[3].atk, m.board.lanes[3].def], [650, 600], '450-100+300 / 400+200');
+  eq(m.board.lanes[0].channels.map((c) => c.card), [101], '役目を終えた強制開放は砕け、憑依解除だけが残る');
+});
+
+t('第2戦：続けて憑依解除で盾を砕くと守りが400まで落ちる（同じ手番で続けられる）', () => {
+  const m = tutoBoard2();
+  CQTurn.reverseAction(m, 0, [1], { cont: true, choice: { lane: 3 } });
+  /* 強制開放が砕けた後、残った憑依解除は1階層目に詰め直されている。 */
+  const layer = m.board.lanes[0].channels.findIndex((c) => c.card === 101) + 1;
+  const r = CQTurn.reverseAction(m, 0, [layer], { cont: true, choice: { lane: 3, idx: 0 } });
+  eq(r.ok, true, '同じ手番のうちに憑依解除まで続けて開ける（追補§2.3 要確認1）');
+  eq(m.board.lanes[3].channels.map((c) => c.card), [180, 180], '魔力の盾だけが砕けた');
+  eq([m.board.lanes[3].atk, m.board.lanes[3].def], [650, 400], '守りが 700→600→400 と2段階で下がる');
+});
+
+t('第2戦：盾を砕いた後は攻撃が通り、シニスターセラフが記録に残る', () => {
+  const m = tutoBoard2();
+  CQTurn.reverseAction(m, 0, [1], { cont: true, choice: { lane: 3 } });
+  const layer = m.board.lanes[0].channels.findIndex((c) => c.card === 101) + 1;
+  CQTurn.reverseAction(m, 0, [layer], { cont: true, choice: { lane: 3, idx: 0 } });
+  /* リバースしたユニットは硬直するので、実際の攻撃は次のターン（追補§2.3 の流れの T5）。 */
+  m.board.lanes[0].stiff = false;
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[3].unit], [true, null], '500以上 ≧ 400 で成功');
+  eq(m.loot.indexOf(24) >= 0, true, '通常攻撃なので戦利品＝記憶データが増える');
+});
+
+t('第2戦：伏せ札に反撃系（迎撃・反射）を入れていない＝どう攻めても自分は砕けない', () => {
+  /* 追補§2.3「罠は見せるが罰は与えない」。ＣＨボーナスを入れて計算すると、開いた後の相手の
+   * 攻撃力は650まで上がるので、迎撃(171)を入れると失敗した攻撃の反撃で必ずピッグマンが砕ける。 */
+  const ids = CQRun.tutorialSpec(2, TUTO_RUN).lanes['3'].ch.map((c) => c.id);
+  eq(ids.some((id) => id === 171 || id === 172), false, '迎撃・反射は入っていない');
+  /* 「強制開放まではやったが、憑依解除で盾を砕かずに攻めた」＝いちばん危ない場面を作る。 */
+  const m = tutoBoard(2, { '0': PIG_LANE });
+  m.board.lanes[3].channels.forEach((c) => { c.up = true; });
+  CQStats.recalc(m.board, OPT);
+  eq([m.board.lanes[3].atk, m.board.lanes[3].def], [650, 600], '開くと相手は650/600（反撃があれば致命傷）');
+  CQCombat.declareAttack(m, 0, 3);
+  const r = fin(m);
+  eq([r.success, m.board.lanes[0].unit], [false, 8], '盾を砕かずに攻めて失敗しても、自分は残る');
+});
+
+t('固定戦闘の相手は何もしない（置かない・チャネルしない・攻撃しない・守るときも開かない）', () => {
+  const run = CQRun.start(CARD_BY_ID, 'grassland', 41, freshMeta());
+  CQRun.depart(run);
+  const n = Object.values(run.map.nodes).find((x) => x.type === 'battle' && x.strength === 'normal');
+  eq(CQRun.battleSetup(run, CARD_BY_ID, n, tutoMeta()).aiPreset, 'tutorial', '固定戦闘は tutorial プリセット');
+  eq(CQRun.battleSetup(run, CARD_BY_ID, n).aiPreset, 'free', 'ふつうの戦闘は今までどおり free');
+  eq(CQAi.PRESETS.tutorial.policy, 'idle', '何もしない方策');
+  eq(CQAi.PRESETS.free.policy, 'search', 'free 側は変えていない');
+
+  /* 実際に相手の手番を回しても盤面が変わらないこと。 */
+  const m = tutoBoard2();
+  m.aiConfig = { enemy: CQAi.PRESETS.tutorial };
+  m.active = 'enemy'; m.phase = 'placement'; m.board.lanes[3].stiff = false;
+  const before = JSON.stringify(m.board.lanes.map((ln) => [ln.unit, (ln.channels || []).length]));
+  let guard = 0;
+  while (CQAi.placementStep(m) && guard++ < 8) { /* 何も置かないはず */ }
+  eq(guard, 0, '配置ステップで1枚も置かない');
+  m.phase = 'main';
+  while (CQAi.mainStep(m) && guard++ < 8) { /* 何もしないはず */ }
+  eq(guard, 0, 'メインステップで攻撃も開閉もしない');
+  eq(JSON.stringify(m.board.lanes.map((ln) => [ln.unit, (ln.channels || []).length])), before, '盤面が変わらない');
+});
+
+t('固定戦闘の相手は、守るときも伏せ札を開かない（狙った数のまま戦える）', () => {
+  const m = tutoBoard(2, { '0': PIG_LANE });
+  m.aiConfig = { enemy: CQAi.PRESETS.tutorial };
+  CQCombat.declareAttack(m, 0, 3);
+  let guard = 0;
+  while (m.combat && guard++ < 10) {
+    if (CQCombat.openerSide(m) === 'enemy') CQAi.openStep(m);
+    else CQCombat.endOpen(m);
+  }
+  eq(m.board.lanes[3].channels.map((c) => c.up), [false, false, false], '3枚とも裏のまま');
+  eq([m.lastBattle.success, m.board.lanes[0].unit], [false, 8], '500 < 700 で失敗するが、反撃は無いので無傷');
+});
+
+t('チュートリアルの台本：文面（lore）と進行（tutorial）のキーが一致している', () => {
+  [1, 2].forEach((st) => {
+    const keys = CQLore.LORE.tutorial[st].map((x) => x.key);
+    eq(keys.length > 0, true, '第' + st + '戦の台本がある');
+    keys.forEach((k) => eq(!!CQTutorialTest.RULES[st][k], true, '第' + st + '戦 ' + k + '：進行の定義がある'));
+    Object.keys(CQTutorialTest.RULES[st]).forEach((k) =>
+      eq(keys.indexOf(k) >= 0, true, '第' + st + '戦 ' + k + '：台本に文面がある'));
+    /* アンバーの台詞は台本§0の規約（1行28字以内） */
+    CQLore.LORE.tutorial[st].forEach((sp) => (sp.lines || []).forEach((ln) =>
+      eq([...ln].length <= 28, true, '第' + st + '戦 ' + sp.key + '：1行28字以内')));
+  });
+  /* 最後のステップは案内（操作待ちにしない）＝戦闘が終わってから出す締めの一言 */
+  eq(CQTutorialTest.RULES[1].finish.info, true, '第1戦の最後は案内');
+  eq(CQTutorialTest.RULES[2].finish.info, true, '第2戦の最後は案内');
+});
+
+t('チュートリアルの制限：置く先・開く階層・攻撃の可否', () => {
+  eq(CQTutorialTest.active(), false, '始めていなければ何も制限しない');
+  eq(CQTutorialTest.checkDrop(8, 0).ok, true, '始めていなければ素通し');
+  eq(CQTutorialTest.allowAttack(), true, '始めていなければ攻撃も自由');
+  /* 制限の中身（RULES）が意図どおりか。DOMを持たないNodeでは begin() を通さず表を直接見る。 */
+  eq(CQTutorialTest.RULES[2].place.dropId, 8, '第2戦の最初はピッグマンだけ置ける');
+  eq(CQTutorialTest.RULES[2].setForce.dropId, 108, '次は強制開放だけ');
+  eq(CQTutorialTest.RULES[2].setUnposs.dropId, 101, 'その次は憑依解除だけ＝階層の順が決まる');
+  eq(CQTutorialTest.RULES[2].openForce.flipCard, 108, '開けるのは強制開放の階層だけ');
+  eq(CQTutorialTest.RULES[2].openUnposs.pickCard, 153, '砕く相手は魔力の盾に絞る');
+  eq([CQTutorialTest.RULES[1].attack.canAttack, !!CQTutorialTest.RULES[1].place.canAttack],
+    [true, false], '攻撃できるのは「攻めろ」の段だけ');
+});
+
+t('移行：すでに冒険を終えている人（day≧1）にはチュートリアルを出さない。ただし一度きり', () => {
+  const old = CQSave.ensureFields({ day: 4 });
+  eq(old.seenHints.tutorialBattle1, true, '既存セーブは固定戦闘を既読にする');
+  eq(old.seenHints.placement, true, '戦闘中のヒントも既読にする');
+  const fresh = CQSave.ensureFields({ day: 0 });
+  eq(fresh.seenHints.tutorialBattle1, undefined, '新規セーブはそのまま＝チュートリアルが出る');
+  /* デバッグの「やり直す」で未読に戻した後、読み込み直しても既読へ戻されないこと。 */
+  delete old.seenHints.tutorialBattle1;
+  CQSave.ensureFields(old);
+  eq(old.seenHints.tutorialBattle1, undefined, '移行は一度きり＝やり直しを打ち消さない');
+});
+
+t('第2戦：ＡＩ（free）は自分の手番に盾・空白を開かない（見せ場が先に消えない）', () => {
+  const m = tutoBoard2();
+  m.active = 'enemy';
+  m.phase = 'main';
+  m.board.lanes[3].stiff = false;
+  let guard = 0;
+  while (CQAi.mainStep(m) && guard++ < 12) { /* 相手の手番を最後まで回す */ }
+  eq(m.board.lanes[3].channels.map((c) => c.up), [false, false, false], '3枚とも裏のまま');
 });
 
 /* ================= 結果 ================= */

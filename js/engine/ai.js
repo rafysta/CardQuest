@@ -64,6 +64,14 @@
     heuristic: { policy: 'eval', noAttackTurns: 0, mulligan: true, handSlots: 6, label: '旧Ｃ' },
     free: { policy: 'search', samples: 5, depth: 1, noise: 0.6, budgetMs: 600, minSamples: 2,
             noAttackTurns: 2, mulligan: false, handSlots: 6, label: 'フリー' },
+    /* M8.5 改訂（2026-09-07 本人フィードバック）：チュートリアルの固定戦闘で使う**何もしない相手**。
+     * 置かない・チャネルしない・攻撃しない・守るときも開かない——手番が来たらそのまま終える。
+     *
+     * 「次に何をすればいいか分からないまま手番を送っていたら、相手がチャネルして殴ってきて、
+     * 理由も分からず倒された」という報告への対策。チュートリアルは**相手の動きも100%こちらで
+     * 決める**ことにし、盤面が勝手に変わらないようにした（js/tutorial.js の台本が進行を持つ）。
+     * 手札があふれたときの捨て札だけは通常どおり（そうしないと進行が止まる）。 */
+    tutorial: { policy: 'idle', label: 'チュートリアル（何もしない）' },
     rankC: { policy: 'search', samples: 8, depth: 1, noise: 0.6, budgetMs: 600, minSamples: 3,
              noAttackTurns: 0, mulligan: true, handSlots: 6, label: 'Ｃ' },
     rankB: { policy: 'search', samples: 16, depth: 1, noise: 0.25, budgetMs: 600, minSamples: 3,
@@ -608,6 +616,7 @@
   /** 配置ステップの1手。何もできなければ false */
   function placementStep(m) {
     const p = cfgFor(m, m.active).policy;
+    if (p === 'idle') return false;                     /* M8.5：チュートリアルの相手は何も置かない */
     if (p === 'search') return searchApi().placementStep(m);
     return p === 'eval' ? evalPlacement(m) : randomPlacement(m);
   }
@@ -619,6 +628,7 @@
   /** メインステップの1手。何もできなければ false */
   function mainStep(m) {
     const p = cfgFor(m, m.active).policy;
+    if (p === 'idle') return false;                     /* M8.5：チュートリアルの相手は攻撃も開閉もしない */
     if (p === 'search') return searchApi().mainStep(m);
     return p === 'eval' ? evalMain(m) : randomMain(m);
   }
@@ -627,6 +637,9 @@
     if (!m.combat) return false;
     const side = Combat.openerSide(m);
     const p = cfgFor(m, side).policy;
+    /* M8.5：チュートリアルの相手は守るときも開かない（伏せ札を開かれて数が変わらないように）。
+     * ただしフェイズは必ず終える——終えないと進行が止まる。 */
+    if (p === 'idle') { Combat.endOpen(m); return true; }
     if (p === 'search') return searchApi().openStep(m);
     return p === 'eval' ? evalOpen(m) : randomOpen(m);
   }

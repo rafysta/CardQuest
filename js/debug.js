@@ -38,6 +38,7 @@ const CQDebug = (function () {
     { icon: '📐', label: 'ルーラーの表示', hint: '80px方眼と座標を重ねる（再度押すと消える）', run: toggleRuler },
     { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene },
     { icon: '⏩', label: '進行を進める…', hint: '進行状態のプリセット／記憶データ+N／ボス戦へ直行（退避つき）', run: openProgress },
+    { icon: '🔰', label: 'チュートリアルをやり直す', hint: '戦闘のヒントと固定戦闘2つを未読に戻す（進行は変えない）', run: resetTutorial },
     { icon: '🙈', label: 'デバッグメニューを隠す', hint: '人に見せるとき用。バージョン表記の7回連打で戻る', run: hideDevMode }
   ];
 
@@ -208,6 +209,30 @@ const CQDebug = (function () {
     if (!r.ok) return out(r.reason);
     if (typeof showScreen === 'function') showScreen('screen-run');
     close();
+  }
+
+  /* ---- 🔰 チュートリアルをやり直す（M8.5 WP4） ------------------------------
+   * 既読フラグ（cq_meta.seenHints）から M8.5 の10個を消すだけ。**進行（本・記憶データ・
+   * 日数・クリア状況）には一切触らない**ので、いまのセーブのまま何度でも見直せる。
+   * 固定戦闘は「まだ一度もランを終えていない人」だけが対象なので、日数が進んだセーブでは
+   * そのままだと再現しない——`forceTutorial` を一緒に立てて日数の条件を無視させる
+   * （第2戦に入った時点で js/run-ui.js が降ろす）。 */
+  function resetTutorial() {
+    if (typeof RUI === 'undefined' || !RUI || !RUI.meta) return out('ラン画面が読み込まれていません。');
+    const ask = (typeof showConfirm === 'function') ? showConfirm
+      : function (msg, then) { then(); };
+    ask('チュートリアルを最初から見られるように戻します。\n'
+      + '（本・記憶データ・日数などの進行は変わりません）\n'
+      + '次に草原の通常戦闘マスへ入ると、第1戦の固定盤面から始まります。\n'
+      + 'よろしいですか？', function () {
+      const meta = RUI.meta;
+      if (!meta.seenHints) meta.seenHints = {};
+      (CQSave.TUTORIAL_HINT_KEYS || []).forEach(function (k) { delete meta.seenHints[k]; });
+      meta.seenHints.forceTutorial = true;         /* 日数の条件を無視する（第2戦で自動的に降りる） */
+      CQSave.saveMeta(RUN_STORAGE, meta);
+      if (typeof CQBattleHint !== 'undefined') CQBattleHint.close();
+      out('チュートリアルを未読に戻しました。<br>草原の<b>通常</b>戦闘マス（強敵・精鋭・ボスは対象外）へ入ってください。');
+    }, '戻す');
   }
 
   /* ---- 起動 ---------------------------------------------------------------- */

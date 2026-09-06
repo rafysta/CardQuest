@@ -8,7 +8,12 @@
  *                                 自動的に true 扱いにする（新規プレイヤーだけに見せる演出のため）
  *   visits:      {areaId: count}  エリアごとの訪問回数（WP4）。開始マスの案内を
  *                                 「初回3つ／2回目以降1つ」で出し分けるのに使う
- *   seenHints:   {key: true}      一度だけ出すヒント（台本§5）。出したらキーを立てる
+ *   seenHints:   {key: true}      一度だけ出すヒント（台本§14）。出したらキーを立てる。
+ *                                 M8.5 で戦闘中の8種と固定戦闘2つ（tutorialBattle1/2・placement・
+ *                                 hidden・faceDown・loot・open・forceOpen・unpossess・firstRecord）
+ *                                 が加わった。forceTutorial はデバッグ用（日数の条件を無視する）
+ *   tutorialMigrated: boolean     M8.5 の移行を済ませたか。既に第1戦を終えている人
+ *                                 （day≧1）にチュートリアルを出さないための一度きりの処理
  *   homeVisited: boolean          ホーム画面（M7 WP5）に一度でも来たか。§2.1（初回3つ）と
  *                                 §2.2（通常・ランダム1つ）の出し分けに使う
  *   homeSeenLevel: number         最後に節目として見せたマスターレベル。次に上がった回で
@@ -97,6 +102,24 @@
     if (!m.visits || typeof m.visits !== 'object') m.visits = {};       /* WP4：エリア訪問回数 */
     if (!m.seenHints || typeof m.seenHints !== 'object') m.seenHints = {}; /* WP4：一度だけのヒント */
     if (m.homeVisited == null) m.homeVisited = false;                  /* WP5：ホーム初回判定 */
+    migrateTutorial(m);                                                /* M8.5 WP5 */
+    return m;
+  }
+
+  /* M8.5 WP5：チュートリアル（戦闘中のヒントと固定戦闘）の移行。
+   * **すでに一度でも冒険を終えている人（day≧1）には出さない**——遊び方はもう知っているのに、
+   * 次の草原の通常戦闘でいきなり手札と盤面が差し替わるほうが驚きが大きい。
+   * 一度きりの処理にしてあるのは、デバッグの「🔰 チュートリアルをやり直す」で未読に戻した後、
+   * 読み込み直すたびに既読へ戻されてしまうのを防ぐため。 */
+  const TUTORIAL_HINT_KEYS = ['tutorialBattle1', 'tutorialBattle2',
+    'placement', 'hidden', 'faceDown', 'loot', 'open', 'forceOpen', 'unpossess', 'firstRecord'];
+
+  function migrateTutorial(m) {
+    if (m.tutorialMigrated) return m;
+    m.tutorialMigrated = true;
+    if ((m.day || 0) >= 1) {
+      TUTORIAL_HINT_KEYS.forEach(function (k) { m.seenHints[k] = true; });
+    }
     return m;
   }
 
@@ -218,6 +241,7 @@
   const api = {
     loadMeta, saveMeta, clearMeta, loadRun, saveRun, clearRun, toDeckCounts, migrate, initialMeta,
     ensureFields, visitCount, markVisit, hintSeen, markHint,
+    TUTORIAL_HINT_KEYS, migrateTutorial,
     checkLevelUp, checkAreaOpen, checkKeys, markHomeVisited
   };
   global.CQSave = api;
