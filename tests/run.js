@@ -8563,8 +8563,11 @@ t('tutorialStage：草原の通常戦闘マスだけ・初日は第1戦・その
   eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ seenHints: { tutorialBattle1: true } }), n), 2, '第1戦のあと＝第2戦');
   eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta({ seenHints: { tutorialBattle1: true, tutorialBattle2: true } }), n), 0, '両方すんだら固定しない');
   eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ type: 'boss' })), 0, 'ボスマスは対象外');
-  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ strength: 'strong' })), 0, '強敵マスは対象外');
-  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ strength: 'elite' })), 0, '精鋭マスは対象外');
+  /* ★2026-09-07 修正：草原は1歩目に強敵のマスが置かれることがある（約31%）。そこへ入った
+   * 初回プレイヤーが固定戦闘に出会えず、旧来の一度きりヒントだけを見て「古いチュートリアルが
+   * 始まる」状態になっていたため、戦闘マスなら格を問わず固定戦闘にする（ボスマスだけ対象外）。 */
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ strength: 'strong' })), 1, '強敵マスでも第1戦を出す');
+  eq(CQRun.tutorialStage(TUTO_RUN, tutoMeta(), tutoNode({ strength: 'elite' })), 1, '精鋭マスでも第1戦を出す');
   eq(CQRun.tutorialStage({ areaId: 'forest', lp: 10 }, tutoMeta(), n), 0, '草原以外では固定しない');
   eq(CQRun.tutorialStage(TUTO_RUN, null, n), 0, 'meta を渡さなければ固定しない（シミュレータ・テスト）');
 });
@@ -8644,6 +8647,17 @@ t('目覚めの場面の文面は js/lore.js（LORE.opening＝台本v1.0 §1）�
   const uiSrc = fs.readFileSync(path.join(root, 'js/run-ui.js'), 'utf8');
   eq(/OPENING_SCRIPT/.test(uiSrc), false, 'run-ui.js に直書きの台本（OPENING_SCRIPT）は無い');
   eq(/CQLore\.LORE\.opening/.test(uiSrc), true, 'run-ui.js は CQLore.LORE.opening を読む');
+});
+
+t('applyTutorialNode：強敵・精鋭のマスは格も「通常」へそろえる（カットインと中身を一致させる）', () => {
+  const strong = tutoNode({ strength: 'strong', enemy: { id: 8, count: 3 }, fieldRules: [{ id: 'noHighCH', max: 5 }] });
+  eq(CQRun.applyTutorialNode(TUTO_RUN, tutoMeta(), strong), 1, '強敵マスでも第1戦になる');
+  eq(strong.strength, 'normal', '格は通常へそろう＝カットインが「強敵」と言わない');
+  eq(strong.enemy, { id: 23, count: 1 }, '敵はアンフィビアス1体');
+  eq(strong.fieldRules, [], '戦場ルールは付けない');
+  /* そろえた後にもう一度呼んでも同じ結果になる（描画のたびに呼ばれるため） */
+  eq(CQRun.applyTutorialNode(TUTO_RUN, tutoMeta(), strong), 1, '何度呼んでも同じ');
+  eq(CQRun.applyTutorialNode(TUTO_RUN, tutoMeta(), tutoNode({ type: 'boss', strength: 'strong' })), 0, 'ボスマスは触らない');
 });
 
 t('applyTutorialNode：マスの敵と戦場ルールを、実際に立つ盤面へそろえる', () => {

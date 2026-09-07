@@ -428,14 +428,22 @@
   function hintDone(meta, key) { return !!(meta && meta.seenHints && meta.seenHints[key]); }
 
   /** そのマスが固定戦闘になるか。なるなら 1 か 2、ならなければ 0。
-   * 条件（§2.1〜§2.3）：草原の**通常戦闘マス**だけ（ボス・強敵・精鋭は対象外）。
+   * 条件（§2.1〜§2.3・2026-09-07改訂）：草原の**戦闘マス**（ボスマスは対象外）。
    *   第1戦 … まだ見ていない
    *   第2戦 … 第1戦を終えた後。**日数の上限なし**＝初回ランで踏めなければ持ち越す（本人確定⑩）
    * meta を渡さない呼び出し（tools/simulate-run.js・tests）では常に 0＝固定しない。 */
   function tutorialStage(run, meta, n) {
     if (!meta || !n || !run) return 0;
     if (run.areaId !== 'grassland') return 0;
-    if (n.type !== 'battle' || n.strength !== 'normal') return 0;
+    /* ★2026-09-07 修正（本人報告）：以前は strength==='normal' の通常戦闘マスだけを
+     * 対象にしていた。しかし草原は**出発直後の1歩目に強敵のマスが置かれることがある**
+     * （300マップ中94回＝約31%）。そこへ入った初回プレイヤーには固定戦闘が起きず、
+     * 代わりに旧来の一度きりヒント（js/battle-hint.js の placement）だけが出て、
+     * 「古いチュートリアルが始まる」ように見えていた。
+     * 固定盤面は相手・手札・ＬＰ・先攻・戦場ルールを全部差し替えるので、元のマスが
+     * 強敵でも精鋭でも中身は同じ戦いになる。マスの見た目だけ applyTutorialNode で
+     * 'normal' にそろえる。ボスマス（type:'boss'）は引き続き対象外。 */
+    if (n.type !== 'battle') return 0;
     /* ★2026-09-06 修正（本人報告）：以前は第1戦だけ meta.day===0（まだ1ランも
      * 終えていない）に限っていた。そのため**初回ランが草原の通常戦闘マスを踏まずに
      * 終わると、以後は通常プレイで二度と出ない**——負けても諦めても、そのランで
@@ -513,6 +521,11 @@
     const id = TUTORIAL_FOE[stage];
     if (!n.enemy || n.enemy.id !== id || n.enemy.count !== 1) n.enemy = { id: id, count: 1 };
     if (n.fieldRules && n.fieldRules.length) n.fieldRules = [];
+    /* ★2026-09-07：強敵・精鋭のマスでも固定戦闘にするようにしたので、マスの格も
+     * 実際に出てくる盤面（通常の1体）へそろえる——カットインが「強敵」と言いながら
+     * ふつうのアンフィビアス1体が出る、という食い違いを防ぐ。敵デッキの生成
+     * （buildBattleDeck）もこれで通常のものになり、盤面の差し替えと辻褄が合う。 */
+    if (n.strength !== 'normal') n.strength = 'normal';
     return stage;
   }
 

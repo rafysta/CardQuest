@@ -39,6 +39,7 @@ const CQDebug = (function () {
     { icon: '🎬', label: '目覚めの場面を見返す', hint: 'アンバーと初めて出会う場面を最初から再生', run: playOpeningScene },
     { icon: '⏩', label: '進行を進める…', hint: '進行状態のプリセット／記憶データ+N／ボス戦へ直行（退避つき）', run: openProgress },
     { icon: '🔰', label: 'チュートリアルをやり直す', hint: '戦闘のヒントと固定戦闘2つを未読に戻す（進行は変えない）', run: resetTutorial },
+    { icon: '🔎', label: 'チュートリアルの状態を見る', hint: 'いまのマス・既読フラグ・判定結果を表示（読むだけ・原因の切り分け用）', run: showTutorialState },
     { icon: '🙈', label: 'デバッグメニューを隠す', hint: '人に見せるとき用。バージョン表記の7回連打で戻る', run: hideDevMode }
   ];
 
@@ -232,6 +233,58 @@ const CQDebug = (function () {
       if (typeof CQBattleHint !== 'undefined') CQBattleHint.close();
       out('チュートリアルを未読に戻しました。<br>草原の<b>通常</b>戦闘マス（強敵・精鋭・ボスは対象外）へ入ってください。');
     }, '戻す');
+  }
+
+  /* ---- 🔎 チュートリアルの状態を見る（2026-09-07） --------------------------
+   * 実機（タブレット）で「新しいチュートリアルに入らない」ときに、原因をその場で読める
+   * ようにするための表示。**読むだけ**で、セーブにもランにも一切触らない。 */
+
+  /** 固定戦闘にならない理由を1行で（tutorialStage と同じ順に見ていく）。 */
+  function tutorialWhyNot(run, meta, n) {
+    const seen = (meta && meta.seenHints) || {};
+    if (!n) return 'マスが見つかりません';
+    if (run.areaId !== 'grassland') return '草原ではない（' + run.areaId + '）＝固定戦闘は草原だけ';
+    if (n.type !== 'battle') return '戦闘マスではない（' + n.type + '）';
+    if (seen.tutorialBattle1 && seen.tutorialBattle2) return '第1戦・第2戦とも既読＝もう出ない';
+    return '（条件は満たしているはずです。部品の読み込みを確認してください）';
+  }
+
+  function showTutorialState() {
+    const meta = (typeof RUI !== 'undefined' && RUI) ? RUI.meta : null;
+    if (!meta) return out('ラン画面が読み込まれていません。');
+    const ok = function (b) { return b ? '✓' : '<b style="color:#f87171">×</b>'; };
+    const rows = [];
+    rows.push('<b>版</b>：' + ((typeof APP_VERSION !== 'undefined') ? APP_VERSION : '不明'));
+    rows.push('<b>部品</b>：台本' + ok(typeof CQTutorial !== 'undefined')
+      + '／文面' + ok(typeof CQLore !== 'undefined' && CQLore.LORE && CQLore.LORE.tutorial)
+      + '／盤面差し替え' + ok(typeof CQBoardSpec !== 'undefined')
+      + '／旧ヒント' + ok(typeof CQBattleHint !== 'undefined'));
+    const hints = Object.keys(meta.seenHints || {});
+    rows.push('<b>セーブ</b>：通算 ' + (meta.day || 0) + ' 日目／移行済み' + ok(meta.tutorialMigrated === true));
+    rows.push('<b>既読</b>：' + (hints.length ? hints.join('・') : '（なし）'));
+    const run = RUI.run;
+    if (!run) {
+      rows.push('<b>いまの場所</b>：ランの外（ホームなど）＝マスの判定はできません');
+    } else {
+      const nid = RUI.battleIntroNodeId || RUI.nodeId || run.at;
+      const n = run.map.nodes[nid];
+      const area = (typeof CQAreas !== 'undefined') ? CQAreas.get(run.areaId) : null;
+      rows.push('<b>いまの場所</b>：' + ((area && area.name) || run.areaId) + '・' + nid
+        + '（' + (n ? n.type : '?') + (n && n.strength ? '／' + n.strength : '') + '）');
+      const stage = (typeof CQRun !== 'undefined' && CQRun.tutorialStage) ? CQRun.tutorialStage(run, meta, n) : 0;
+      rows.push('<b>判定</b>：' + (stage ? ('<b>第' + stage + '戦の固定戦闘を出す</b>') : '固定戦闘は出ない'));
+      if (!stage) rows.push('<b>理由</b>：' + tutorialWhyNot(run, meta, n));
+    }
+    if (typeof M !== 'undefined' && M && M.board) {
+      const foes = [3, 4, 5].map(function (i) { return M.board.lanes[i].unit; })
+        .filter(function (u) { return u != null; });
+      const on = (typeof CQTutorial !== 'undefined') && CQTutorial.active();
+      rows.push('<b>いまの戦闘</b>：' + (on
+        ? ('新しい台本が動作中（第' + CQTutorial.stage() + '戦・手順「' + CQTutorial.stepKey() + '」）')
+        : '<b style="color:#f87171">新しい台本は動いていない</b>')
+        + '／相手の場：' + (foes.length ? foes.join('・') : '空'));
+    }
+    out(rows.join('<br>'));
   }
 
   /* ---- 起動 ---------------------------------------------------------------- */
